@@ -15,6 +15,14 @@ pub const THREAD_WIDTH_MM: f64 = 0.4;
 const MARGIN_MM: f64 = 10.0;
 /// The object data key that marks the layer [`to_document`] makes.
 const MARK: (&str, &str) = ("stitchFile", "1");
+/// The object data key that marks a run the file trimmed before: the thread was cut between the
+/// previous run and this one. A run without it was reached by a jump alone.
+const TRIM: (&str, &str) = ("stitchTrim", "1");
+
+/// Whether `path`, a run [`to_document`] made, follows a trim the file held.
+pub(crate) fn follows_trim(path: &Node) -> bool {
+    path.extras().attrs.as_deref().is_some_and(|a| a.data.iter().any(|(k, v)| k == TRIM.0 && v == TRIM.1))
+}
 
 /// Whether `layer` is one [`to_document`] made (it carries the mark), so its paths are needle
 /// points to export unchanged.
@@ -44,10 +52,16 @@ pub fn to_document(plan: &StitchPlan) -> Document {
         let appearance = Appearance::basic(Paint::None, Paint::solid(Color::rgb8(r, g, b)), THREAD_WIDTH_MM * PT_PER_MM);
         let mut paths: Vec<Arc<Node>> = vec![];
         let mut run: Vec<Point> = vec![];
-        let end_run = |run: &mut Vec<Point>, doc: &mut Document, paths: &mut Vec<Arc<Node>>| {
+        // A trim since the last run ended, for the run that starts next.
+        let mut trimmed = false;
+        let end_run = |run: &mut Vec<Point>, trimmed: bool, doc: &mut Document, paths: &mut Vec<Arc<Node>>| {
             if !run.is_empty() {
                 let path = PathData::single(SubPath::polyline(run, false));
-                paths.push(Arc::new(Node::path(doc.alloc_id(), path, appearance.clone())));
+                let mut node = Node::path(doc.alloc_id(), path, appearance.clone());
+                if trimmed {
+                    node.edit_attrs(|a| a.data.push((TRIM.0.to_string(), TRIM.1.to_string())));
+                }
+                paths.push(Arc::new(node));
                 run.clear();
             }
         };
@@ -59,10 +73,15 @@ pub fn to_document(plan: &StitchPlan) -> Document {
                     extents = Some(extents.map_or(r, |e| e.union(r)));
                     run.push(q);
                 }
-                Step::Jump(_) | Step::Trim | Step::Stop => end_run(&mut run, &mut doc, &mut paths),
+                Step::Jump(_) | Step::Trim | Step::Stop => {
+                    let ended = !run.is_empty();
+                    end_run(&mut run, trimmed, &mut doc, &mut paths);
+                    // The flag belongs to the run that follows a trim, not to the run before it.
+                    trimmed = if ended { matches!(step, Step::Trim) } else { trimmed || matches!(step, Step::Trim) };
+                }
             }
         }
-        end_run(&mut run, &mut doc, &mut paths);
+        end_run(&mut run, trimmed, &mut doc, &mut paths);
         let mut group = Node::group(doc.alloc_id(), paths);
         group.name = Some(format!("Colour {}", i + 1));
         groups.push(Arc::new(group));
@@ -194,6 +213,26 @@ mod tests {
         assert_ne!(run.blocks[0], plan.blocks[0]);
         let manual = from_document(&doc, &FromDocOptions { mode: Some(Mode::Manual), ..Default::default() }).unwrap().plan;
         assert_eq!(manual.blocks[2].steps.iter().filter(|s| matches!(s, Step::Stitch(_))).count(), 2);
+    }
+
+    #[test]
+    fn a_jump_stays_a_jump_and_a_trim_a_trim_through_a_document() {
+        let p = |x: i32| Pt { x, y: 0 };
+        let steps = vec![
+            Step::Stitch(p(0)),
+            Step::Stitch(p(30)),
+            Step::Jump(p(400)),
+            Step::Stitch(p(400)),
+            Step::Stitch(p(430)),
+            Step::Trim,
+            Step::Jump(p(900)),
+            Step::Stitch(p(900)),
+            Step::Stitch(p(930)),
+        ];
+        let plan = StitchPlan { name: String::new(), blocks: vec![Block { thread: Thread::default(), steps }] };
+        let doc = to_document(&plan);
+        let back = from_document(&doc, &FromDocOptions::default()).unwrap().plan;
+        assert_eq!(back.blocks, plan.blocks);
     }
 
     #[test]

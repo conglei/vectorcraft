@@ -12,11 +12,14 @@ pub const LOCK_LENGTH: i32 = 6;
 pub struct PrepareOptions {
     /// Add lock stitches at the start and end of each run.
     pub locks: bool,
+    /// Add a trim before travel long enough that the machine would read it as one (see
+    /// [`MachineProfile::jumps_per_trim`]). Trims already in the plan stay either way.
+    pub travel_trims: bool,
 }
 
 impl Default for PrepareOptions {
     fn default() -> Self {
-        PrepareOptions { locks: true }
+        PrepareOptions { locks: true, travel_trims: true }
     }
 }
 
@@ -269,7 +272,7 @@ pub fn prepare(plan: &StitchPlan, profile: &MachineProfile, o: &PrepareOptions) 
     plan.check()?;
     let plan = if o.locks { add_locks(&plan) } else { plan };
     plan.check()?;
-    let plan = trim_long_travel(&plan, profile)?;
+    let plan = if o.travel_trims { trim_long_travel(&plan, profile)? } else { plan };
     plan.check()?;
     let plan = split_long_jumps(&plan, profile)?;
     let warnings = check(&plan, profile);
@@ -296,19 +299,27 @@ mod tests {
 
     #[test]
     fn small_stitches_are_dropped_but_not_the_last() {
-        let p = prepare(&plan(vec![S(0, 0), S(1, 0), S(30, 0), S(31, 0)]), &GENERIC, &PrepareOptions { locks: false }).unwrap().plan;
+        let p = prepare(&plan(vec![S(0, 0), S(1, 0), S(30, 0), S(31, 0)]), &GENERIC, &PrepareOptions { locks: false, ..Default::default() })
+            .unwrap()
+            .plan;
         assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(30, 0), S(31, 0)]);
     }
 
     #[test]
     fn a_long_stitch_becomes_jumps_then_a_stitch() {
-        let p = prepare(&plan(vec![S(0, 0), S(200, 0)]), &GENERIC, &PrepareOptions { locks: false }).unwrap().plan;
+        let p = prepare(&plan(vec![S(0, 0), S(200, 0)]), &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().plan;
         assert_eq!(p.blocks[0].steps, vec![S(0, 0), J(100, 0), J(200, 0), S(200, 0)]);
     }
 
     #[test]
     fn travel_of_three_jump_records_is_trimmed_first() {
-        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(300, 0), S(300, 0), S(330, 0)]), &GENERIC, &PrepareOptions { locks: false }).unwrap().plan;
+        let p = prepare(
+            &plan(vec![S(0, 0), S(30, 0), J(300, 0), S(300, 0), S(330, 0)]),
+            &GENERIC,
+            &PrepareOptions { locks: false, ..Default::default() },
+        )
+        .unwrap()
+        .plan;
         assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(30, 0), Step::Trim, J(120, 0), J(210, 0), J(300, 0), S(300, 0), S(330, 0)]);
     }
 
@@ -316,7 +327,7 @@ mod tests {
     fn travel_is_measured_from_where_the_lock_stitches_leave_the_needle() {
         // Before locks, 30 -> 272 is 242 units: two records. The end lock leaves the needle at 24,
         // and 24 -> 272 is 248 units: three records, which the machine reads as a trim.
-        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(272, 0), S(272, 0), S(300, 0)]), &GENERIC, &PrepareOptions { locks: true }).unwrap().plan;
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(272, 0), S(272, 0), S(300, 0)]), &GENERIC, &PrepareOptions::default()).unwrap().plan;
         let steps = &p.blocks[0].steps;
         let trim = steps.iter().position(|s| *s == Step::Trim).expect("a trim before the travel");
         assert_eq!(steps.get(trim - 1), Some(&S(24, 0)), "{steps:?}");
@@ -324,16 +335,26 @@ mod tests {
     }
 
     #[test]
+    fn travel_trims_can_be_turned_off_and_the_plans_own_trims_stay() {
+        let steps = vec![S(0, 0), S(30, 0), Step::Trim, J(120, 0), S(120, 0), S(150, 0), J(450, 0), S(450, 0), S(480, 0)];
+        let o = PrepareOptions { locks: false, travel_trims: false };
+        let p = prepare(&plan(steps.clone()), &GENERIC, &o).unwrap().plan;
+        assert_eq!(p.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count(), 1, "{:?}", p.blocks[0].steps);
+        let p = prepare(&plan(steps), &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().plan;
+        assert_eq!(p.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count(), 2, "{:?}", p.blocks[0].steps);
+    }
+
+    #[test]
     fn travel_at_the_start_of_a_colour_is_not_trimmed_again() {
         let mut p = plan(vec![S(0, 0), S(30, 0)]);
         p.blocks.push(Block { thread: Thread { rgb: [1, 2, 3], ..Default::default() }, steps: vec![J(400, 0), S(400, 0), S(430, 0)] });
-        let out = prepare(&p, &GENERIC, &PrepareOptions { locks: false }).unwrap().plan;
+        let out = prepare(&p, &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().plan;
         assert_eq!(out.blocks[1].steps, vec![J(123, 0), J(215, 0), J(308, 0), J(400, 0), S(400, 0), S(430, 0)]);
     }
 
     #[test]
     fn runs_are_locked_at_both_ends() {
-        let p = prepare(&plan(vec![S(0, 0), S(30, 0), S(60, 0)]), &GENERIC, &PrepareOptions { locks: true }).unwrap().plan;
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), S(60, 0)]), &GENERIC, &PrepareOptions::default()).unwrap().plan;
         assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(6, 0), S(0, 0), S(6, 0), S(30, 0), S(60, 0), S(54, 0), S(60, 0), S(54, 0)]);
     }
 
@@ -343,7 +364,7 @@ mod tests {
         for i in 0..16u8 {
             many.blocks.push(Block { thread: Thread { rgb: [i, 0, 0], ..Default::default() }, steps: vec![S(0, 0), S(6000, 0)] });
         }
-        let w = prepare(&many, &COMMERCIAL15, &PrepareOptions { locks: false }).unwrap().warnings;
+        let w = prepare(&many, &COMMERCIAL15, &PrepareOptions { locks: false, ..Default::default() }).unwrap().warnings;
         assert!(w.contains(&"16 thread colours, but the machine has 15 needles".to_string()));
         assert!(w.contains(&"the design is 600.0 × 0.0 mm, larger than the 500.0 × 350.0 mm field".to_string()));
     }
@@ -352,14 +373,14 @@ mod tests {
     fn an_empty_block_is_reported_by_its_one_based_number() {
         let mut p = plan(vec![S(0, 0), S(30, 0)]);
         p.blocks.push(Block::default());
-        let w = prepare(&p, &GENERIC, &PrepareOptions { locks: false }).unwrap().warnings;
+        let w = prepare(&p, &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().warnings;
         assert_eq!(w, vec!["colour 2 has no stitches".to_string()]);
     }
 
     #[test]
     fn a_plan_that_grows_past_the_step_limit_is_refused() {
         let p = plan(vec![S(0, 0), J(2_000_000_000, 0), S(2_000_000_000, 0)]);
-        assert!(prepare(&p, &GENERIC, &PrepareOptions { locks: false }).is_err());
+        assert!(prepare(&p, &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).is_err());
     }
 
     fn step() -> impl Strategy<Value = Step> {
@@ -383,7 +404,7 @@ mod tests {
                 name: String::new(),
                 blocks: blocks.into_iter().map(|steps| Block { thread: Thread::default(), steps }).collect(),
             };
-            let out = prepare(&input, &GENERIC, &PrepareOptions { locks }).unwrap().plan;
+            let out = prepare(&input, &GENERIC, &PrepareOptions { locks, ..Default::default() }).unwrap().plan;
             let (max, n) = (GENERIC.max_jump, i64::from(GENERIC.jumps_per_trim));
             // The true needle position, whether anything has been sewn, and whether the thread
             // was just cut (by a trim or a colour change).
