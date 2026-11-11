@@ -6,7 +6,8 @@ use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dst, exp};
 use vectorcraft_stitch::{
-    FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, UNITS_PER_MM, from_document, prepare, profile, to_document,
+    FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
+    from_document, prepare, profile, to_document,
 };
 
 use super::super::{Result, bad, number_or, switch_or, text_param};
@@ -82,7 +83,90 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         description: "the design name in the file (default: the document's title without its extension)",
     },
     FormatOption { name: "selectedOnly", ty: "boolean", default: "false", description: "only the selected objects" },
+    FormatOption { name: "fill", ty: "object", default: "null", description: FILL_DOC },
+    FormatOption { name: "stroke", ty: "object", default: "null", description: STROKE_DOC },
 ];
+
+/// What the `fill` option takes.
+pub(crate) const FILL_DOC: &str = "how filled paths are sewn: {type?: tatami (default; rows of running stitch, holes kept by the path's fill rule, sewn before the path's outline) | none (fills are not sewn), angle?: 0 (row direction in degrees, counter-clockwise from horizontal, -360–360), spacing?: 0.4 (mm between rows, 0.2–5), stitchLength?: 3 (mm along a row, 1–8), stagger?: 0.25 (how far each row's penetrations move along the row, as a fraction of the stitch length, 0–1)}; not used on the layer an opened stitch file made";
+
+/// What the `stroke` option takes.
+pub(crate) const STROKE_DOC: &str = "how stroked paths are sewn: {type?: run (default; running stitch, or anchor by anchor by mode) | satin (a satin column centred on the path, square ends, stitches longer than maxStitch split), spacing?: 0.4 (satin, mm peak to peak, 0.2–5), width?: (satin, mm rail to rail, 0.5–20; default the stroke weight, held to 0.5–20 with a warning)}; satin is not used on the layer an opened stitch file made";
+
+const FILL_KEYS: &[&str] = &["type", "angle", "spacing", "stitchLength", "stagger"];
+const STROKE_KEYS: &[&str] = &["type", "spacing", "width"];
+
+/// The object `key` of `p` (`None` when not given), with only `keys`.
+fn sub_object<'a>(cmd: &str, p: &'a Value, key: &str, keys: &[&str]) -> Result<Option<&'a Value>> {
+    let Some(v) = p.get(key).filter(|v| !v.is_null()) else { return Ok(None) };
+    let Some(o) = v.as_object() else { return Err(bad(cmd, format!("{key} must be an object: {{{}}}", keys.join(", ")))) };
+    if let Some(k) = o.keys().find(|k| !keys.contains(&k.as_str())) {
+        return Err(bad(cmd, format!("unknown parameter `{key}.{k}`; {key} takes: {}", keys.join(", "))));
+    }
+    Ok(Some(v))
+}
+
+/// The number `key` of the `of` object `p` (default `default`), finite and within `lo..=hi`.
+fn nested(cmd: &str, p: &Value, of: &str, key: &str, default: f64, lo: f64, hi: f64) -> Result<f64> {
+    let unit = match key {
+        "angle" => " degrees",
+        "stagger" => "",
+        _ => " mm",
+    };
+    let v = match p.get(key) {
+        None | Some(Value::Null) => default,
+        Some(v) => v.as_f64().ok_or_else(|| bad(cmd, format!("{of}.{key} must be a number, not {v}")))?,
+    };
+    if !(v.is_finite() && (lo..=hi).contains(&v)) {
+        return Err(bad(cmd, format!("{of}.{key} must be {lo}–{hi}{unit}, not {v}")));
+    }
+    Ok(v)
+}
+
+/// The string `key` of the `of` object `p` (default `default`), one of `allowed`.
+fn nested_choice<'a>(cmd: &str, p: &'a Value, of: &str, key: &str, default: &'a str, allowed: &[&str]) -> Result<&'a str> {
+    let v = match p.get(key) {
+        None | Some(Value::Null) => default,
+        Some(v) => v.as_str().ok_or_else(|| bad(cmd, format!("{of}.{key} must be a string, not {v}")))?,
+    };
+    if !allowed.contains(&v) {
+        return Err(bad(cmd, format!("{of}.{key} `{v}`: {}", allowed.join(" or "))));
+    }
+    Ok(v)
+}
+
+/// The `fill` option.
+fn fill_options(cmd: &str, p: &Value) -> Result<FillOptions> {
+    let Some(f) = sub_object(cmd, p, "fill", FILL_KEYS)? else { return Ok(FillOptions::default()) };
+    let d = FillParams::default();
+    let kind = match nested_choice(cmd, f, "fill", "type", "tatami", &["tatami", "none"])? {
+        "none" => FillType::None,
+        _ => FillType::Tatami,
+    };
+    let params = FillParams {
+        angle: nested(cmd, f, "fill", "angle", d.angle, -360.0, 360.0)?,
+        spacing: nested(cmd, f, "fill", "spacing", d.spacing, 0.2, 5.0)?,
+        stitch_length: nested(cmd, f, "fill", "stitchLength", d.stitch_length, 1.0, 8.0)?,
+        stagger: nested(cmd, f, "fill", "stagger", d.stagger, 0.0, 1.0)?,
+        max_stitch: d.max_stitch,
+    };
+    Ok(FillOptions { kind, params })
+}
+
+/// The `stroke` option.
+fn stroke_options(cmd: &str, p: &Value) -> Result<StrokeOptions> {
+    let Some(s) = sub_object(cmd, p, "stroke", STROKE_KEYS)? else { return Ok(StrokeOptions::default()) };
+    let d = StrokeOptions::default();
+    let kind = match nested_choice(cmd, s, "stroke", "type", "run", &["run", "satin"])? {
+        "satin" => StrokeType::Satin,
+        _ => StrokeType::Run,
+    };
+    let width = match s.get("width") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(nested(cmd, s, "stroke", "width", 0.0, 0.5, 20.0)?),
+    };
+    Ok(StrokeOptions { kind, spacing: nested(cmd, s, "stroke", "spacing", d.spacing, 0.2, 5.0)?, width })
+}
 
 /// The stitch options of an export, checked.
 struct Options {
@@ -183,7 +267,15 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     profile.min_stitch = units(min_stitch);
     profile.jumps_per_trim = jumps_per_trim;
     Ok(Options {
-        from: FromDocOptions { mode, stitch_length: units(stitch_length), min_stitch: units(min_stitch), only: None },
+        from: FromDocOptions {
+            mode,
+            stitch_length: units(stitch_length),
+            min_stitch: units(min_stitch),
+            only: None,
+            max_stitch: profile.max_stitch,
+            fill: fill_options(cmd, p)?,
+            stroke: stroke_options(cmd, p)?,
+        },
         profile,
         locks,
         travel_trims,

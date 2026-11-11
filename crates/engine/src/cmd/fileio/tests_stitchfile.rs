@@ -462,3 +462,88 @@ fn an_opened_stitch_file_keeps_its_trims_and_gets_no_travel_trims() {
         assert!(off < on, "{format}: {off} !< {on}");
     }
 }
+
+/// The needle points of a DST file.
+fn dst_stitches(bytes: &[u8]) -> usize {
+    needle_points(&read_plan("dst", bytes)).iter().map(Vec::len).sum()
+}
+
+/// A 20 × 10 mm rectangle filled blue with no stroke, and a 20 mm circle stroked red with no
+/// fill.
+fn filled_rectangle_and_stroked_circle() -> Session {
+    let mut s = session();
+    s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+    s.execute("paint.setFill", &json!({"color": "#0000ff"})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 20.0 * PT_PER_MM, "height": 10.0 * PT_PER_MM})).unwrap();
+    // Paint set with art selected changes that art: deselect to set the next shape's paint.
+    s.execute("select.none", &json!({})).unwrap();
+    s.execute("paint.setFill", &json!({"none": true})).unwrap();
+    s.execute("paint.setStroke", &json!({"color": "#ff0000"})).unwrap();
+    let d = 20.0 * PT_PER_MM;
+    s.execute("shape.ellipse", &json!({"x": 0, "y": 40.0 * PT_PER_MM, "width": d, "height": d})).unwrap();
+    s
+}
+
+#[test]
+fn a_filled_rectangle_and_a_stroked_curve_export_to_dst() {
+    let mut s = filled_rectangle_and_stroked_circle();
+    let info = s.execute("stitch.info", &json!({"locks": false})).unwrap();
+    // The fill: 25 rows of 20 mm at 3 mm stitches, about 8 needle points a row.
+    let fill = thread_stitches(&info, "#0000ff");
+    assert!((150..=300).contains(&fill), "{info}");
+    // The circle: 62.8 mm of running stitch at 2.5 mm.
+    let run = thread_stitches(&info, "#ff0000");
+    assert!((25..=30).contains(&run), "{info}");
+    assert_eq!(info["warnings"].as_array().map(Vec::len), Some(0), "{info}");
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst", "locks": false})).unwrap());
+    assert_eq!(dst_stitches(&bytes) as u64, info["stitches"].as_u64().unwrap(), "{info}");
+    // Rows 0.4 mm apart: the written fill covers 10 mm in 25 rows.
+    let plan = read_plan("dst", &bytes);
+    let mut ys: Vec<i32> = needle_points(&plan)[0].iter().map(|p| p.y).collect();
+    ys.sort_unstable();
+    ys.dedup();
+    assert!((25..=30).contains(&ys.len()), "{ys:?}");
+}
+
+#[test]
+fn the_fill_and_stroke_options_choose_the_stitch_types() {
+    let mut s = filled_rectangle_and_stroked_circle();
+    // No fill: the rectangle is left out, with a warning.
+    let info = s.execute("stitch.info", &json!({"locks": false, "fill": {"type": "none"}})).unwrap();
+    assert_eq!(info["threads"].as_array().map(Vec::len), Some(1), "{info}");
+    assert!(info["warnings"][0].as_str().unwrap().contains("filled objects"), "{info}");
+    // Wider rows: fewer stitches.
+    let dense = thread_stitches(&s.execute("stitch.info", &json!({"locks": false})).unwrap(), "#0000ff");
+    let sparse = thread_stitches(&s.execute("stitch.info", &json!({"locks": false, "fill": {"spacing": 0.8, "angle": 45}})).unwrap(), "#0000ff");
+    assert!(sparse * 3 < dense * 2, "{sparse} vs {dense}");
+    // Satin: a 3 mm column around the circle, about 2 needle points per 0.4 mm.
+    let satin = s.execute("stitch.info", &json!({"locks": false, "stroke": {"type": "satin", "width": 3}})).unwrap();
+    let n = thread_stitches(&satin, "#ff0000");
+    assert!((300..=330).contains(&n), "{satin}");
+    // The export takes the same options.
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst", "locks": false, "stroke": {"type": "satin", "width": 3}})).unwrap());
+    assert_eq!(dst_stitches(&bytes) as u64, satin["stitches"].as_u64().unwrap());
+}
+
+#[test]
+fn bad_fill_and_stroke_options_are_refused() {
+    let mut s = filled_rectangle_and_stroked_circle();
+    for (p, key) in [
+        (json!({"fill": 3}), "fill"),
+        (json!({"fill": {"type": "satin"}}), "fill.type"),
+        (json!({"fill": {"spacing": 0.1}}), "fill.spacing"),
+        (json!({"fill": {"stitchLength": 9}}), "fill.stitchLength"),
+        (json!({"fill": {"stagger": 2}}), "fill.stagger"),
+        (json!({"fill": {"angle": "x"}}), "fill.angle"),
+        (json!({"fill": {"nope": 1}}), "fill.nope"),
+        (json!({"stroke": {"type": "zigzag"}}), "stroke.type"),
+        (json!({"stroke": {"width": 0.1}}), "stroke.width"),
+        (json!({"stroke": {"spacing": 9}}), "stroke.spacing"),
+        (json!({"stroke": {"nope": 1}}), "stroke.nope"),
+    ] {
+        for id in ["document.export", "stitch.info"] {
+            let e = s.execute(id, &with(json!({"format": "dst"}), &p)).unwrap_err().to_string();
+            assert!(e.contains(key), "{id} {p}: {e}");
+        }
+    }
+}

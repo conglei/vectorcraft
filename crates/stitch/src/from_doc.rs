@@ -4,10 +4,12 @@ use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
 use vectorcraft_doc::{Document, Node, NodeId, NodeKind};
-use vectorcraft_geom::{AnchorKind, BezPath, PathEl, SubPath};
+use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathEl, SubPath};
 
+use crate::fill::{FillParams, tatami};
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
+use crate::satin::{SatinParams, satin};
 use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
@@ -24,6 +26,53 @@ pub enum Mode {
     Manual,
 }
 
+/// What a filled path becomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FillType {
+    /// Tatami fill: rows of running stitch across the region.
+    #[default]
+    Tatami,
+    /// Fills are not sewn.
+    None,
+}
+
+/// How filled paths are sewn.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct FillOptions {
+    pub kind: FillType,
+    /// Tatami settings; its `max_stitch` is replaced by [`FromDocOptions::max_stitch`].
+    pub params: FillParams,
+}
+
+/// What a stroked path becomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum StrokeType {
+    /// Running stitch along the path (or anchor by anchor, by [`FromDocOptions::mode`]).
+    #[default]
+    Run,
+    /// A satin column centred on the path.
+    Satin,
+}
+
+/// How stroked paths are sewn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrokeOptions {
+    pub kind: StrokeType,
+    /// Satin spacing, peak to peak, in mm.
+    pub spacing: f64,
+    /// Satin width in mm; `None`: the stroke weight, held to [`SATIN_WIDTH_MM`].
+    pub width: Option<f64>,
+}
+
+impl Default for StrokeOptions {
+    fn default() -> Self {
+        Self { kind: StrokeType::Run, spacing: 0.4, width: None }
+    }
+}
+
+/// The satin widths a stroke weight is held to, in mm.
+pub const SATIN_WIDTH_MM: (f64, f64) = (0.5, 20.0);
+
 /// Options for [`from_document`].
 #[derive(Clone, Debug)]
 pub struct FromDocOptions {
@@ -39,11 +88,25 @@ pub struct FromDocOptions {
     pub min_stitch: i32,
     /// Stitch only these objects and what they contain; `None`: the whole document.
     pub only: Option<Vec<NodeId>>,
+    /// The longest stitch, in plan units: fills and satin columns split longer ones.
+    pub max_stitch: i32,
+    /// How filled paths are sewn (not on an opened stitch file's layer).
+    pub fill: FillOptions,
+    /// How stroked paths are sewn (satin not on an opened stitch file's layer).
+    pub stroke: StrokeOptions,
 }
 
 impl Default for FromDocOptions {
     fn default() -> Self {
-        Self { mode: None, stitch_length: 25, min_stitch: 3, only: None }
+        Self {
+            mode: None,
+            stitch_length: 25,
+            min_stitch: 3,
+            only: None,
+            max_stitch: 121,
+            fill: FillOptions::default(),
+            stroke: StrokeOptions::default(),
+        }
     }
 }
 
@@ -58,9 +121,11 @@ pub struct Planned {
     pub unmarked_runs: usize,
 }
 
-/// The stitch plan for `doc`'s visible stroked paths and compound paths, bottom to top. Each
-/// subpath is one run; consecutive objects of one thread colour share a block. Template and
-/// non-printing layers, guides and clipping paths are not sewn; art inside a clip is sewn in full.
+/// The stitch plan for `doc`'s visible filled and stroked paths and compound paths, bottom to
+/// top. A fill is sewn first (tatami), then the outline (running stitch or satin), each subpath
+/// one run; consecutive runs of one thread colour share a block. Template and non-printing
+/// layers, guides and clipping paths are not sewn; art inside a clip is sewn in full. On a layer
+/// an opened stitch file made, fills and satin are not used: its art keeps its needle points.
 pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, String> {
     let mut w = Walk::new(o);
     // `doc.layers` is stored bottom first, the order the renderer paints them in.
@@ -68,7 +133,7 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
         w.node(layer, Under::default())?;
     }
     if w.blocks.is_empty() {
-        return Err("nothing to stitch: the document has no stroked paths".into());
+        return Err(NOTHING.into());
     }
     let mut warnings = vec![];
     if w.filled > 0 {
@@ -80,6 +145,12 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     if w.patterned {
         warnings.push("a stroke with a gradient or pattern was stitched in black".into());
     }
+    if w.patterned_fill {
+        warnings.push("a fill with a gradient or pattern was stitched in black".into());
+    }
+    if w.held_width {
+        warnings.push(format!("a satin width was held to {}–{} mm", SATIN_WIDTH_MM.0, SATIN_WIDTH_MM.1));
+    }
     if w.clipped {
         warnings.push("clipped art was stitched in full: the clip was ignored".into());
     }
@@ -87,6 +158,9 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     plan.check()?;
     Ok(Planned { plan, warnings, marked_runs: w.marked_runs, unmarked_runs: w.unmarked_runs })
 }
+
+/// The error for a document with nothing to sew.
+const NOTHING: &str = "nothing to stitch: the document has no stroked or filled paths";
 
 struct Walk<'o> {
     o: &'o FromDocOptions,
@@ -99,6 +173,9 @@ struct Walk<'o> {
     filled: usize,
     other: usize,
     patterned: bool,
+    patterned_fill: bool,
+    /// A stroke weight was outside [`SATIN_WIDTH_MM`].
+    held_width: bool,
     /// Art inside a clip was sewn.
     clipped: bool,
     marked_runs: usize,
@@ -129,7 +206,21 @@ struct Under {
 impl<'o> Walk<'o> {
     fn new(o: &'o FromDocOptions) -> Walk<'o> {
         let only = o.only.as_ref().map(|ids| ids.iter().copied().collect());
-        Walk { o, only, blocks: vec![], pos: None, steps: 0, filled: 0, other: 0, patterned: false, clipped: false, marked_runs: 0, unmarked_runs: 0 }
+        Walk {
+            o,
+            only,
+            blocks: vec![],
+            pos: None,
+            steps: 0,
+            filled: 0,
+            other: 0,
+            patterned: false,
+            patterned_fill: false,
+            held_width: false,
+            clipped: false,
+            marked_runs: 0,
+            unmarked_runs: 0,
+        }
     }
 
     /// Stitch `n` and what it holds, given what it lies under. Recursion is bounded by the
@@ -167,49 +258,85 @@ impl<'o> Walk<'o> {
     }
 
     fn shape(&mut self, n: &Node, up: Under) -> Result<(), String> {
-        let stroke = n.appearance.stroke().filter(|s| s.visible).map(|s| &s.paint);
-        let rgb = match stroke {
-            None | Some(Paint::None) => {
-                if !n.appearance.fill_paint().is_none() {
-                    self.filled += 1;
-                }
-                return Ok(());
+        let stroke = n.appearance.stroke().filter(|s| s.visible && !s.paint.is_none());
+        let sew_fill = !up.marked && self.o.fill.kind == FillType::Tatami;
+        let fill = n.appearance.fill().filter(|f| sew_fill && f.visible && !f.paint.is_none());
+        if stroke.is_none() && fill.is_none() {
+            if !n.appearance.fill_paint().is_none() {
+                self.filled += 1;
             }
-            Some(Paint::Solid { color, .. }) => {
-                let [r, g, b, _] = color.to_rgba8(1.0);
-                [r, g, b]
-            }
-            Some(Paint::Gradient(_) | Paint::Pattern { .. }) => {
-                self.patterned = true;
-                [0, 0, 0]
-            }
-        };
-        let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
+            return Ok(());
+        }
         let mut subpaths: Vec<&SubPath> = vec![];
         collect_subpaths(n, &mut subpaths);
         // Only the first run of a path can follow the trim a file held.
         let mut trim = up.marked && follows_trim(n);
+        let max_mm = f64::from(self.o.max_stitch) / crate::UNITS_PER_MM;
+        if let Some(f) = fill {
+            let rgb = thread(&f.paint, &mut self.patterned_fill);
+            let rule = match &n.kind {
+                NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
+                _ => FillRule::default(),
+            };
+            let mut rings = vec![];
+            for sp in &subpaths {
+                rings.push(flatten(sp, MAX_STEPS.saturating_sub(self.steps))?.0);
+            }
+            let params = FillParams { max_stitch: max_mm, ..self.o.fill.params };
+            for run in tatami(&rings, rule, &params, MAX_STEPS.saturating_sub(self.steps))? {
+                self.count_run(&run, up);
+                // Fills are never on an opened stitch file's layer.
+                self.add_run(rgb, &run, Mode::Run, Join::Drawn)?;
+            }
+        }
+        let Some(stroke) = stroke else { return Ok(()) };
+        let rgb = thread(&stroke.paint, &mut self.patterned);
+        let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
+        let satin_params = if self.o.stroke.kind == StrokeType::Satin && !up.marked {
+            let (lo, hi) = SATIN_WIDTH_MM;
+            let width = match self.o.stroke.width {
+                Some(w) => w,
+                None => {
+                    let w = stroke.width * MM_PER_PT;
+                    let held = if w.is_finite() { w.clamp(lo, hi) } else { lo };
+                    self.held_width |= held != w;
+                    held
+                }
+            };
+            Some(SatinParams { width, spacing: self.o.stroke.spacing, max_stitch: max_mm })
+        } else {
+            None
+        };
         for sp in subpaths {
             let budget = MAX_STEPS.saturating_sub(self.steps);
-            let run = match mode {
-                Mode::Run => run_of(sp, self.o.stitch_length, budget)?,
-                Mode::Manual => manual_of(sp, budget)?,
+            let run = match (satin_params, mode) {
+                (Some(p), _) => satin(&flatten(sp, budget)?.0, sp.closed && sp.segment_count() > 0, &p, budget)?,
+                (None, Mode::Run) => run_of(sp, self.o.stitch_length, budget)?,
+                (None, Mode::Manual) => manual_of(sp, budget)?,
             };
-            if !run.is_empty() {
-                self.clipped |= up.clipped;
-                if up.marked {
-                    self.marked_runs += 1;
-                } else {
-                    self.unmarked_runs += 1;
-                }
-            }
+            self.count_run(&run, up);
             let after = if up.marked { Join::Opened { trim } } else { Join::Drawn };
             if !run.is_empty() {
                 trim = false;
             }
-            self.add_run(rgb, &run, mode, after)?;
+            // A satin column is sewn like running stitch: a first stitch where the needle is
+            // would sew nothing.
+            self.add_run(rgb, &run, if satin_params.is_some() { Mode::Run } else { mode }, after)?;
         }
         Ok(())
+    }
+
+    /// Count `run` as marked or unmarked art, and note art inside a clip.
+    fn count_run(&mut self, run: &[Pt], up: Under) {
+        if run.is_empty() {
+            return;
+        }
+        self.clipped |= up.clipped;
+        if up.marked {
+            self.marked_runs += 1;
+        } else {
+            self.unmarked_runs += 1;
+        }
     }
 
     /// Sew `run` in thread `rgb`: a new block at a colour change (which starts with a jump to the
@@ -258,6 +385,21 @@ impl<'o> Walk<'o> {
     }
 }
 
+/// The thread colour of `paint`: its solid colour, or black for a gradient or pattern (noted in
+/// `patterned`).
+fn thread(paint: &Paint, patterned: &mut bool) -> [u8; 3] {
+    match paint {
+        Paint::Solid { color, .. } => {
+            let [r, g, b, _] = color.to_rgba8(1.0);
+            [r, g, b]
+        }
+        _ => {
+            *patterned = true;
+            [0, 0, 0]
+        }
+    }
+}
+
 /// The subpaths of a path, or of a compound path's member paths (in their order).
 fn collect_subpaths<'n>(n: &'n Node, out: &mut Vec<&'n SubPath>) {
     match &n.kind {
@@ -270,6 +412,9 @@ fn collect_subpaths<'n>(n: &'n Node, out: &mut Vec<&'n SubPath>) {
         _ => {}
     }
 }
+
+/// Flattened points in millimetres and a corner flag for each.
+type Flat = (Vec<(f64, f64)>, Vec<bool>);
 
 const TOO_FAR: &str = "the art lies too far from the origin to stitch";
 
@@ -285,7 +430,14 @@ fn mm(p: vectorcraft_geom::Point) -> Result<(f64, f64), String> {
 /// Running stitch along `sp`, flattened, with its corner anchors kept as corners. More than
 /// `budget` flattened points is an error, found before they are all made.
 fn run_of(sp: &SubPath, stitch_length: i32, budget: usize) -> Result<Vec<Pt>, String> {
-    let Some(first) = sp.anchors.first() else { return Ok(vec![]) };
+    let (points, corners) = flatten(sp, budget)?;
+    Ok(run_stitches(&points, &corners, sp.closed && sp.segment_count() > 0, stitch_length))
+}
+
+/// `sp` flattened to millimetres, with a corner flag per point. A closed subpath's first point is
+/// not repeated at the end. More than `budget` points is an error, found before they are all made.
+fn flatten(sp: &SubPath, budget: usize) -> Result<Flat, String> {
+    let Some(first) = sp.anchors.first() else { return Ok((vec![], vec![])) };
     let mut points = vec![mm(first.p)?];
     let mut corners = vec![first.kind == AnchorKind::Corner];
     let tolerance = FLATTEN_TOLERANCE_MM / MM_PER_PT;
@@ -330,11 +482,11 @@ fn run_of(sp: &SubPath, stitch_length: i32, budget: usize) -> Result<Vec<Pt>, St
         corners.push(end.kind == AnchorKind::Corner);
     }
     if sp.closed && count > 0 {
-        // The closing segment ends back on the first anchor, which `closed` adds below.
+        // The closing segment ends back on the first anchor, which callers close again.
         points.pop();
         corners.pop();
     }
-    Ok(run_stitches(&points, &corners, sp.closed && count > 0, stitch_length))
+    Ok((points, corners))
 }
 
 /// One needle point per anchor; a closed subpath returns to its first anchor. More than
@@ -449,15 +601,95 @@ mod tests {
     #[test]
     fn fills_hidden_art_and_other_kinds_are_skipped_with_warnings() {
         // a filled square with no stroke, a hidden stroked line, a visible stroked line
-        let out = from_document(&mixed_doc(), &FromDocOptions::default()).unwrap();
+        let no_fills = FromDocOptions { fill: FillOptions { kind: FillType::None, ..Default::default() }, ..Default::default() };
+        let out = from_document(&mixed_doc(), &no_fills).unwrap();
         assert_eq!(out.plan.blocks.len(), 1);
         assert_eq!(out.warnings, vec!["1 filled objects without a stroke were not stitched".to_string()]);
+        // By default the fill is sewn, in its own colour, before the line.
+        let out = from_document(&mixed_doc(), &FromDocOptions::default()).unwrap();
+        assert_eq!(out.plan.blocks.iter().map(|b| b.thread.rgb).collect::<Vec<_>>(), vec![[0, 255, 0], RED]);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    fn filled_and_stroked(path: PathData, fill: [u8; 3], stroke: [u8; 3], weight_pt: f64) -> (PathData, Appearance) {
+        let c = |rgb: [u8; 3]| Paint::solid(Color::rgb8(rgb[0], rgb[1], rgb[2]));
+        (path, Appearance::basic(c(fill), c(stroke), weight_pt))
+    }
+
+    #[test]
+    fn a_filled_and_stroked_path_is_filled_first_then_outlined() {
+        let d = doc_with(vec![filled_and_stroked(square_mm(10.0), BLUE, RED, 1.0)]);
+        let out = from_document(&d, &FromDocOptions::default()).unwrap();
+        assert_eq!(out.plan.blocks.iter().map(|b| b.thread.rgb).collect::<Vec<_>>(), vec![BLUE, RED]);
+        // The fill: rows 0.4 mm apart across 10 mm.
+        let fill: Vec<Pt> = out.plan.blocks[0].steps.iter().filter_map(|s| if let Step::Stitch(p) = s { Some(*p) } else { None }).collect();
+        assert!(fill.iter().all(|p| (0..=100).contains(&p.x) && (0..=100).contains(&p.y)), "{fill:?}");
+        assert!(fill.len() > 25 * 4, "{}", fill.len());
+        // The outline: running stitch, as before.
+        assert_eq!(out.plan.blocks[1].steps.iter().filter(|s| matches!(s, Step::Stitch(_))).count(), 17);
+        assert_eq!(out.unmarked_runs, 2);
+    }
+
+    #[test]
+    fn a_satin_stroke_takes_the_stroke_weight_as_its_width() {
+        let d = doc_with(vec![stroked(line_mm(0.0, 0.0, 10.0, 0.0), RED)]);
+        let satin =
+            |width: Option<f64>| FromDocOptions { stroke: StrokeOptions { kind: StrokeType::Satin, spacing: 0.4, width }, ..Default::default() };
+        // A 4 mm stroke weight: rails at y = +-2 mm.
+        let mut heavy = d.clone();
+        let mut layer = (*heavy.layers[0]).clone();
+        let path = layer.children().unwrap()[0].clone();
+        let mut path = (*path).clone();
+        path.appearance.stroke_mut().unwrap().width = 4.0 * PT_PER_MM;
+        *layer.children_mut().unwrap() = vec![Arc::new(path)];
+        heavy.layers = vec![Arc::new(layer)];
+        let out = from_document(&heavy, &satin(None)).unwrap();
+        let ys: Vec<i32> = out.plan.points().map(|p| p.y).collect();
+        assert_eq!(ys.iter().min(), Some(&-20));
+        assert_eq!(ys.iter().max(), Some(&20));
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        // A given width wins; a hairline stroke weight is held to the narrowest satin, with a
+        // warning.
+        let out = from_document(&d, &satin(Some(2.0))).unwrap();
+        assert_eq!(out.plan.points().map(|p| p.y).max(), Some(10));
+        let out = from_document(&d, &satin(None)).unwrap();
+        assert_eq!(out.plan.points().map(|p| p.y).max(), Some(3));
+        assert_eq!(out.warnings, vec!["a satin width was held to 0.5–20 mm".to_string()]);
+    }
+
+    #[test]
+    fn an_opened_stitch_files_layer_keeps_its_needle_points() {
+        let d = doc_with(vec![filled_and_stroked(square_mm(10.0), BLUE, RED, 1.0)]);
+        let mut marked = d.clone();
+        let plan = from_document(
+            &d,
+            &FromDocOptions { fill: FillOptions { kind: FillType::None, ..Default::default() }, mode: Some(Mode::Manual), ..Default::default() },
+        )
+        .unwrap()
+        .plan;
+        let opened = crate::to_document(&plan);
+        marked.layers = opened.layers.clone();
+        // Fill and satin options do not reach art on the opened file's layer.
+        let o = FromDocOptions { stroke: StrokeOptions { kind: StrokeType::Satin, ..Default::default() }, ..Default::default() };
+        let out = from_document(&marked, &o).unwrap();
+        assert_eq!(out.plan.blocks.len(), 1);
+        assert_eq!(out.marked_runs, 1);
+        assert_eq!(out.plan.points().count(), 5);
+    }
+
+    #[test]
+    fn a_gradient_fill_is_sewn_in_black_with_a_warning() {
+        let mut a = Appearance::basic(Paint::None, Paint::None, 1.0);
+        a.set_fill(Paint::Gradient(Box::new(GradientPaint::new(Gradient::default()))));
+        let out = from_document(&doc_with(vec![(square_mm(5.0), a)]), &FromDocOptions::default()).unwrap();
+        assert_eq!(out.plan.blocks[0].thread.rgb, [0, 0, 0]);
+        assert_eq!(out.warnings, vec!["a fill with a gradient or pattern was stitched in black".to_string()]);
     }
 
     #[test]
     fn degenerate_paths_add_nothing() {
         let d = doc_with(vec![stroked(single_anchor(), RED), stroked(line_mm(5.0, 5.0, 5.0, 5.0), RED)]);
-        assert_eq!(from_document(&d, &FromDocOptions::default()).unwrap_err(), "nothing to stitch: the document has no stroked paths");
+        assert_eq!(from_document(&d, &FromDocOptions::default()).unwrap_err(), NOTHING);
     }
 
     #[test]
@@ -526,7 +758,7 @@ mod tests {
             }
         });
         for d in [template, hidden] {
-            assert_eq!(from_document(&d, &FromDocOptions::default()).unwrap_err(), "nothing to stitch: the document has no stroked paths");
+            assert_eq!(from_document(&d, &FromDocOptions::default()).unwrap_err(), NOTHING);
         }
         assert!(from_document(&doc_with(art()), &FromDocOptions::default()).is_ok());
     }
@@ -609,6 +841,68 @@ mod tests {
         for p in &pts {
             let r = f64::from(p.x).hypot(f64::from(p.y));
             assert!((r - 100.0).abs() < 1.5, "{p:?} is {r} units from the centre");
+        }
+    }
+
+    /// A filled ring outlined in satin, at any angle and size: no stitch is past the machine's
+    /// maximum, so `prepare` has none to split, and it warns of nothing.
+    mod prepared {
+        use proptest::prelude::*;
+
+        use super::*;
+        use crate::{COMMERCIAL15, FillParams, PrepareOptions, prepare};
+
+        fn ring(w: f64, h: f64) -> PathData {
+            let outer = SubPath::polyline(&[mm(0.0, 0.0), mm(w, 0.0), mm(w, h), mm(0.0, h)], true);
+            let inner = SubPath::polyline(&[mm(w * 0.3, h * 0.3), mm(w * 0.7, h * 0.3), mm(w * 0.7, h * 0.7), mm(w * 0.3, h * 0.7)], true);
+            PathData::new(vec![outer, inner])
+        }
+
+        /// The longest stitch from one needle point to the next, in plan units.
+        fn longest(plan: &crate::StitchPlan) -> f64 {
+            let mut at: Option<Pt> = None;
+            let mut most = 0.0f64;
+            for s in plan.blocks.iter().flat_map(|b| b.steps.iter()) {
+                match s {
+                    Step::Stitch(p) => {
+                        if let Some(a) = at {
+                            most = most.max(a.dist(*p));
+                        }
+                        at = Some(*p);
+                    }
+                    Step::Jump(p) => at = Some(*p),
+                    _ => {}
+                }
+            }
+            most
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(24))]
+
+            #[test]
+            fn fills_and_satin_pass_prepare_unchanged(w in 10.0f64..80.0, h in 10.0f64..80.0, angle in -90.0f64..90.0, width in 1.0f64..15.0) {
+                let mut look = Appearance::basic(Paint::solid(Color::rgb8(0, 0, 255)), Paint::solid(Color::rgb8(255, 0, 0)), 1.0);
+                look.stroke_mut().unwrap().width = width * PT_PER_MM;
+                let mut d = doc_with(vec![(ring(w, h), look)]);
+                let mut layer = (*d.layers[0]).clone();
+                let mut node = (*layer.children().unwrap()[0]).clone();
+                if let NodeKind::Path { rule, .. } = &mut node.kind {
+                    *rule = FillRule::EvenOdd;
+                }
+                *layer.children_mut().unwrap() = vec![Arc::new(node)];
+                d.layers = vec![Arc::new(layer)];
+                let o = FromDocOptions {
+                    fill: FillOptions { kind: FillType::Tatami, params: FillParams { angle, ..Default::default() } },
+                    stroke: StrokeOptions { kind: StrokeType::Satin, ..Default::default() },
+                    ..Default::default()
+                };
+                let made = from_document(&d, &o).unwrap();
+                prop_assert!(made.warnings.is_empty(), "{:?}", made.warnings);
+                let prepared = prepare(&made.plan, &COMMERCIAL15, &PrepareOptions { locks: true, travel_trims: true }).unwrap();
+                prop_assert!(prepared.warnings.is_empty(), "{:?}", prepared.warnings);
+                prop_assert!(longest(&made.plan) <= f64::from(COMMERCIAL15.max_stitch), "{}", longest(&made.plan));
+            }
         }
     }
 }
