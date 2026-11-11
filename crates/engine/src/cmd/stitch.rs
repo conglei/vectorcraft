@@ -15,6 +15,7 @@ use vectorcraft_stitch::{
 
 use super::edit::roots_of;
 use super::fileio::stitchfile;
+use super::stitchthreads;
 use super::{CommandSpec, Result, Session, bad, cmd, has_doc, number_or, switch_or, text_param};
 
 const C: &str = "stitch.info";
@@ -30,7 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Info",
             [],
             None,
-            "{format?: dst (default) | dsb | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | bai_mirror (a commercial single-head 15-needle machine, 350 x 500 mm; the same limits, and a warning for a format its panel does not read: DST and DSB) | generic (no needle or field limits), mode?: run (running stitch along each stroked path) | manual (one needle point per anchor) (given: for all art; not given: art on the layer an opened stitch file made is manual, so its needle points export unchanged, and all other art is run), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP and DSB 12.7, their default too: longer stitches are split into equal pieces, jumps and a final stitch), locks?: (lock stitches at the start and end of each run; not given: off when everything stitched is on an opened stitch file's layer, on otherwise, with a warning when that file's runs get them too), travelTrims?: (a trim before travel long enough that the machine would read it as one; true: for all art, false: for none, the trims the plan has stay either way; not given: off when everything stitched is on an opened stitch file's layer, which keeps its own trims, on otherwise), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch, returnToStart?: true (the file ends with travel back to its origin; not given: off when everything stitched is on an opened stitch file's layer, on otherwise), name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone), fill?: {type?: tatami (default; rows of running stitch, holes kept by the fill rule, sewn before the outline) | none, angle?: 0 (degrees, counter-clockwise, -360–360), spacing?: 0.4 (mm between rows, 0.2–5), stitchLength?: 3 (mm, 1–8), stagger?: 0.25 (row offset as a fraction of the stitch length, 0–1)}, stroke?: {type?: run (default) | satin (a satin column centred on the path, square ends, stitches over maxStitch split), spacing?: 0.4 (satin, mm peak to peak, 0.2–5), width?: (satin, mm, 0.5–20; default the stroke weight, held to 0.5–20)} (fill and satin are not used on the layer an opened stitch file made)} what document.export {format: dst|dsb|exp} with the same options would write → {stitches, jumps, trims, colorChanges, records (the records in the file, for DST its header's stitch count: travel, trims and the end record included), widthMm, heightMm, threads: [{rgb: \"#rrggbb\", stitches, lengthMm}] (one per thread colour, in sewing order), warnings}; a document with no stroked or filled paths is an error",
+            "{format?: dst (default) | dsb | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | bai_mirror (a commercial single-head 15-needle machine, 350 x 500 mm; the same limits, and a warning for a format its panel does not read: DST and DSB) | generic (no needle or field limits), mode?: run (running stitch along each stroked path) | manual (one needle point per anchor) (given: for all art; not given: art on the layer an opened stitch file made is manual, so its needle points export unchanged, and all other art is run), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP and DSB 12.7, their default too: longer stitches are split into equal pieces, jumps and a final stitch), locks?: (lock stitches at the start and end of each run; not given: off when everything stitched is on an opened stitch file's layer, on otherwise, with a warning when that file's runs get them too), travelTrims?: (a trim before travel long enough that the machine would read it as one; true: for all art, false: for none, the trims the plan has stay either way; not given: off when everything stitched is on an opened stitch file's layer, which keeps its own trims, on otherwise), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch, returnToStart?: true (the file ends with travel back to its origin; not given: off when everything stitched is on an opened stitch file's layer, on otherwise), name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone), fill?: {type?: tatami (default; rows of running stitch, holes kept by the fill rule, sewn before the outline) | none, angle?: 0 (degrees, counter-clockwise, -360–360), spacing?: 0.4 (mm between rows, 0.2–5), stitchLength?: 3 (mm, 1–8), stagger?: 0.25 (row offset as a fraction of the stitch length, 0–1)}, stroke?: {type?: run (default) | satin (a satin column centred on the path, square ends, stitches over maxStitch split), spacing?: 0.4 (satin, mm peak to peak, 0.2–5), width?: (satin, mm, 0.5–20; default the stroke weight, held to 0.5–20)} (fill and satin are not used on the layer an opened stitch file made)} what document.export {format: dst|dsb|exp} with the same options would write → {stitches, jumps, trims, colorChanges, records (the records in the file, for DST its header's stitch count: travel, trims and the end record included), widthMm, heightMm, threads: [{rgb: \"#rrggbb\", stitches, lengthMm, brand?, code?, name?, deltaE? (with a thread chart active, stitch.threads.use: the chart's nearest thread to this colour and how far off it is, CIE76)}] (one per thread colour, in sewing order), warnings}; a document with no stroked or filled paths is an error",
             has_doc,
             info
         ),
@@ -87,12 +88,24 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     let selection = selected(s, p, C)?;
     let (plan, out) = stitchfile::written(C, &s.doc()?.doc, p, format, selection)?;
     let st = stats(&plan);
+    // With a thread chart active, each colour names the nearest thread of it.
+    let chart = stitchthreads::active(s);
     let threads: Vec<Value> = st
         .threads
         .iter()
         .map(|t| {
             let [r, g, b] = t.rgb;
-            json!({"rgb": format!("#{r:02x}{g:02x}{b:02x}"), "stitches": t.stitches, "lengthMm": t.length_mm})
+            let mut v = json!({"rgb": format!("#{r:02x}{g:02x}{b:02x}"), "stitches": t.stitches, "lengthMm": t.length_mm});
+            if let Some((_, c)) = &chart
+                && let Some(m) = c.nearest(t.rgb)
+                && let Some(thread) = c.threads.get(m.index)
+            {
+                v["brand"] = json!(thread.brand);
+                v["code"] = json!(thread.code);
+                v["name"] = json!(thread.name);
+                v["deltaE"] = json!((m.delta_e * 100.0).round() / 100.0);
+            }
+            v
         })
         .collect();
     Ok(json!({
@@ -109,7 +122,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The objects `selectedOnly` names, if it is on.
-fn selected(s: &Session, p: &Value, cmd: &str) -> Result<Option<Vec<NodeId>>> {
+pub(super) fn selected(s: &Session, p: &Value, cmd: &str) -> Result<Option<Vec<NodeId>>> {
     if !switch_or(p, "selectedOnly", false, cmd)? {
         return Ok(None);
     }

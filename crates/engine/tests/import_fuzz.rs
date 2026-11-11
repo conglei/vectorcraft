@@ -10,7 +10,8 @@
 //! font files a folder search reads (damaged fonts, collections whose headers give any count of
 //! faces), nor scripts written for the reference app checked without running them (garbage,
 //! generated script text and mutated scripts), nor embroidery stitch files (DST and EXP: garbage,
-//! with and without a DST header, and mutated files) read directly or opened.
+//! with and without a DST header, and mutated files) read directly or opened, nor thread charts (CSV
+//! and JSON: garbage, chart-shaped text and mutated charts) imported and used to match a design's threads.
 //!
 //! `PROPTEST_CASES=20000 cargo test -p vectorcraft-engine --test import_fuzz` runs a deeper search.
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Robustness).
@@ -2880,6 +2881,79 @@ proptest! {
             bytes[at % n] = b;
         }
         survive_stitch("mutated stitch file", &bytes, format, jumps)?;
+    }
+}
+
+// ---------- Embroidery thread charts (CSV and JSON) ----------
+
+/// A small chart as CSV and as JSON.
+fn thread_samples() -> &'static [Vec<u8>; 2] {
+    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 2]> = std::sync::OnceLock::new();
+    SAMPLES.get_or_init(|| {
+        let csv = "brand,code,name,hex,weight\nAcme,100,Cherry,#c81e28,40wt\nAcme,200,\"Ocean, deep\",#1e50c8,\n".as_bytes().to_vec();
+        let chart = vectorcraft_stitch::ThreadChart::parse(&csv, "Acme").unwrap();
+        [csv, chart.to_json().into_bytes()]
+    })
+}
+
+#[test]
+fn the_thread_samples_import() {
+    for (bytes, name) in thread_samples().iter().zip(["Acme.csv", "Acme.json"]) {
+        let mut s = vectorcraft_engine::Session::new();
+        let p = json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(bytes)});
+        let r = s.execute("stitch.threads.import", &p).unwrap();
+        assert_eq!(r["count"], 2, "{name}: {r}");
+    }
+}
+
+/// `bytes` read as a chart directly and through `stitch.threads.import`; whatever imports is then
+/// used to match and number the threads of a stitch design.
+fn survive_thread_chart(what: &str, bytes: &[u8], name: &str) -> Result<(), TestCaseError> {
+    catch_quiet(|| {
+        let _ = vectorcraft_stitch::ThreadChart::parse(bytes, name);
+        let _ = vectorcraft_stitch::ThreadChart::parse_csv(bytes, name);
+        let _ = vectorcraft_stitch::ThreadChart::parse_json(bytes, name);
+        let mut s = vectorcraft_engine::Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+        s.execute("stitch.calibration", &json!({})).unwrap();
+        let p = json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(bytes)});
+        if let Ok(r) = no_panic(s.execute("stitch.threads.import", &p)) {
+            let id = r["chart"].as_str().unwrap_or_default().to_string();
+            let _ = no_panic(s.execute("stitch.threads.use", &json!({"name": id})));
+            let _ = no_panic(s.execute("stitch.info", &json!({})));
+            let _ = no_panic(s.execute("stitch.threads.match", &json!({})));
+            let _ = no_panic(s.execute("stitch.needles", &json!({"machine": "bai_mirror"})));
+        }
+    })
+    .map_err(|msg| TestCaseError::fail(format!("{what}: {msg}")))
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn thread_chart_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), name in "[ -~]{0,20}") {
+        survive_thread_chart("thread chart garbage", &bytes, &name)?;
+    }
+
+    #[test]
+    fn thread_chart_shaped_text_never_panics(rows in prop::collection::vec("[A-Za-z0-9#,\" {}:\\[\\]\r\n]{0,60}", 0..20), json in any::<bool>()) {
+        let text = if json {
+            format!("{{\"threads\": [{}]}}", rows.join(","))
+        } else {
+            format!("brand,code,name,hex\n{}", rows.join("\n"))
+        };
+        survive_thread_chart("thread chart shaped text", text.as_bytes(), "fuzz")?;
+    }
+
+    #[test]
+    fn mutated_thread_charts_never_panic(which in 0usize..2, edits in prop::collection::vec((any::<usize>(), any::<u8>()), 1..=8)) {
+        let mut bytes = thread_samples()[which].clone();
+        let n = bytes.len();
+        for &(at, b) in &edits {
+            bytes[at % n] = b;
+        }
+        survive_thread_chart("mutated thread chart", &bytes, "fuzz")?;
     }
 }
 

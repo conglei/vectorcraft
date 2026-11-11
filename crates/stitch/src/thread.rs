@@ -47,7 +47,7 @@ impl ThreadSpec {
 }
 
 /// A named list of threads.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ThreadChart {
     pub name: String,
     pub threads: Vec<ThreadSpec>,

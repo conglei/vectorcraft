@@ -491,6 +491,9 @@ fn main() -> std::process::ExitCode {
                 app.session.symbol_libraries.set_user_dir(symbols);
                 let brushes = prefs_path().and_then(|p| Some(p.parent()?.join("Brushes").to_string_lossy().to_string()));
                 app.session.brush_libraries.set_user_dir(brushes);
+                // Embroidery thread charts (stitch.threads.import) live there too.
+                let threads = prefs_path().and_then(|p| Some(p.parent()?.join("Threads").to_string_lossy().to_string()));
+                app.session.thread_charts.set_user_dir(threads);
                 // With the User Defined libraries listed, the persistent library panels reopen.
                 vectorcraft_ui_egui::panels::library_panel::restore(&mut app);
                 // So do the Libraries panel's libraries; runs without preferences (agents' test

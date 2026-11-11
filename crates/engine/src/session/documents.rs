@@ -78,6 +78,8 @@ impl Session {
             swatch_libraries: Default::default(),
             freeform_point: None,
             style_libraries: Default::default(),
+            thread_charts: Default::default(),
+            active_thread_chart: None,
             symbol_libraries: Default::default(),
             brush_libraries: Default::default(),
             libraries: Default::default(),

@@ -160,6 +160,7 @@ mod slices;
 mod smartguides;
 mod smooth_path;
 mod spelling;
+mod stitchthreads;
 mod store;
 mod strokegeom;
 mod strokegradient;
