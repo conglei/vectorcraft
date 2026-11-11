@@ -6727,6 +6727,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vectorcraft-stitch"
+version = "0.21.0"
+dependencies = [
+ "kurbo 0.13.1",
+ "proptest",
+ "vectorcraft-color",
+ "vectorcraft-doc",
+ "vectorcraft-geom",
+]
+
+[[package]]
 name = "vectorcraft-svg"
 version = "0.21.0"
 dependencies = [

@@ -61,6 +61,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("eps", Class::Layer(3)),
     ("metafile", Class::Layer(3)),
     ("plugins", Class::Layer(2)),
+    ("stitch", Class::Layer(2)),
     ("affinity", Class::Standalone),
     ("scriptcheck", Class::Standalone),
     ("js", Class::Standalone),
