@@ -8,6 +8,7 @@ use vectorcraft_geom::{AnchorKind, BezPath, PathEl, SubPath};
 
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
+use crate::to_doc::is_marked;
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
 /// How far a flattened curve may stray from the true one, in millimetres.
@@ -26,7 +27,11 @@ pub enum Mode {
 /// Options for [`from_document`].
 #[derive(Clone, Debug)]
 pub struct FromDocOptions {
-    pub mode: Mode,
+    /// How every path becomes stitches. `None` (not given): art under a layer that
+    /// [`crate::to_document`] made, an opened stitch file, is taken anchor by anchor
+    /// ([`Mode::Manual`]) so its needle points come back unchanged; all other art is
+    /// [`Mode::Run`].
+    pub mode: Option<Mode>,
     /// Running stitch length, in plan units (0.1 mm).
     pub stitch_length: i32,
     /// Runs that start within this distance (plan units) of where the last one ended are joined
@@ -38,7 +43,7 @@ pub struct FromDocOptions {
 
 impl Default for FromDocOptions {
     fn default() -> Self {
-        Self { mode: Mode::Run, stitch_length: 25, min_stitch: 3, only: None }
+        Self { mode: None, stitch_length: 25, min_stitch: 3, only: None }
     }
 }
 
@@ -47,6 +52,10 @@ impl Default for FromDocOptions {
 pub struct Planned {
     pub plan: StitchPlan,
     pub warnings: Vec<String>,
+    /// Runs sewn from art under a layer that [`crate::to_document`] made (an opened stitch file).
+    pub marked_runs: usize,
+    /// Runs sewn from all other art.
+    pub unmarked_runs: usize,
 }
 
 /// The stitch plan for `doc`'s visible stroked paths and compound paths, bottom to top. Each
@@ -56,7 +65,7 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     let mut w = Walk::new(o);
     // `doc.layers` is stored bottom first, the order the renderer paints them in.
     for layer in &doc.layers {
-        w.node(layer, false, false)?;
+        w.node(layer, Under::default())?;
     }
     if w.blocks.is_empty() {
         return Err("nothing to stitch: the document has no stroked paths".into());
@@ -76,7 +85,7 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     }
     let plan = StitchPlan { name: String::new(), blocks: w.blocks };
     plan.check()?;
-    Ok(Planned { plan, warnings })
+    Ok(Planned { plan, warnings, marked_runs: w.marked_runs, unmarked_runs: w.unmarked_runs })
 }
 
 struct Walk<'o> {
@@ -92,17 +101,30 @@ struct Walk<'o> {
     patterned: bool,
     /// Art inside a clip was sewn.
     clipped: bool,
+    marked_runs: usize,
+    unmarked_runs: usize,
+}
+
+/// What a node lies under.
+#[derive(Clone, Copy, Default)]
+struct Under {
+    /// An ancestor is in [`FromDocOptions::only`].
+    listed: bool,
+    /// An ancestor clips it.
+    clipped: bool,
+    /// A layer an opened stitch file made holds it.
+    marked: bool,
 }
 
 impl<'o> Walk<'o> {
     fn new(o: &'o FromDocOptions) -> Walk<'o> {
         let only = o.only.as_ref().map(|ids| ids.iter().copied().collect());
-        Walk { o, only, blocks: vec![], pos: None, steps: 0, filled: 0, other: 0, patterned: false, clipped: false }
+        Walk { o, only, blocks: vec![], pos: None, steps: 0, filled: 0, other: 0, patterned: false, clipped: false, marked_runs: 0, unmarked_runs: 0 }
     }
 
-    /// Stitch `n` and what it holds. `listed`: an ancestor is in [`FromDocOptions::only`].
-    /// `clipped`: an ancestor clips it. Recursion is bounded by the document's own nesting limit.
-    fn node(&mut self, n: &Node, listed: bool, clipped: bool) -> Result<(), String> {
+    /// Stitch `n` and what it holds, given what it lies under. Recursion is bounded by the
+    /// document's own nesting limit.
+    fn node(&mut self, n: &Node, up: Under) -> Result<(), String> {
         if !n.visible {
             return Ok(());
         }
@@ -112,25 +134,29 @@ impl<'o> Walk<'o> {
         {
             return Ok(());
         }
-        let listed = listed || self.only.as_ref().is_none_or(|ids| ids.contains(&n.id));
+        let up = Under {
+            listed: up.listed || self.only.as_ref().is_none_or(|ids| ids.contains(&n.id)),
+            clipped: up.clipped,
+            marked: up.marked || is_marked(n),
+        };
         match &n.kind {
             NodeKind::Layer { children, .. } | NodeKind::Group { children, .. } => {
                 // A clip group's or clipping layer's first child is its clipping path.
                 let clips = n.clips();
                 for c in children.iter().skip(usize::from(clips)) {
-                    self.node(c, listed, clipped || clips)?;
+                    self.node(c, Under { clipped: up.clipped || clips, ..up })?;
                 }
             }
-            _ if !listed => {}
+            _ if !up.listed => {}
             // Guides and clipping paths don't print, so they aren't sewn either.
             NodeKind::Path { guide: true, .. } | NodeKind::Path { clipping: true, .. } => {}
-            NodeKind::Path { .. } | NodeKind::Compound { .. } => self.shape(n, clipped)?,
+            NodeKind::Path { .. } | NodeKind::Compound { .. } => self.shape(n, up)?,
             _ => self.other += 1,
         }
         Ok(())
     }
 
-    fn shape(&mut self, n: &Node, clipped: bool) -> Result<(), String> {
+    fn shape(&mut self, n: &Node, up: Under) -> Result<(), String> {
         let stroke = n.appearance.stroke().filter(|s| s.visible).map(|s| &s.paint);
         let rgb = match stroke {
             None | Some(Paint::None) => {
@@ -148,16 +174,24 @@ impl<'o> Walk<'o> {
                 [0, 0, 0]
             }
         };
+        let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
         let mut subpaths: Vec<&SubPath> = vec![];
         collect_subpaths(n, &mut subpaths);
         for sp in subpaths {
             let budget = MAX_STEPS.saturating_sub(self.steps);
-            let run = match self.o.mode {
+            let run = match mode {
                 Mode::Run => run_of(sp, self.o.stitch_length, budget)?,
                 Mode::Manual => manual_of(sp, budget)?,
             };
-            self.clipped |= clipped && !run.is_empty();
-            self.add_run(rgb, &run)?;
+            if !run.is_empty() {
+                self.clipped |= up.clipped;
+                if up.marked {
+                    self.marked_runs += 1;
+                } else {
+                    self.unmarked_runs += 1;
+                }
+            }
+            self.add_run(rgb, &run, mode)?;
         }
         Ok(())
     }
@@ -165,7 +199,7 @@ impl<'o> Walk<'o> {
     /// Sew `run` in thread `rgb`: a new block at a colour change (which starts with a jump to the
     /// run, except at the very start), otherwise a trim and a jump unless the run starts within
     /// `min_stitch` of the needle.
-    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt]) -> Result<(), String> {
+    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode) -> Result<(), String> {
         let Some(&start) = run.first() else { return Ok(()) };
         let mut skip_first = false;
         let mut lead: Vec<Step> = vec![];
@@ -174,7 +208,7 @@ impl<'o> Walk<'o> {
                 let near = self.pos.is_some_and(|p| p.dist(start) <= f64::from(self.o.min_stitch));
                 if near {
                     // In run mode a first stitch where the needle already is would sew nothing.
-                    skip_first = self.o.mode == Mode::Run && self.pos == Some(start);
+                    skip_first = mode == Mode::Run && self.pos == Some(start);
                 } else {
                     lead = vec![Step::Trim, Step::Jump(start)];
                 }
@@ -403,7 +437,7 @@ mod tests {
 
     #[test]
     fn manual_mode_uses_the_anchors() {
-        let o = FromDocOptions { mode: Mode::Manual, ..Default::default() };
+        let o = FromDocOptions { mode: Some(Mode::Manual), ..Default::default() };
         let plan = from_document(&doc_with(vec![stroked(line_mm(0.0, 0.0, 10.0, 0.0), RED)]), &o).unwrap().plan;
         assert_eq!(plan.blocks[0].steps, vec![Step::Stitch(Pt { x: 0, y: 0 }), Step::Stitch(Pt { x: 100, y: 0 })]);
     }
@@ -519,7 +553,7 @@ mod tests {
         let o = FromDocOptions { stitch_length: 120, ..Default::default() };
         let mut w = Walk::new(&o);
         w.steps = MAX_STEPS - 3;
-        assert_eq!(w.node(&d.layers[0], false, false).unwrap_err(), TOO_MANY_STEPS);
+        assert_eq!(w.node(&d.layers[0], Under::default()).unwrap_err(), TOO_MANY_STEPS);
     }
 
     #[test]

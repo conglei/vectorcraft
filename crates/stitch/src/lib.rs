@@ -21,4 +21,4 @@ pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use profile::{COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use run::run_stitches;
 pub use stats::{Stats, ThreadStats, stats};
-pub use to_doc::{THREAD_WIDTH_MM, is_stitch_document, to_document};
+pub use to_doc::{THREAD_WIDTH_MM, to_document};

@@ -125,6 +125,75 @@ fn an_opened_stitch_file_re_exports_its_needle_points_unchanged() {
     }
 }
 
+const MIXED_LOCKS: &str =
+    "lock stitches were added to every run, including those of the opened stitch file: pass locks: false to keep that file's runs unchanged";
+
+/// Draws a 70 mm circle stroked green, without a fill, and returns its id.
+fn green_circle(s: &mut Session) -> Value {
+    s.execute("paint.setFill", &json!({"none": true})).unwrap();
+    s.execute("paint.setStroke", &json!({"color": "#00a000"})).unwrap();
+    let d = 70.0 * PT_PER_MM;
+    s.execute("shape.ellipse", &json!({"x": 400, "y": 400, "width": d, "height": d})).unwrap()["id"].clone()
+}
+
+/// The stitch count `stitch.info` reply `r` gives the thread `rgb`.
+fn thread_stitches(r: &Value, rgb: &str) -> u64 {
+    r["threads"].as_array().unwrap().iter().find(|t| t["rgb"] == rgb).unwrap_or_else(|| panic!("no {rgb} in {r}"))["stitches"].as_u64().unwrap()
+}
+
+/// A session holding the calibration design opened from its DST file, and that file.
+fn opened_calibration() -> (Session, Vec<u8>) {
+    let mut s = session();
+    s.execute("stitch.calibration", &json!({})).unwrap();
+    let file = b64(&s.execute("document.export", &json!({"format": "dst"})).unwrap());
+    s.execute("document.open", &json!({"name": "cal.dst", "dataBase64": vectorcraft_format::base64_encode(&file)})).unwrap();
+    (s, file)
+}
+
+#[test]
+fn art_drawn_beside_an_opened_stitch_file_is_stitched_as_in_a_fresh_document() {
+    let mut fresh = session();
+    green_circle(&mut fresh);
+    let want = thread_stitches(&fresh.execute("stitch.info", &json!({})).unwrap(), "#00a000");
+    assert!(want > 50, "{want}");
+    let (mut s, file) = opened_calibration();
+    s.execute("layer.new", &json!({"name": "Drawn"})).unwrap();
+    green_circle(&mut s);
+    let info = s.execute("stitch.info", &json!({})).unwrap();
+    assert_eq!(thread_stitches(&info, "#00a000"), want, "{info}");
+    assert!(info["warnings"].as_array().unwrap().contains(&json!(MIXED_LOCKS)), "{info}");
+    // The file's own needle points stay as they were when locks are turned off, with no warning.
+    let info = s.execute("stitch.info", &json!({"locks": false})).unwrap();
+    assert!(!info["warnings"].as_array().unwrap().contains(&json!(MIXED_LOCKS)), "{info}");
+    let again = b64(&s.execute("document.export", &json!({"format": "dst", "locks": false})).unwrap());
+    // The circle moves the file's centre, so compare from the first needle point.
+    let from_first = |blocks: Vec<Vec<vectorcraft_stitch::Pt>>| {
+        let f = blocks[0][0];
+        blocks.into_iter().map(|b| b.into_iter().map(|p| (p.x - f.x, p.y - f.y)).collect::<Vec<_>>()).collect::<Vec<_>>()
+    };
+    let (a, b) = (from_first(needle_points(&read_plan("dst", &file))), from_first(needle_points(&read_plan("dst", &again))));
+    assert_eq!(b.len(), 4);
+    assert_eq!(a[..], b[..3], "the file's own needle points changed");
+}
+
+#[test]
+fn a_selection_beside_an_opened_stitch_file_reports_what_its_export_writes() {
+    let (mut s, _) = opened_calibration();
+    s.execute("layer.new", &json!({"name": "Drawn"})).unwrap();
+    let id = green_circle(&mut s);
+    s.execute("select.set", &json!({"ids": [id]})).unwrap();
+    let info = s.execute("stitch.info", &json!({"selectedOnly": true})).unwrap();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst", "selectedOnly": true})).unwrap());
+    assert_eq!(info["records"].as_u64(), Some(header_st(&bytes)), "{info}");
+    // Art selected on the opened file's own layer keeps its needle points in both.
+    let first = s.doc().unwrap().doc.layers[0].children().unwrap()[0].id;
+    s.execute("select.set", &json!({"ids": [first.0]})).unwrap();
+    let info = s.execute("stitch.info", &json!({"selectedOnly": true})).unwrap();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst", "selectedOnly": true})).unwrap());
+    assert_eq!(info["records"].as_u64(), Some(header_st(&bytes)), "{info}");
+    assert_eq!(info["stitches"].as_u64(), Some(needle_points(&read_plan("dst", &bytes)).iter().map(Vec::len).sum::<usize>() as u64));
+}
+
 #[test]
 fn stitch_info_counts_the_records_the_file_holds() {
     let mut s = session();

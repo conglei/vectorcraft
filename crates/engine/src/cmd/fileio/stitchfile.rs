@@ -6,13 +6,18 @@ use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dst, exp};
 use vectorcraft_stitch::{
-    FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, UNITS_PER_MM, from_document, is_stitch_document, prepare, profile, to_document,
+    FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, UNITS_PER_MM, from_document, prepare, profile, to_document,
 };
 
 use super::super::{Result, bad, number_or, switch_or, text_param};
 use super::{Encoded, FormatOption, err};
 
 const C: &str = "document.export";
+
+/// The warning for lock stitches added by default to a plan that mixes an opened stitch file's
+/// runs with other art.
+const MIXED_LOCKS: &str =
+    "lock stitches were added to every run, including those of the opened stitch file: pass locks: false to keep that file's runs unchanged";
 
 /// The most colour changes an opened file may have: each becomes a group in the document.
 const MAX_BLOCKS: usize = 10_000;
@@ -29,7 +34,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "mode",
         ty: "string",
         default: "\"run\"",
-        description: "run (running stitch along each stroked path) or manual (one needle point per anchor); a document opened from a stitch file defaults to manual, so its needle points export unchanged",
+        description: "run (running stitch along each stroked path) or manual (one needle point per anchor), for all art; not given: art on the layer an opened stitch file made is taken anchor by anchor, so its needle points export unchanged, and all other art is run",
     },
     FormatOption { name: "stitchLength", ty: "number", default: "2.5", description: "running stitch length in mm, 0.5–12" },
     FormatOption {
@@ -48,7 +53,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "locks",
         ty: "boolean",
         default: "true",
-        description: "lock stitches at the start and end of each run; a document opened from a stitch file defaults to false (it has its own)",
+        description: "lock stitches at the start and end of each run; not given: off when everything stitched is on the layer an opened stitch file made (it has its own), on otherwise, with a warning when that file's runs get them too",
     },
     FormatOption {
         name: "jumpsPerTrim",
@@ -72,7 +77,8 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
 struct Options {
     from: FromDocOptions,
     profile: MachineProfile,
-    prepare: PrepareOptions,
+    /// Lock stitches, if given.
+    locks: Option<bool>,
     write: WriteOptions,
     name: Option<String>,
 }
@@ -121,16 +127,22 @@ fn jumps_per_trim(cmd: &str, p: &Value, key: &str) -> Result<u8> {
     }
 }
 
-/// The stitch options in `p` for `format` (`dst` or `exp`). `opened`: the document was opened from
-/// a stitch file, so `mode` defaults to `manual` and `locks` to off, and its needle points export
-/// unchanged; options given explicitly win.
-fn options(cmd: &str, p: &Value, format: &str, opened: bool) -> Result<Options> {
+/// The stitch options in `p` for `format` (`dst` or `exp`). `mode` and `locks` stay `None` when
+/// not given: [`planned`] decides them per layer (see [`FromDocOptions::mode`]).
+fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let limit = max_move(cmd, format)?;
     let max_mm = f64::from(limit) / UNITS_PER_MM;
     let machine = one_of(cmd, p, "machine", "commercial15", &["generic", "commercial15"])?;
-    let mode = match one_of(cmd, p, "mode", if opened { "manual" } else { "run" }, &["run", "manual"])? {
-        "manual" => Mode::Manual,
-        _ => Mode::Run,
+    let mode = match text_param(p, "mode", cmd)? {
+        None => None,
+        Some(_) => match one_of(cmd, p, "mode", "run", &["run", "manual"])? {
+            "manual" => Some(Mode::Manual),
+            _ => Some(Mode::Run),
+        },
+    };
+    let locks = match p.get("locks") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(switch_or(p, "locks", true, cmd)?),
     };
     let stitch_length = length(cmd, p, "stitchLength", 2.5, 0.5, 12.0)?;
     let min_stitch = length(cmd, p, "minStitch", 0.3, 0.0, 2.0)?;
@@ -150,7 +162,7 @@ fn options(cmd: &str, p: &Value, format: &str, opened: bool) -> Result<Options> 
     Ok(Options {
         from: FromDocOptions { mode, stitch_length: units(stitch_length), min_stitch: units(min_stitch), only: None },
         profile,
-        prepare: PrepareOptions { locks: switch_or(p, "locks", !opened, cmd)? },
+        locks,
         write: WriteOptions {
             start,
             return_to_start: switch_or(p, "returnToStart", true, cmd)?,
@@ -161,13 +173,19 @@ fn options(cmd: &str, p: &Value, format: &str, opened: bool) -> Result<Options> 
     })
 }
 
-/// The plan for `doc` with options `o`, named, prepared for the machine, and its warnings.
+/// The plan for `doc` with options `o`, named, prepared for the machine, and its warnings. When
+/// `locks` was not given, runs get lock stitches unless every run came from an opened stitch file
+/// (which has its own), with a warning when the plan mixes the two.
 fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
     let from = FromDocOptions { only: selection, ..o.from.clone() };
     let mut made = from_document(doc, &from).map_err(|e| bad(cmd, e))?;
     let title = std::path::Path::new(&doc.title).file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.trim().is_empty());
     made.plan.name = o.name.clone().or(title).unwrap_or_else(|| "design".to_string());
-    let prepared = prepare(&made.plan, &o.profile, &o.prepare).map_err(|e| bad(cmd, e))?;
+    let locks = o.locks.unwrap_or(made.unmarked_runs > 0);
+    if o.locks.is_none() && made.marked_runs > 0 && made.unmarked_runs > 0 {
+        made.warnings.push(MIXED_LOCKS.to_string());
+    }
+    let prepared = prepare(&made.plan, &o.profile, &PrepareOptions { locks }).map_err(|e| bad(cmd, e))?;
     let mut warnings = made.warnings;
     warnings.extend(prepared.warnings);
     Ok((prepared.plan, warnings))
@@ -177,7 +195,7 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
 /// (the stroked paths of `doc`, only `selection` and what it holds when given, prepared for the
 /// machine), the file, and the warnings of both. Errors name `cmd`.
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
-    let o = options(cmd, p, format, is_stitch_document(doc))?;
+    let o = options(cmd, p, format)?;
     let (plan, mut warnings) = planned(cmd, doc, &o, selection)?;
     let mut out = match format {
         "exp" => exp::write(&plan, &o.write),
