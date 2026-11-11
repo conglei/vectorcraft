@@ -1,6 +1,6 @@
 //! DST machine files: a 512-byte header, then three-byte records.
 
-mod header;
+pub(crate) mod header;
 mod record;
 
 use crate::{Builder, Input, MAX_FILE_BYTES, Output, ReadOptions, Sink, TOO_LONG, WriteOptions, walk};
