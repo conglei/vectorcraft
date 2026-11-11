@@ -67,6 +67,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("js", Class::Standalone),
     ("apischema", Class::Standalone),
     ("embroidery", Class::Layer(3)),
+    // Photo preparation: the provider interface and the no-model path (offline, builds for wasm).
+    ("imageprep", Class::Layer(3)),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).

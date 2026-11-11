@@ -68,8 +68,10 @@ fn pass(src: &[u8], w: usize, h: usize, along_rows: bool, weights: &[f64]) -> Ve
     done.concat()
 }
 
-/// `img` with the noise within its tones smoothed away and its edges kept.
-pub(crate) fn smoothed(img: &Raster) -> Raster {
+/// `img` with the noise within its tones smoothed away and its edges kept. Pixels less than half
+/// opaque are left as they are. Also the clean-up of photo preparation without a model
+/// (`vectorcraft-imageprep`).
+pub fn smoothed(img: &Raster) -> Raster {
     let (w, h) = (img.width as usize, img.height as usize);
     let mut rgba = img.rgba.clone();
     if rgba.len() == w * h * 4 {

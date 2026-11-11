@@ -6594,6 +6594,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vectorcraft-imageprep"
+version = "0.21.0"
+dependencies = [
+ "image",
+ "vectorcraft-trace",
+]
+
+[[package]]
 name = "vectorcraft-js"
 version = "0.21.0"
 dependencies = [
