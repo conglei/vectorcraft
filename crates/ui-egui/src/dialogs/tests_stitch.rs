@@ -206,3 +206,44 @@ fn the_machine_and_stitch_type_choices_reach_the_export() {
     let params = stitch_options::export_params(app.ui.dialog.as_ref().unwrap());
     assert!(params.get("fill").is_none() && params.get("stroke").is_none());
 }
+
+#[test]
+fn stitch_info_switches_to_dsb_and_back() {
+    let (mut app, _) = stitchable();
+    app.run("ui.stitchInfo", json!({"format": "dsb"})).unwrap();
+    frame(&mut app);
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!((d.str("format"), d.str("__for")), ("dsb".into(), "dsb".into()));
+    let dsb_records = d.fields["__result"]["records"].clone();
+    // DSB's longest stitch is 12.7 mm, like EXP's.
+    assert_eq!(stitch_options::max_stitch("dsb"), 12.7);
+    set(&mut app, "format", json!("dst"));
+    frame(&mut app);
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!(d.str("__for"), "dst");
+    set(&mut app, "format", json!("dsb"));
+    frame(&mut app);
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!((d.str("__for"), d.fields["__result"]["records"].clone()), ("dsb".into(), dsb_records));
+    assert!(app.run("ui.stitchInfo", json!({"format": "pes"})).is_err());
+}
+
+#[test]
+fn export_as_dsb_shows_stitch_options_with_its_own_limit_then_writes_a_dsb_file() {
+    let (mut app, written) = stitchable();
+    app.run("file.exportAs", json!({"format": "dsb"})).unwrap();
+    assert_eq!(kind(&app), Some("exportAs"));
+    frame(&mut app);
+    confirm(&mut app).unwrap();
+    assert_eq!(kind(&app), Some("stitchOptions"), "Stitch File Options follow the save panel for DSB too");
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!((d.str("path"), d.str("format")), ("/out/Untitled-1.dsb".into(), "dsb".into()));
+    assert_eq!(d.f64("maxStitch", 0.0), 12.7, "DSB's own limit is its default, as EXP's");
+    frame(&mut app);
+    let r = confirm(&mut app).unwrap();
+    assert_eq!(r["path"], "/out/Untitled-1.dsb");
+    let w = written.borrow();
+    assert!(w[0].1.starts_with(b"LA:"), "a DSB file has the 512-byte header");
+    assert_eq!(w[0].1.len() % 3, 512 % 3, "512 header bytes, then three-byte records");
+    assert_eq!(w[0].1.get(w[0].1.len() - 3), Some(&0xF8), "ends with the DSB end record");
+}

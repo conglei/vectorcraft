@@ -1,9 +1,9 @@
-//! Stitch File Options (Export As → DST or EXP): the machine, how paths become stitches (running
+//! Stitch File Options (Export As → DST, DSB or EXP): the machine, how paths become stitches (running
 //! stitch along each stroked path, or one needle point per anchor), the stitch lengths, lock
 //! stitches, how many jumps in a row make a trim, trims before colour changes, where the file
 //! starts and ends, the design name, and whether only the selection is stitched.
 //!
-//! Fields: `document.export` params (`format: dst | exp`, `path?`) and the stitch options of
+//! Fields: `document.export` params (`format: dst | dsb | exp`, `path?`) and the stitch options of
 //! `stitch.info`. `mode` and `locks` are null while they are left to the engine (it decides per
 //! layer: art on the layer an opened stitch file made keeps its needle points and its own locks).
 //! OK remembers the options for next time and writes the file (asking where when there is no
@@ -33,9 +33,19 @@ const LABEL: f32 = 150.0;
 /// The field width of the number fields.
 const NUMBER_W: f32 = 70.0;
 
-/// The longest stitch a DST file holds, in mm, and an EXP file (its own limit is also its default).
+/// The longest stitch a DST file holds, in mm, and an EXP or DSB file (its own limit is also its
+/// default).
 pub(crate) const MAX_STITCH_DST: f64 = 12.1;
 pub(crate) const MAX_STITCH_EXP: f64 = 12.7;
+
+/// The stitch file format a dialog is for: `exp` or `dsb`, else `dst`.
+pub(crate) fn format_id(name: &str) -> &'static str {
+    match name {
+        "exp" => "exp",
+        "dsb" => "dsb",
+        _ => "dst",
+    }
+}
 
 /// Fields that are not remembered between exports (they belong to one export).
 const PER_EXPORT: [&str; 6] = ["format", "path", "useArtboards", "range", "artboard", "selectedOnly"];
@@ -60,7 +70,7 @@ const STARTS: [(&str, &str); 2] = [("center", "Center of the design"), ("firstSt
 
 /// The longest stitch `format` holds, in mm.
 pub(crate) fn max_stitch(format: &str) -> f64 {
-    if format == "exp" { MAX_STITCH_EXP } else { MAX_STITCH_DST }
+    if matches!(format, "exp" | "dsb") { MAX_STITCH_EXP } else { MAX_STITCH_DST }
 }
 
 /// The options a first Stitch File Options dialog starts from (the export's defaults).
@@ -131,10 +141,7 @@ pub(crate) fn export_params(d: &Dialog) -> Value {
 /// Open Stitch File Options for an export whose params (`format`, `path`, any stitch option) are
 /// `params`, over the options used last.
 pub fn open(app: &mut VectorcraftApp, params: &Value) {
-    let format = match params.get("format").and_then(Value::as_str) {
-        Some("exp") => "exp",
-        _ => "dst",
-    };
+    let format = format_id(params.get("format").and_then(Value::as_str).unwrap_or_default());
     let fields = fields(app, format, params);
     app.ui.dialog = Some(Dialog::new(KIND, Value::Object(fields)));
 }
@@ -161,7 +168,7 @@ fn number(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, unit: &str,
 }
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
-    let format = if d.str("format") == "exp" { "exp" } else { "dst" };
+    let format = format_id(&d.str("format"));
     let labels: Vec<&str> = MACHINES.iter().map(|m| m.1).collect();
     let machine = MACHINES.iter().position(|m| m.0 == d.str("machine")).unwrap_or(0);
     if let Some(i) = pick(ui, "stitch-machine", tl!("Machine:"), machine, &labels, 260.0).and_then(|i| MACHINES.get(i)) {
@@ -218,10 +225,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     ui.add_space(8.0);
     super::form::caption(
         ui,
-        if format == "exp" {
-            tl!("Each path is sewn in its fill or stroke color, one thread per color. EXP holds moves of up to 12.7 mm.")
-        } else {
-            tl!("Each path is sewn in its fill or stroke color, one thread per color. DST holds moves of up to 12.1 mm.")
+        match format {
+            "exp" => tl!("Each path is sewn in its fill or stroke color, one thread per color. EXP holds moves of up to 12.7 mm."),
+            "dsb" => tl!("Each path is sewn in its fill or stroke color, one thread per color. DSB holds moves of up to 12.7 mm."),
+            _ => tl!("Each path is sewn in its fill or stroke color, one thread per color. DST holds moves of up to 12.1 mm."),
         },
     );
     false
@@ -230,7 +237,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
 /// Check the options, remember them, and write the file.
 fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
     let params = export_params(d);
-    let format = if d.str("format") == "exp" { "exp" } else { "dst" };
+    let format = format_id(&d.str("format"));
     fileio::check_stitch_options(&params, format)?;
     // Nothing selected keeps the dialog open too.
     if let Some(st) = app.session.active() {

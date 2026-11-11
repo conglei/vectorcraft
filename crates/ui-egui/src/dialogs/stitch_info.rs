@@ -1,11 +1,11 @@
-//! Embroidery → Stitch Info…: what a DST or EXP export of the document would write, without
+//! Embroidery → Stitch Info…: what a DST, DSB or EXP export of the document would write, without
 //! writing a file: the stitches, jumps, trims and colour changes, the records in the file, the
 //! size of the design in mm, one row per thread (its colour, stitches and length in mm) and the
-//! warnings. Read-only: the choice of DST or EXP reruns `stitch.info`, with the options the last
+//! warnings. Read-only: the choice of DST, DSB or EXP reruns `stitch.info`, with the options the last
 //! stitch export used. A command error (nothing stitchable, a bad option) shows as the dialog's
 //! message.
 //!
-//! Fields: `format` (`dst` | `exp`), and the dialog's own `__params` (the `stitch.info` options),
+//! Fields: `format` (`dst` | `dsb` | `exp`), and the dialog's own `__params` (the `stitch.info` options),
 //! `__for` (the format the result is for), `__result` (what `stitch.info` returned) and `__error`.
 
 use serde_json::{Value, json};
@@ -24,12 +24,12 @@ pub(super) const SPEC: DialogSpec =
 /// The most the thread list shows before it scrolls.
 const LIST_HEIGHT: f32 = 170.0;
 
-/// The format a dialog is for: `exp`, else `dst`.
+/// The format a dialog is for: `exp` or `dsb`, else `dst`.
 fn format_of(d: &Dialog) -> &'static str {
-    if d.str("format") == "exp" { "exp" } else { "dst" }
+    stitch_options::format_id(&d.str("format"))
 }
 
-/// Open Stitch Info on the active document: `p` is `{format?: dst (default) | exp, …stitch.info
+/// Open Stitch Info on the active document: `p` is `{format?: dst (default) | dsb | exp, …stitch.info
 /// options}`, over the options the last stitch export used.
 pub fn open(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
     if app.session.active().is_none() {
@@ -37,8 +37,9 @@ pub fn open(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
     }
     let format = match p.get("format").and_then(Value::as_str) {
         None | Some("dst") => "dst",
+        Some("dsb") => "dsb",
         Some("exp") => "exp",
-        Some(_) => return Err("format must be dst or exp".into()),
+        Some(_) => return Err("format must be dst, dsb or exp".into()),
     };
     let mut d = Dialog::new(KIND, json!({ "format": format, "__params": p }));
     refresh(app, &mut d);
@@ -86,7 +87,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let t = Tokens::get(ui.ctx());
     let before = format_of(d);
     widgets::label_row(ui, tl!("Format:"), 70.0, |ui| {
-        for (id, label) in [("dst", "DST"), ("exp", "EXP")] {
+        for (id, label) in [("dst", "DST"), ("dsb", "DSB"), ("exp", "EXP")] {
             if widgets::radio(ui, label, before == id, true) {
                 d.fields.insert("format".into(), json!(id));
             }
