@@ -334,6 +334,10 @@ designs load from a USB stick or over WiFi; maximum field 500 × 350 mm; up to 1
 minute. Listings conflict on formats: one says DST only, others DST and DSB. So EXP may not load on
 this machine, and DST is the format that must work.
 
+The `bai_mirror` profile records this: the `commercial15` limits, `max_spm` 1,200 (850 on caps, not
+modelled) and `formats` DST and DSB. The field is the majority figure, 350 × 500 mm; one page says
+500 × 800 mm, unverified. Sources are in `docs/embroidery-parity.md`, Machine facts.
+
 **Not documented anywhere found**, and so tested by the calibration stitch-out: how needles are
 assigned to colour changes; the jumps-per-trim setting and its default; the longest stitch
 accepted; whether the header's counts and extents are checked; where the design is placed relative

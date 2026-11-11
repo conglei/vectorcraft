@@ -547,3 +547,19 @@ fn bad_fill_and_stroke_options_are_refused() {
         }
     }
 }
+
+#[test]
+fn bai_mirror_warns_for_a_format_its_panel_does_not_read() {
+    let mut s = session();
+    s.execute("stitch.calibration", &json!({})).unwrap();
+    let dst = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": "dst"})).unwrap();
+    assert_eq!(dst["warnings"], json!([]), "{dst}");
+    let exp = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": "exp"})).unwrap();
+    let warnings = exp["warnings"].as_array().unwrap();
+    assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("panel reads DST and DSB, not EXP"))), "{exp}");
+    let file = s.execute("document.export", &json!({"format": "exp", "machine": "bai_mirror"})).unwrap();
+    assert!(file["warnings"].to_string().contains("not EXP"), "{file}");
+    // The other machines do not know their formats, so they do not warn.
+    let other = s.execute("stitch.info", &json!({"machine": "commercial15", "format": "exp"})).unwrap();
+    assert!(!other["warnings"].to_string().contains("panel"), "{other}");
+}

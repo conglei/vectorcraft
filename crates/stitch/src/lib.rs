@@ -26,7 +26,7 @@ pub use preview::{
     DEFAULT_FABRIC, DEFAULT_SCALE, DEFAULT_THREAD_MM, DENSITY_CELL_MM, DensityGrid, MAX_DENSITY_CELLS, MAX_SCALE, MAX_SIDE, MAX_THREAD_MM, MIN_SCALE,
     MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, TOO_DENSE, density, preview, preview_size,
 };
-pub use profile::{COMMERCIAL15, GENERIC, MachineProfile, profile};
+pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use run::run_stitches;
 pub use satin::{SatinParams, satin};
 pub use stats::{Stats, ThreadStats, stats};
