@@ -93,6 +93,10 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<&'static Format> {
     if vectorcraft_cad::is_dxf(bytes) {
         return format("dxf");
     }
+    // EXP files have no signature: they are read by their extension.
+    if vectorcraft_embroidery::dst::is_dst(bytes) {
+        return format("dst");
+    }
     if let Some(kind) = vectorcraft_metafile::sniff(bytes) {
         return format(kind.id());
     }
@@ -464,6 +468,10 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
         }
         "dxf" => {
             let (doc, warnings) = super::dxfimport::import(bytes, &opts.dxf)?;
+            (doc, warnings, false)
+        }
+        "dst" | "exp" => {
+            let (doc, warnings) = super::stitchfile::import(bytes, format.id, opts.stitch.as_ref())?;
             (doc, warnings, false)
         }
         "emf" | "wmf" => {

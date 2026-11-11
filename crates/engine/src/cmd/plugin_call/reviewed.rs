@@ -529,6 +529,7 @@ pub(super) const ALLOWED: &[&str] = &[
     "shaper.scribble",
     "shaper.select",
     "slice.list",
+    "stitch.info",
     "stroke.set",
     "stroke.setAdvanced",
     "stroke.weightDown",
