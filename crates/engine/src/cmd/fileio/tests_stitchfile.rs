@@ -375,8 +375,26 @@ fn read_plan_with(format: &str, bytes: &[u8], jumps: u8) -> vectorcraft_stitch::
     .plan
 }
 
-/// A plan of stitches 3 mm apart with one explicit trim, two 30 mm jumps (no trim) and a colour
-/// change, written as `format` with `jumps` jump records in a row for a trim.
+#[test]
+fn long_stitches_written_and_read_back_are_not_trims() {
+    use vectorcraft_embroidery::{ReadOptions, Start, WriteOptions, dst};
+    use vectorcraft_stitch::{Block, GENERIC, Pt, Step, StitchPlan, Thread};
+    let s = |x: i32| Step::Stitch(Pt { x, y: 0 });
+    // A 30 mm and a 90 mm stitch, and one trim between them.
+    let steps = vec![s(0), s(30), s(330), s(360), Step::Trim, Step::Jump(Pt { x: 500, y: 0 }), s(500), s(530), s(1430), s(1460)];
+    let plan = StitchPlan { name: "L".into(), blocks: vec![Block { thread: Thread::default(), steps }] };
+    let prepared = vectorcraft_stitch::prepare(&plan, &GENERIC, &Default::default()).unwrap().plan;
+    let o = WriteOptions { start: Start::FirstStitch, return_to_start: false, ..Default::default() };
+    let back = dst::read(&dst::write(&prepared, &o).unwrap().bytes, &ReadOptions::default()).unwrap().plan;
+    assert_eq!(trim_count(&back), 1, "{back:?}");
+    assert_eq!(needle_points(&back), needle_points(&prepared));
+    for x in [330, 1430] {
+        assert!(needle_points(&back)[0].contains(&Pt { x, y: 0 }), "{x}");
+    }
+}
+
+/// A plan of stitches 3 mm apart with one explicit trim, a 30 mm and a 40 mm jump (no trim) and a
+/// colour change, written as `format` with `jumps` jump records in a row for a trim.
 fn travelling_file(format: &str, jumps: u8) -> Vec<u8> {
     use vectorcraft_embroidery::{WriteOptions, dst, exp};
     use vectorcraft_stitch::{Block, Pt, Step, StitchPlan, Thread};
@@ -384,8 +402,8 @@ fn travelling_file(format: &str, jumps: u8) -> Vec<u8> {
     let mut a = line(0, 4);
     a.extend([Step::Trim, Step::Jump(Pt { x: 390, y: 0 })]);
     a.extend(line(390, 3));
-    a.push(Step::Jump(Pt { x: 750, y: 0 }));
-    a.extend(line(750, 3));
+    a.push(Step::Jump(Pt { x: 850, y: 0 }));
+    a.extend(line(850, 3));
     let mut b = vec![Step::Jump(Pt { x: 0, y: 100 })];
     b.extend((0..4).map(|i| Step::Stitch(Pt { x: 30 * i, y: 100 })));
     let thread = |rgb| Thread { rgb, name: None, code: None };
@@ -411,8 +429,9 @@ fn travelling_file(format: &str, jumps: u8) -> Vec<u8> {
 #[test]
 fn an_opened_stitch_file_keeps_its_trims_and_gets_no_travel_trims() {
     for format in ["dst", "exp"] {
-        // DST: a run of 4 jump records is a trim, so the 30 mm jumps (3 records) are plain travel.
-        let jumps = if format == "dst" { 4 } else { 3 };
+        // The default: a run of 3 jump records is a trim. The 30 mm jump is two records and its
+        // first stitch, the 40 mm jump three equal records and its first stitch: plain travel.
+        let jumps = 3;
         let file = travelling_file(format, jumps);
         let source = read_plan_with(format, &file, jumps);
         // The explicit trim, and the ones the writer adds at the start and before the return.
@@ -433,7 +452,7 @@ fn an_opened_stitch_file_keeps_its_trims_and_gets_no_travel_trims() {
         // `stitch.info` counts the plan's trims, not the ones the writer adds at the ends.
         let info = s.execute("stitch.info", &options).unwrap();
         assert_eq!(info["trims"].as_u64(), Some(1), "{format}: {info}");
-        // Asked for, the travel trims come back: the 30 mm jumps now read as trims.
+        // Asked for, the travel trims come back: the 40 mm jump needs three records.
         let asked = json!({"format": format, "jumpsPerTrim": 3, "travelTrims": true});
         let more = s.execute("stitch.info", &asked).unwrap();
         assert!(more["trims"].as_u64() > info["trims"].as_u64(), "{format}: {more}");
@@ -449,11 +468,7 @@ fn an_opened_stitch_file_keeps_its_trims_and_gets_no_travel_trims() {
         let green = read_plan_with(format, &drawn, 3);
         let last = green.blocks.last().unwrap();
         assert!(last.steps.contains(&vectorcraft_stitch::Step::Trim), "{format}: the drawn art lost its travel trim: {last:?}");
-        // Off for all art when asked: a 30 mm square in manual mode has stitches that split into
-        // long travel, which the rule trims by default.
-        let side = 30.0 * PT_PER_MM;
-        s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": side, "height": side})).unwrap();
-        // (`stitch.info` counts the plan's trims; a reader also turns long jump runs into trims.)
+        // Off for all art when asked: the travel between the drawn circles is trimmed by default.
         let trims = |s: &mut Session, extra: Value| {
             let o = with(json!({"format": format, "jumpsPerTrim": 3, "mode": "manual"}), &extra);
             s.execute("stitch.info", &o).unwrap()["trims"].as_u64().unwrap()

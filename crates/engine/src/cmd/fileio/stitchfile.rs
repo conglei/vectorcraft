@@ -48,7 +48,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "maxStitch",
         ty: "number",
         default: "12.1",
-        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP, its default too); longer ones are split by jumps",
+        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP, its default too); longer ones are split into equal pieces: jumps and a final stitch",
     },
     FormatOption {
         name: "locks",

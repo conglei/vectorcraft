@@ -87,20 +87,33 @@ in this order:
 
 1. **Small stitches.** A stitch closer than `min_stitch` to the last kept needle point is dropped,
    except the last stitch of a run.
-2. **Long stitches.** A stitch longer than `max_stitch` becomes jumps to within range and then a
-   stitch, so the needle never comes down at a point the design did not ask for.
-3. **Lock stitches** (option `locks`, on by default). A run is the stitches between two of: plan
+2. **Lock stitches** (option `locks`, on by default). A run is the stitches between two of: plan
    start, trim, colour change, plan end. At the start of each run of two or more stitches, three
    stitches of 0.6 mm back and forth along the run's first segment; at its end, the same along its
-   last segment. The length and count are estimates to tune at the stitch-out.
-4. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
+   last segment. The length and count are estimates to tune at the stitch-out. A long stitch does
+   not end a run: it is sewn, not travel.
+3. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
    sees N jump records in a row. A travel that needs N or more jump records therefore gets an
    explicit `Trim` before it, so the file says what the machine will do. Travel is measured from
-   where the needle really is, after the lock stitches. Travel at the start of a block gets no
-   `Trim`: the colour change has already cut the thread.
-5. **Long jumps.** A jump longer than `max_jump` is split into equal parts.
+   where the needle really is, after the lock stitches. Records are counted as steps 4 and 5 write
+   them: travel that ends in a stitch in place sews its last part with that stitch (one jump
+   fewer), and a long stitch right after the travel adds its jumps to the same run. Travel at the
+   start of a block gets no `Trim`: the colour change has already cut the thread. A long stitch on
+   its own is not travel and never gets a `Trim`.
+4. **Long stitches.** A stitch longer than `max_stitch` (larger axis distance `d`) becomes
+   `k = ceil(d / max)` equal pieces, `max` the smaller of `max_stitch` and `max_jump`: `k − 1`
+   jumps and a final stitch that ends exactly on the stitch's end point, the pieces equal to within
+   one unit per axis. A 30 mm stitch is two jumps of 10 mm and a 10 mm stitch, and the needle
+   never comes down at a point the design did not ask for. When `k − 1` reaches `jumps_per_trim`
+   (longer than 36.3 mm at the defaults), a machine that trims on jump runs cuts the thread there;
+   step 6 warns. (Until 2026-11-11 a long stitch was a jump to its end and a stitch of zero length,
+   and step 5 split that jump into `k` records: a 30 mm stitch was three jumps, which machines and
+   readers take as a trim.)
+5. **Long jumps.** A jump longer than `max_jump` is split into equal parts. When the travel ends in
+   a stitch at its end point, the last part is that stitch (`k − 1` jumps and a stitch, not `k`
+   jumps and a stitch of zero length), if the part is no longer than `max_stitch`.
 6. **Checks, as warnings.** More distinct threads than `needles`; extents larger than `field_mm`;
-   no stitches in a block.
+   no stitches in a block; long stitches split into `jumps_per_trim` or more jumps.
 
 `stats(plan)` returns stitch, jump, trim and colour-change counts, width and height in mm, and per
 thread: colour, stitch count and stitched length in mm. Thread consumption and run time are E7.
@@ -227,7 +240,13 @@ the same.
 
 **Reader.** Requires 512 bytes of header and reads the name from `LA:`; counts and extents in the
 header are not trusted. Decoding stops at the end record or at a short read. A run of
-`jumpsPerTrim` (default 3) or more jumps becomes a trim followed by one jump. A colour change with
+`jumpsPerTrim` (default 3) or more jumps becomes a trim followed by one jump, unless the run and
+the stitch after it are the equal pieces of one long stitch: every move within one unit of the
+others on each axis, none shorter than 0.5 mm. That is how the writer (step 4 above) and other
+software split a long stitch, so it opens as one jump and that stitch, with no trim; a machine set
+to trim on jump runs may still cut there, which `prepare` warns about when writing. A trim's jumps
+(small moves that cancel) and travel that ends in a stitch in place or in a shorter stitch still
+read as a trim. A colour change with
 a move applies the move. Sequin records are skipped, with a warning. Threads with no colour in the
 file get colours from a small original built-in list, in order. Input over 64 MB, 2,000,000
 records or 10,000 blocks ("the file has too many colour changes") is an error.
@@ -295,7 +314,7 @@ sibling app's UI spec; until then the options are command parameters.
 - **Property.** Write then read returns the prepared plan, for both formats. Arbitrary bytes never
   panic either reader and never allocate past the limits (added to `engine/tests/import_fuzz.rs`).
   After `prepare`, no stitch exceeds `max_stitch`, no jump exceeds `max_jump`, and no run of jumps
-  reaches `jumps_per_trim` without a trim before it.
+  reaches `jumps_per_trim` without a trim before it, except the equal pieces of a long stitch.
 - **Stitch crate.** Running stitch hits corners and the path end; rounding does not drift over a
   long path; lock stitches appear where the rules say; warnings fire for needle count and field.
 - **Engine.** Export, open and `stitch.info` through commands; opening the calibration file and

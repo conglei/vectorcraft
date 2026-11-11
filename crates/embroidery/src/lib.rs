@@ -205,15 +205,59 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
     Ok(())
 }
 
+/// The shortest piece, on its larger axis, of a long stitch split into jumps: half the shortest
+/// `maxStitch` (1 mm). Equal moves shorter than this are not read as a split stitch.
+const MIN_PIECE: i64 = 5;
+
+/// A run of jump records being read.
+#[derive(Clone, Copy)]
+struct Run {
+    /// Where it began.
+    from: Pt,
+    /// How many records it has.
+    n: usize,
+    /// The smallest and largest move on each axis: `[min dx, max dx, min dy, max dy]`.
+    moves: [i64; 4],
+    /// The shortest move, on its larger axis.
+    shortest: i64,
+}
+
+impl Run {
+    fn new(from: Pt, dx: i32, dy: i32) -> Run {
+        let (dx, dy) = (i64::from(dx), i64::from(dy));
+        Run { from, n: 1, moves: [dx, dx, dy, dy], shortest: dx.abs().max(dy.abs()) }
+    }
+
+    fn add(mut self, dx: i32, dy: i32) -> Run {
+        let (dx, dy) = (i64::from(dx), i64::from(dy));
+        let [x0, x1, y0, y1] = self.moves;
+        self.moves = [x0.min(dx), x1.max(dx), y0.min(dy), y1.max(dy)];
+        self.shortest = self.shortest.min(dx.abs().max(dy.abs()));
+        self
+    }
+
+    /// Whether the run and the stitch `(dx, dy)` after it are one long stitch split into equal
+    /// pieces: every move within one unit of the others on each axis, and none shorter than
+    /// [`MIN_PIECE`]. The writers split long stitches this way (see `vectorcraft_stitch::prepare`),
+    /// as other software does; a trim's jumps (small moves that cancel) and travel that ends in a
+    /// stitch in place or a shorter stitch are not.
+    fn is_split_stitch(self, dx: i32, dy: i32) -> bool {
+        let r = self.add(dx, dy);
+        let [x0, x1, y0, y1] = r.moves;
+        x1 - x0 <= 1 && y1 - y0 <= 1 && r.shortest >= MIN_PIECE
+    }
+}
+
 /// Builds a plan from records read from a file, with moves in file orientation.
 struct Builder {
     blocks: Vec<Block>,
     threads: Vec<Thread>,
     /// The current position, in plan orientation (y down).
     at: Pt,
-    /// The position where the current run of jumps began, and its length.
-    run: Option<(Pt, usize)>,
-    /// A run of this many jumps or more is read as a trim; `None` never.
+    /// The current run of jumps.
+    run: Option<Run>,
+    /// A run of this many jumps or more is read as a trim, unless it is a split stitch
+    /// ([`Run::is_split_stitch`]); `None` never.
     jumps_per_trim: Option<usize>,
     records: usize,
 }
@@ -243,38 +287,41 @@ impl Builder {
         self.at = Pt { x: self.at.x.saturating_add(dx), y: self.at.y.saturating_sub(dy) };
     }
 
-    /// Ends the current run of jumps, if any.
-    fn flush(&mut self) {
-        let Some((from, n)) = self.run.take() else { return };
-        if self.jumps_per_trim.is_some_and(|t| n >= t) {
+    /// Ends the current run of jumps, if any. `stitch`: the move of the stitch that ends it.
+    fn flush(&mut self, stitch: Option<(i32, i32)>) {
+        let Some(run) = self.run.take() else { return };
+        let split = stitch.is_some_and(|(dx, dy)| run.is_split_stitch(dx, dy));
+        if self.jumps_per_trim.is_some_and(|t| run.n >= t) && !split {
             self.push(Step::Trim);
         }
-        if self.at != from {
+        if self.at != run.from {
             self.push(Step::Jump(self.at));
         }
     }
 
     fn stitch(&mut self, dx: i32, dy: i32) {
-        self.flush();
+        self.flush(Some((dx, dy)));
         self.step(dx, dy);
         self.push(Step::Stitch(self.at));
     }
 
     fn jump(&mut self, dx: i32, dy: i32) {
-        let (from, n) = self.run.unwrap_or((self.at, 0));
-        self.run = Some((from, n + 1));
+        self.run = Some(match self.run {
+            Some(r) => Run { n: r.n.saturating_add(1), ..r.add(dx, dy) },
+            None => Run::new(self.at, dx, dy),
+        });
         self.step(dx, dy);
     }
 
     fn trim(&mut self) {
-        self.flush();
+        self.flush(None);
         self.push(Step::Trim);
     }
 
     /// A move outside any run of jumps (it never reads as part of a trim): one jump, if it
     /// moves at all.
     fn travel(&mut self, dx: i32, dy: i32) {
-        self.flush();
+        self.flush(None);
         if (dx, dy) != (0, 0) {
             self.step(dx, dy);
             self.push(Step::Jump(self.at));
@@ -284,7 +331,7 @@ impl Builder {
     /// Starts the next block, then applies the record's move, if any, as a jump. A file with
     /// more than [`MAX_BLOCKS`] blocks is refused before they are built.
     fn color_change(&mut self, dx: i32, dy: i32) -> Result<(), String> {
-        self.flush();
+        self.flush(None);
         let i = self.blocks.len();
         if i >= MAX_BLOCKS {
             return Err("the file has too many colour changes".to_string());
@@ -296,7 +343,7 @@ impl Builder {
     }
 
     fn finish(mut self, name: String) -> StitchPlan {
-        self.flush();
+        self.flush(None);
         StitchPlan { name, blocks: self.blocks }
     }
 }
