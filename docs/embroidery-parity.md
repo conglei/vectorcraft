@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `stitch.preview`: realistic thread preview, jump, needle point and function overlays, density map) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -17,22 +17,24 @@ the gap table here; the issue descriptions repeat its contents with file referen
 
 ## Summary
 
-**9 of 41 basic-tier rows done (5) or partial (4), measured by automated tests; roughly 10% of the
+**12 of 41 basic-tier rows done (5) or partial (7), measured by automated tests; roughly 12% of the
 basic tier's hours (estimated).** VectorCraft has a stitch plan model, machine profiles, running and
 manual stitches along stroked paths, a small-stitch filter, fixed lock stitches, and DST and EXP
 readers and writers, reached through `document.export`, `document.open`, `stitch.info` and
-`stitch.calibration`. Fuzz tests feed garbage and mutated DST and EXP files to both readers. Files
+`stitch.calibration`, and a PNG preview of the export's stitches (`stitch.preview`: lit thread or a
+density map, with optional jump, needle point and function marks). Fuzz tests feed garbage and mutated DST and EXP files to both readers. Files
 written by VectorCraft and read by an independent implementation (pyembroidery, by hand, see
 [development.md](development.md#checking-stitch-files-against-another-reader)) give the same needle
 points, and the reverse. **No file has been stitched on a machine yet**: the jumps-per-trim default,
 the `ST:` count, the start position and the lock stitch length are unverified until the
-calibration stitch-out. There are no fills, satin, preview or thread charts. VectorCraft also has
+calibration stitch-out. There are no fills, satin, simulator, preview panel or thread charts. VectorCraft also has
 most of the drawing side that a digitizer needs (shapes, pen, booleans, offsets, Image Trace, type,
 a renderer, a command system, a CLI and MCP), which commercial packages either build themselves or
 borrow from a bundled drawing program.
 
 - **Basic tier** (what every package ships at its entry level, plus plain manual digitizing):
-  roughly **350–585 h** remaining (estimated; 390–650 h before E1 and the DST and EXP part of E2),
+  roughly **340–570 h** remaining (estimated; 390–650 h before E1, the DST and EXP part of E2 and
+  the first preview pass of E5),
   gaps E2–E10.
 - **The product goal** (vivid pet portraits from a photo, with an image model preparing the photo):
   roughly **110–190 h** more (estimated), gaps E11–E12. No commercial package automates fur
@@ -164,10 +166,10 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 | Thread charts and matching | Per-brand charts with codes; match a palette to a chart | B | swatch libraries, palette quantization to a supplied list (`trace`); no thread data | E6 |
 | Colourways | Several colour schemes per design | M | Recolor Artwork exists; no colourway record | E6 |
 | Needle assignment | Map colours to needle numbers for the machine | B | nothing | E6 |
-| Realistic preview | Stitches drawn as lit thread on a fabric background | B | renderer (`render`); no thread rendering | E5 |
+| Realistic preview | Stitches drawn as lit thread on a fabric background | B | **partial** (measured by tests): `stitch.preview` draws the export's plan as shaded thread capsules with a soft shadow on a flat fabric colour, as a PNG; no panel in the app, no fabric textures | E5 |
 | Stitch simulator | Animated stitch-out, with speed and range | B | nothing | E5 |
-| Needle points, connectors, function markers | View toggles | B | overlays exist as a pattern | E5 |
-| Density map | Colour-coded overlap view | B | nothing | E5 |
+| Needle points, connectors, function markers | View toggles | B | **partial** (measured by tests): `stitch.preview` options `showNeedles`, `showJumps` (dashed connectors) and `showFunctions` (trim, stop and colour change rings); no toggles in the app UI | E5 |
+| Density map | Colour-coded overlap view | B | **partial** (measured by tests): `stitch.preview {view: density}`, 1 mm cells by thread coverage on a fixed ramp, red at 2 (too dense), with `maxCoverage` and `denseCells`; no legend, no view in the app | E5 |
 | Hoops and frames | Library, custom hoops, automatic choice, fit check, centring | B | artboards; no hoop model | E7 |
 | Production worksheet | Design picture, size, stitch count, stop table with thread codes and needles, trims, thread and bobbin length, run time, barcode | B | **have**: PDF export, print; no worksheet layout or figures | E7 |
 | Estimates | Thread per colour, bobbin, run time at a given speed | B | nothing | E7 |
@@ -214,7 +216,7 @@ in the StitchCraft project (see "Where the work is tracked" above); claim work t
 | E2 | Machine files | DST and EXP **done** (2026-11-11, measured by tests; not yet stitched on a machine): `vectorcraft-embroidery` at L3, engine adapters, format table rows, property and fuzz tests, round-trip checks, `vectorcraft-cli convert`. Remaining: TBF and U01, then PES, JEF and VP3, and a batch convert view | E1 | 30–55 (was 45–80) |
 | E3 | Basic stitch types | Run family, satin column, tatami, zigzag, E stitch, manual; underlay; compensation; split and shortening; lock stitches; trims | E1 | 70–110 |
 | E4 | Stitch objects | Stitch type and parameters stored on document objects, regeneration on edit, stitch angle lines, fabric presets, a parameters panel | E3 | 40–65 |
-| E5 | Preview and simulator | Thread rendering, simulator, needle point and connector views, density map, travel controls | E1 | 30–50 |
+| E5 | Preview and simulator | First pass **done** (2026-11-11, measured by tests): `stitch.preview` in `vectorcraft-stitch` (realistic thread, needle point, jump and function overlays, density map, as PNG). Remaining: simulator, preview panel and view toggles in the app, travel controls, fabric textures | E1 | 20–40 (was 30–50) |
 | E6 | Threads | User-importable thread charts, a small original default set, matching, colourways, needle assignment | E1 | 15–25 |
 | E7 | Production | Hoop library and fit, worksheet as PDF, thread, bobbin and run-time estimates, design checker, export to a folder | E2, E6 | 30–50 |
 | E8 | Sequencing | Entry and exit points, closest join, start and end, colour-block list, overlap removal, auto-routing, branching | E4 | 45–75 |
@@ -284,6 +286,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | E5 first pass, measured by tests: `stitch.preview` renders the plan an export would write as lit thread on fabric or as a density map, with optional jump, needle point and function marks, as a PNG (design: [the preview spec](superpowers/specs/2026-11-11-embroidery-preview-design.md)). Rows updated: realistic preview, needle points and function markers, density map (each partial). E5 reduced to 20–40 h (estimated) |
 | 2026-11-11 | minor | An opened stitch file re-exports with the trims it had and no more: a run the file trimmed before is marked on its path, runs reached by a jump alone are no longer trimmed, and travel trims are off on that layer by default (`travelTrims` on `document.export` and `stitch.info` forces them on or off). A trim before a colour change is not kept (`trimBeforeColorChange` writes one). Row updated: reading stitch files |
 | 2026-11-11 | minor | Execution tracking moved to Linear (team StitchCraft, `STI`; project `P-STI-31`): one issue per gap with blocking relations from the "Depends on" column, five owner-decision issues, the calibration stitch-out and its follow-ups, and the re-export travel-trim observation. This document keeps behaviour, status and evidence; scores and estimates unchanged |
 | 2026-11-11 | minor | The opened-file defaults apply per layer: art added beside an opened stitch file is run-stitched as in a fresh document, `stitch.info` and a `selectedOnly` export agree, and a warning says when the file's runs get lock stitches too. Row updated: reading stitch files |

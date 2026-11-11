@@ -424,7 +424,8 @@ CI and needs Python and network access to PyPI.
    package with `sys.path.insert(0, "/tmp/pyemb")`.
 2. Write the calibration design with the CLI:
    `cargo run -p vectorcraft-cli -- run --cmd stitch.calibration --params '{}' --cmd stitch.info --params '{"format":"dst"}' --export /tmp/cal.dst --export /tmp/cal.exp`.
-   `stitch.info` prints the stitch, jump, trim and colour-change counts the export writes.
+   `stitch.info` prints the stitch, jump, trim and colour-change counts the export writes;
+   `--cmd stitch.preview --params '{"path":"/tmp/cal.png","showFunctions":true}'` draws its stitches.
 3. Read both files with `pyembroidery.read` and compare its counts
    (`count_stitch_commands(pyembroidery.STITCH)`, `count_color_changes()`) and the positions of its
    `STITCH` entries with ours. Positions are in 0.1 mm; compare after converting both to the same
