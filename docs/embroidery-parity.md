@@ -176,7 +176,7 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 | EXP | Melco and Bernina; stitches only | B | **done**: reader and writer; no colour companion file; not yet loaded on a machine | E2 |
 | TBF, U01, DSB | Tajima LAN, Barudan; carry needle or function data | M | nothing | E2 |
 | PES/PEC, JEF, VP3 | Brother, Janome, Husqvarna and Pfaff home machines | M | nothing | E2 |
-| Reading stitch files | Open any of the above as manual stitches | B | **partial**: DST and EXP open as stroked paths, one group per colour, on a layer marked as a stitch file, so an export with default options keeps the needle points (mode `manual`, no added locks); fuzzed; consecutive blocks of one colour merge on re-export; the other formats are missing | E2 |
+| Reading stitch files | Open any of the above as manual stitches | B | **partial**: DST and EXP open as stroked paths, one group per colour, on a layer marked as a stitch file, so an export with default options keeps that layer's needle points (anchor by anchor, no added locks) while art drawn on other layers is run-stitched and locked; fuzzed; consecutive blocks of one colour merge on re-export; the other formats are missing | E2 |
 | Recognising stitch files | Turn imported stitches back into editable objects | P | nothing | E14 |
 
 ### Photo, fur and decorative work
@@ -275,6 +275,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | The opened-file defaults apply per layer: art added beside an opened stitch file is run-stitched as in a fresh document, `stitch.info` and a `selectedOnly` export agree, and a warning says when the file's runs get lock stitches too. Row updated: reading stitch files |
 | 2026-11-11 | minor | Review fixes, measured by tests: DST and EXP end with a trim before the travel back to the start; travel trims are decided after lock stitches; template and non-printing layers and clipping paths are not sewn (clipped art is sewn in full, with a warning); a document opened from a stitch file re-exports its needle points by default; `stitch.info` reports `records`; DST header extents leave out trim jumps. Rows updated: machine profile, DST, reading stitch files |
 | 2026-11-11 | minor | E1 done and the DST and EXP part of E2, measured by automated tests and a manual cross-check with an independent reader; no file stitched on a machine yet. Rows updated: stitch plan model, machine profile, running and manual stitches, small-stitch filter, lock stitches, DST, EXP, reading stitch files. E2 reduced to 30–55 h (estimated) |
 | 2026-11-11 | new | First gap analysis from a survey of public documentation. Nothing is implemented; all hours are estimated; commercial feature details are from search snippets and are unverified where marked |

@@ -77,8 +77,10 @@ Built-in profiles use neutral ids, because user-visible strings may not name ven
 | `generic` | 12.1 mm | 12.1 mm | 0.3 mm | — | 3 | none |
 | `commercial15` | 12.1 mm | 12.1 mm | 0.3 mm | 15 | 3 | 500 × 350 mm |
 
-`commercial15` holds the values documented for the test machine; every field can be overridden by
-an export option. EXP export raises the two maxima to 12.7 mm.
+`commercial15` holds the values documented for the test machine. Export options override the
+maximum stitch (`maxStitch`), the minimum stitch (`minStitch`) and the jumps per trim
+(`jumpsPerTrim`); the needle count, the field and the maximum jump have no option. EXP export
+raises the two maxima to 12.7 mm.
 
 `prepare(plan, profile, options) -> Prepared { plan, warnings }` makes a plan safe for a machine,
 in this order:
@@ -151,14 +153,24 @@ Opening a stitch file gives a new document in millimetres.
   stroked 0.4 mm in the thread colour.
 - Jumps are not drawn.
 - The artboard is the design's extents plus a 10 mm margin.
-- The layer carries the object data `stitchFile=1` (`is_stitch_document` looks for it), which
-  survives saving.
+- The layer carries the object data `stitchFile=1`, which survives saving.
 
-When the document carries that mark, `document.export` to DST or EXP and `stitch.info` default to
-`mode: manual` and `locks: false`, so exporting an opened file with default options reproduces its
-needle points. Options given explicitly win: `{mode: run, locks: true}` re-stitches it. Trims may
-differ. Small-stitch removal still applies: a stitch closer than `minStitch` (0.3 mm by default)
-to the one before is dropped; pass `minStitch: 0` to keep every needle point.
+The decision is per layer, made in `from_document`, so `document.export` to DST or EXP and
+`stitch.info` reach the same one, `selectedOnly` included (the export's reduced document keeps the
+layer, and its mark, around selected art):
+
+- **`mode` not given:** art under a marked layer is taken anchor by anchor (`manual`), so its
+  needle points come back unchanged; all other art, such as a layer added after opening, is
+  `run`. A `mode` given applies to all art.
+- **`locks` not given:** off when every stitched run comes from a marked layer (the file has its
+  own), on otherwise. When the plan mixes the two, every run gets them, with the warning "lock
+  stitches were added to every run, including those of the opened stitch file: pass locks: false
+  to keep that file's runs unchanged". A `locks` given applies as given, with no warning.
+
+So exporting an opened file with default options reproduces its needle points, and
+`{mode: run, locks: true}` re-stitches it. Trims may differ. Small-stitch removal still applies: a
+stitch closer than `minStitch` (0.3 mm by default) to the one before is dropped; pass
+`minStitch: 0` to keep every needle point.
 
 ## DST
 
@@ -255,8 +267,8 @@ Everything is reachable from the CLI, MCP and both apps, because it goes through
   or `generic`), `mode` (`run` | `manual`), `stitchLength`, `minStitch`, `maxStitch`, `locks`,
   `jumpsPerTrim`, `trimBeforeColorChange`, `start`, `returnToStart`, `name`, `selectedOnly`. An
   unknown key is refused. The reply carries the warnings; `stitch.info` gives the statistics.
-  For a document opened from a stitch file, `mode` defaults to `manual` and `locks` to `false`
-  (see [A document from a plan](#a-document-from-a-plan)).
+  When `mode` or `locks` is not given, art on an opened stitch file's layer keeps its needle
+  points (see [A document from a plan](#a-document-from-a-plan)).
 - **`document.open`** of a `.dst` or `.exp` file, with an optional `stitch: {jumpsPerTrim}` object.
 - **`stitch.info`** (query): the statistics and warnings an export with the same options would
   give, without saving a file, and `records`: the number of records the file would hold (for DST
