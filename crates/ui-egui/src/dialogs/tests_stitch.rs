@@ -9,6 +9,7 @@ use super::*;
 fn stitchable() -> (VectorcraftApp, Written) {
     let (mut app, written) = app(1);
     app.run("select.all", json!({})).unwrap();
+    app.run("paint.setFill", json!({"none": true})).unwrap();
     app.run("paint.setStroke", json!({"color": "#ff0000"})).unwrap();
     app.run("select.none", json!({})).unwrap();
     (app, written)
@@ -41,8 +42,11 @@ fn stitch_info_shows_the_counts_threads_and_switches_format() {
 
 #[test]
 fn stitch_info_with_nothing_stitchable_says_so_in_the_dialog() {
-    // The fixture's ellipse has no stroke: nothing is stitched, and the dialog still opens.
+    // An ellipse with neither stroke nor fill: nothing is stitched, and the dialog still opens.
     let (mut app, _) = app(1);
+    app.run("select.all", json!({})).unwrap();
+    app.run("paint.setFill", json!({"none": true})).unwrap();
+    app.run("select.none", json!({})).unwrap();
     app.run("ui.stitchInfo", json!({})).unwrap();
     frame(&mut app);
     let d = app.ui.dialog.as_ref().unwrap();
@@ -182,4 +186,23 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
     // Export Stitch File… opens Export As on DST.
     crate::menus::invoke(&mut app, "file.exportAs", json!({"format": "dst"}));
     assert_eq!(app.ui.dialog.as_ref().unwrap().str("format"), "dst");
+}
+
+#[test]
+fn the_machine_and_stitch_type_choices_reach_the_export() {
+    let (mut app, _) = stitchable();
+    app.run("ui.stitchOptionsDialog", json!({"path": "/out/a.dst"})).unwrap();
+    for (k, v) in [("machine", json!("bai_mirror")), ("fillType", json!("none")), ("strokeType", json!("satin"))] {
+        set(&mut app, k, v);
+    }
+    frame(&mut app);
+    let params = stitch_options::export_params(app.ui.dialog.as_ref().unwrap());
+    assert_eq!(params["machine"], "bai_mirror");
+    assert_eq!((params["fill"].clone(), params["stroke"].clone()), (json!({"type": "none"}), json!({"type": "satin"})));
+    assert!(params.get("fillType").is_none() && params.get("strokeType").is_none());
+    confirm(&mut app).unwrap();
+    // The defaults are left to the engine.
+    app.run("ui.stitchOptionsDialog", json!({"fillType": "tatami", "strokeType": "run"})).unwrap();
+    let params = stitch_options::export_params(app.ui.dialog.as_ref().unwrap());
+    assert!(params.get("fill").is_none() && params.get("stroke").is_none());
 }

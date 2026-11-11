@@ -41,7 +41,15 @@ pub(crate) const MAX_STITCH_EXP: f64 = 12.7;
 const PER_EXPORT: [&str; 6] = ["format", "path", "useArtboards", "range", "artboard", "selectedOnly"];
 
 /// The machines: (id, label).
-const MACHINES: [(&str, &str); 2] = [("commercial15", "15 needles, 500 × 350 mm field"), ("generic", "Generic, no needle or field limits")];
+const MACHINES: [(&str, &str); 3] = [
+    ("commercial15", "15 needles, 500 × 350 mm field"),
+    ("bai_mirror", "Single-head, 15 needles (reads DST)"),
+    ("generic", "Generic, no needle or field limits"),
+];
+/// How filled paths are sewn: (`fill.type`, label).
+const FILLS: [(&str, &str); 2] = [("tatami", "Tatami fill"), ("none", "Not sewn")];
+/// How stroked paths are sewn: (`stroke.type`, label).
+const STROKES: [(&str, &str); 2] = [("run", "Running stitch"), ("satin", "Satin column")];
 /// The ways paths become stitches: (`mode`, label); null is left to the engine.
 const MODES: [(Option<&str>, &str); 3] =
     [(None, "Automatic"), (Some("run"), "Running stitch along each path"), (Some("manual"), "One needle point per anchor")];
@@ -71,6 +79,8 @@ pub(crate) fn defaults(format: &str) -> Map<String, Value> {
         ("returnToStart", json!(true)),
         ("name", json!("")),
         ("selectedOnly", json!(false)),
+        ("fillType", json!("tatami")),
+        ("strokeType", json!("run")),
     ] {
         m.insert(k.into(), v);
     }
@@ -104,6 +114,12 @@ pub(crate) fn export_params(d: &Dialog) -> Value {
         o.retain(|_, v| !v.is_null());
         if o.get("name").and_then(Value::as_str).is_some_and(|n| n.trim().is_empty()) {
             o.remove("name");
+        }
+        // The stitch types are the `fill` and `stroke` option objects, given when not the default.
+        for (key, object, default) in [("fillType", "fill", "tatami"), ("strokeType", "stroke", "run")] {
+            if let Some(t) = o.remove(key).as_ref().and_then(Value::as_str).filter(|t| *t != default) {
+                o.insert(object.into(), json!({ "type": t }));
+            }
         }
         if o.get("mode").and_then(Value::as_str) == Some("auto") {
             o.remove("mode");
@@ -169,6 +185,17 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         d.fields.insert("locks".into(), json!(l.0));
     }
     ui.add_space(8.0);
+    widgets::subheader(ui, tl!("Stitch types"));
+    for (key, id, label, options) in
+        [("fillType", "stitch-fill", tl!("Filled Paths:"), &FILLS), ("strokeType", "stitch-stroke", tl!("Stroked Paths:"), &STROKES)]
+    {
+        let labels: Vec<&str> = options.iter().map(|o| o.1).collect();
+        let current = options.iter().position(|o| o.0 == d.str(key)).unwrap_or(0);
+        if let Some(o) = pick(ui, id, label, current, &labels, 200.0).and_then(|i| options.get(i)) {
+            d.fields.insert(key.into(), json!(o.0));
+        }
+    }
+    ui.add_space(8.0);
     widgets::subheader(ui, tl!("Trims and Colors"));
     number(ui, d, "jumpsPerTrim", tl!("Jumps per Trim:"), "", 0, (2.0, 8.0));
     super::document_setup::check(ui, d, "trimBeforeColorChange", tl!("Trim Before Each Color Change"));
@@ -192,9 +219,9 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     super::form::caption(
         ui,
         if format == "exp" {
-            tl!("Each stroked path is sewn in its stroke color, one thread per color. EXP holds moves of up to 12.7 mm.")
+            tl!("Each path is sewn in its fill or stroke color, one thread per color. EXP holds moves of up to 12.7 mm.")
         } else {
-            tl!("Each stroked path is sewn in its stroke color, one thread per color. DST holds moves of up to 12.1 mm.")
+            tl!("Each path is sewn in its fill or stroke color, one thread per color. DST holds moves of up to 12.1 mm.")
         },
     );
     false
