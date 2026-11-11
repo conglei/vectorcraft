@@ -291,6 +291,12 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     })
 }
 
+/// The document-wide stitch settings the export options `p` give (as for a DST file): the
+/// defaults an object's stitch properties fall back on (`stitch.props`). Errors name `cmd`.
+pub(crate) fn from_doc_options(cmd: &str, p: &Value) -> Result<FromDocOptions> {
+    options(cmd, p, "dst").map(|o| o.from)
+}
+
 /// Check the stitch options in `p` for `format` (`dst`, `dsb` or `exp`) without planning a file (dialogs
 /// keep themselves open on an error).
 pub fn check(p: &Value, format: &str) -> std::result::Result<(), String> {

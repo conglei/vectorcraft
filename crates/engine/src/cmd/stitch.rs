@@ -1,6 +1,8 @@
 //! Embroidery queries: `stitch.info`, the statistics and warnings a DST, DSB or EXP export with the
 //! same options would give, without writing a file, and `stitch.preview`, a picture of the stitches
-//! that export would sew.
+//! that export would sew. The stitch properties of objects are in [`objects`].
+
+mod objects;
 
 use std::sync::Arc;
 
@@ -25,7 +27,7 @@ const PREVIEW: &str = "stitch.preview";
 const MAX_INLINE_PIXELS: u64 = 2048 * 2048;
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut v = vec![
         cmd!(
             query "stitch.info",
             "Stitch Info",
@@ -53,7 +55,9 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             preview_cmd
         ),
-    ]
+    ];
+    v.extend(objects::specs());
+    v
 }
 
 fn add_calibration(s: &mut Session, p: &Value) -> Result<Value> {

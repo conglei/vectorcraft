@@ -12,6 +12,7 @@ mod plan;
 mod prepare;
 mod preview;
 mod profile;
+mod props;
 mod run;
 mod satin;
 mod stats;
@@ -33,6 +34,7 @@ pub use preview::{
     MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, TOO_DENSE, density, preview, preview_size,
 };
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
+pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
 pub use satin::{SatinParams, satin};
 pub use stats::{Stats, ThreadStats, stats};
