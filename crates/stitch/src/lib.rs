@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod calibration;
 mod from_doc;
 mod plan;
 mod prepare;
@@ -13,6 +14,7 @@ mod run;
 mod stats;
 mod to_doc;
 
+pub use calibration::{CalibrationPart, calibration};
 pub use from_doc::{FromDocOptions, Mode, Planned, from_document};
 pub use plan::{Block, MAX_STEPS, Pt, Step, StitchPlan, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};

@@ -190,3 +190,21 @@ fn the_formats_are_listed() {
     assert_eq!(detect("a.bin", b"LA:design").map(|f| f.id), Some("dst"), "DST by its content");
     assert_eq!(detect("a.exp", &[0x0A, 0x00]).map(|f| f.id), Some("exp"), "EXP by its extension");
 }
+
+#[test]
+fn the_calibration_design_stitches_as_documented() {
+    let mut s = session();
+    let before = s.execute("stitch.info", &json!({})).unwrap_err().to_string();
+    assert!(!before.is_empty());
+    let r = s.execute("stitch.calibration", &json!({})).unwrap();
+    assert!(r["id"].as_u64().is_some(), "{r}");
+    let info = s.execute("stitch.info", &json!({"locks": false})).unwrap();
+    assert_eq!(info["colorChanges"], 2, "{info}");
+    assert_eq!(info["widthMm"].as_f64(), Some(100.0), "{info}");
+    assert_eq!(info["heightMm"].as_f64(), Some(100.0), "{info}");
+    assert!(info["trims"].as_u64().unwrap() >= 12, "{info}");
+    assert_eq!(info["warnings"].as_array().map(Vec::len), Some(0), "{info}");
+    // One undo step removes the whole group.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.execute("stitch.info", &json!({})).is_err());
+}
