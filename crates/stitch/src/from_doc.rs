@@ -1,14 +1,15 @@
 //! Stitches from a document: stroked paths become running stitch.
 
+use std::collections::HashSet;
+
 use vectorcraft_color::Paint;
 use vectorcraft_doc::{Document, Node, NodeId, NodeKind};
 use vectorcraft_geom::{AnchorKind, BezPath, PathEl, SubPath};
 
+use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
-use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, Thread};
+use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
-/// Millimetres per document point.
-const MM_PER_PT: f64 = 25.4 / 72.0;
 /// How far a flattened curve may stray from the true one, in millimetres.
 const FLATTEN_TOLERANCE_MM: f64 = 0.05;
 
@@ -49,12 +50,13 @@ pub struct Planned {
 }
 
 /// The stitch plan for `doc`'s visible stroked paths and compound paths, bottom to top. Each
-/// subpath is one run; consecutive objects of one thread colour share a block.
+/// subpath is one run; consecutive objects of one thread colour share a block. Template and
+/// non-printing layers, guides and clipping paths are not sewn; art inside a clip is sewn in full.
 pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, String> {
-    let mut w = Walk { o, blocks: vec![], pos: None, steps: 0, filled: 0, other: 0, patterned: false };
+    let mut w = Walk::new(o);
     // `doc.layers` is stored bottom first, the order the renderer paints them in.
     for layer in &doc.layers {
-        w.node(layer, false)?;
+        w.node(layer, false, false)?;
     }
     if w.blocks.is_empty() {
         return Err("nothing to stitch: the document has no stroked paths".into());
@@ -69,6 +71,9 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     if w.patterned {
         warnings.push("a stroke with a gradient or pattern was stitched in black".into());
     }
+    if w.clipped {
+        warnings.push("clipped art was stitched in full: the clip was ignored".into());
+    }
     let plan = StitchPlan { name: String::new(), blocks: w.blocks };
     plan.check()?;
     Ok(Planned { plan, warnings })
@@ -76,6 +81,8 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
 
 struct Walk<'o> {
     o: &'o FromDocOptions,
+    /// [`FromDocOptions::only`] as a set.
+    only: Option<HashSet<NodeId>>,
     blocks: Vec<Block>,
     /// Where the needle is: the last stitch made.
     pos: Option<Pt>,
@@ -83,32 +90,47 @@ struct Walk<'o> {
     filled: usize,
     other: usize,
     patterned: bool,
+    /// Art inside a clip was sewn.
+    clipped: bool,
 }
 
-impl Walk<'_> {
+impl<'o> Walk<'o> {
+    fn new(o: &'o FromDocOptions) -> Walk<'o> {
+        let only = o.only.as_ref().map(|ids| ids.iter().copied().collect());
+        Walk { o, only, blocks: vec![], pos: None, steps: 0, filled: 0, other: 0, patterned: false, clipped: false }
+    }
+
     /// Stitch `n` and what it holds. `listed`: an ancestor is in [`FromDocOptions::only`].
-    /// Recursion is bounded by the document's own nesting limit.
-    fn node(&mut self, n: &Node, listed: bool) -> Result<(), String> {
+    /// `clipped`: an ancestor clips it. Recursion is bounded by the document's own nesting limit.
+    fn node(&mut self, n: &Node, listed: bool, clipped: bool) -> Result<(), String> {
         if !n.visible {
             return Ok(());
         }
-        let listed = listed || self.o.only.as_ref().is_none_or(|ids| ids.contains(&n.id));
+        // Template and non-printing layers don't print, so they aren't sewn either.
+        if let NodeKind::Layer { template, printable, .. } = n.kind
+            && (template || !printable)
+        {
+            return Ok(());
+        }
+        let listed = listed || self.only.as_ref().is_none_or(|ids| ids.contains(&n.id));
         match &n.kind {
             NodeKind::Layer { children, .. } | NodeKind::Group { children, .. } => {
-                for c in children {
-                    self.node(c, listed)?;
+                // A clip group's or clipping layer's first child is its clipping path.
+                let clips = n.clips();
+                for c in children.iter().skip(usize::from(clips)) {
+                    self.node(c, listed, clipped || clips)?;
                 }
             }
             _ if !listed => {}
-            // Guides don't print, so they aren't sewn either.
-            NodeKind::Path { guide: true, .. } => {}
-            NodeKind::Path { .. } | NodeKind::Compound { .. } => self.shape(n)?,
+            // Guides and clipping paths don't print, so they aren't sewn either.
+            NodeKind::Path { guide: true, .. } | NodeKind::Path { clipping: true, .. } => {}
+            NodeKind::Path { .. } | NodeKind::Compound { .. } => self.shape(n, clipped)?,
             _ => self.other += 1,
         }
         Ok(())
     }
 
-    fn shape(&mut self, n: &Node) -> Result<(), String> {
+    fn shape(&mut self, n: &Node, clipped: bool) -> Result<(), String> {
         let stroke = n.appearance.stroke().filter(|s| s.visible).map(|s| &s.paint);
         let rgb = match stroke {
             None | Some(Paint::None) => {
@@ -129,10 +151,12 @@ impl Walk<'_> {
         let mut subpaths: Vec<&SubPath> = vec![];
         collect_subpaths(n, &mut subpaths);
         for sp in subpaths {
+            let budget = MAX_STEPS.saturating_sub(self.steps);
             let run = match self.o.mode {
-                Mode::Run => run_of(sp, self.o.stitch_length)?,
-                Mode::Manual => manual_of(sp)?,
+                Mode::Run => run_of(sp, self.o.stitch_length, budget)?,
+                Mode::Manual => manual_of(sp, budget)?,
             };
+            self.clipped |= clipped && !run.is_empty();
             self.add_run(rgb, &run)?;
         }
         Ok(())
@@ -165,7 +189,7 @@ impl Walk<'_> {
         let added = lead.len() + run.len();
         self.steps = self.steps.saturating_add(added);
         if self.steps > MAX_STEPS {
-            return Err(format!("the design has more than {MAX_STEPS} stitches"));
+            return Err(TOO_MANY_STEPS.to_string());
         }
         let Some(block) = self.blocks.last_mut() else { return Ok(()) };
         block.steps.extend(lead);
@@ -188,16 +212,20 @@ fn collect_subpaths<'n>(n: &'n Node, out: &mut Vec<&'n SubPath>) {
     }
 }
 
+const TOO_FAR: &str = "the art lies too far from the origin to stitch";
+
+/// A document point in millimetres, if it fits a plan point.
 fn mm(p: vectorcraft_geom::Point) -> Result<(f64, f64), String> {
     let q = (p.x * MM_PER_PT, p.y * MM_PER_PT);
     match Pt::from_mm(q.0, q.1) {
         Some(_) => Ok(q),
-        None => Err("the art lies too far from the origin to stitch".into()),
+        None => Err(TOO_FAR.into()),
     }
 }
 
-/// Running stitch along `sp`, flattened, with its corner anchors kept as corners.
-fn run_of(sp: &SubPath, stitch_length: i32) -> Result<Vec<Pt>, String> {
+/// Running stitch along `sp`, flattened, with its corner anchors kept as corners. More than
+/// `budget` flattened points is an error, found before they are all made.
+fn run_of(sp: &SubPath, stitch_length: i32, budget: usize) -> Result<Vec<Pt>, String> {
     let Some(first) = sp.anchors.first() else { return Ok(vec![]) };
     let mut points = vec![mm(first.p)?];
     let mut corners = vec![first.kind == AnchorKind::Corner];
@@ -206,6 +234,9 @@ fn run_of(sp: &SubPath, stitch_length: i32) -> Result<Vec<Pt>, String> {
     for i in 0..count {
         let Some(end) = sp.anchors.get((i + 1) % sp.anchors.len().max(1)) else { break };
         let c = sp.segment(i);
+        if points.len() >= budget {
+            return Err(TOO_MANY_STEPS.into());
+        }
         if sp.segment_is_line(i) {
             points.push(mm(c.p3)?);
             corners.push(end.kind == AnchorKind::Corner);
@@ -214,12 +245,22 @@ fn run_of(sp: &SubPath, stitch_length: i32) -> Result<Vec<Pt>, String> {
         let mut bp = BezPath::new();
         bp.move_to(c.p0);
         bp.curve_to(c.p1, c.p2, c.p3);
+        // Room for this curve's points; the flattening stops adding them past it.
+        let room = budget.saturating_sub(points.len());
         let mut flat = vec![];
+        let mut over = false;
         vectorcraft_geom::flatten(bp.elements().iter().copied(), tolerance, |el| {
             if let PathEl::LineTo(p) = el {
-                flat.push(p);
+                if flat.len() < room {
+                    flat.push(p);
+                } else {
+                    over = true;
+                }
             }
         });
+        if over {
+            return Err(TOO_MANY_STEPS.into());
+        }
         // The curve's own end is the anchor, whatever the flattening ended on.
         flat.pop();
         for p in flat {
@@ -237,14 +278,15 @@ fn run_of(sp: &SubPath, stitch_length: i32) -> Result<Vec<Pt>, String> {
     Ok(run_stitches(&points, &corners, sp.closed && count > 0, stitch_length))
 }
 
-/// One needle point per anchor; a closed subpath returns to its first anchor.
-fn manual_of(sp: &SubPath) -> Result<Vec<Pt>, String> {
+/// One needle point per anchor; a closed subpath returns to its first anchor. More than
+/// `budget` points is an error.
+fn manual_of(sp: &SubPath, budget: usize) -> Result<Vec<Pt>, String> {
+    if sp.anchors.len().saturating_add(usize::from(sp.closed)) > budget {
+        return Err(TOO_MANY_STEPS.into());
+    }
     let mut out = Vec::with_capacity(sp.anchors.len().saturating_add(1));
     for a in &sp.anchors {
-        let (x, y) = mm(a.p)?;
-        if let Some(p) = Pt::from_mm(x, y) {
-            out.push(p);
-        }
+        out.push(Pt::from_pt(a.p.x, a.p.y).ok_or(TOO_FAR)?);
     }
     if sp.closed
         && let Some(&first) = out.first()
@@ -258,16 +300,15 @@ fn manual_of(sp: &SubPath) -> Result<Vec<Pt>, String> {
 mod tests {
     use std::sync::Arc;
 
-    use vectorcraft_color::{Color, Paint};
+    use vectorcraft_color::{Color, Gradient, GradientPaint, Paint};
     use vectorcraft_doc::{Appearance, Document, LayerColor, Node, NodeId};
     use vectorcraft_geom::{Anchor, PathData, Point, SubPath};
 
     use super::*;
-    use crate::{Pt, Step};
+    use crate::{PT_PER_MM, Pt, Step};
 
     const RED: [u8; 3] = [255, 0, 0];
     const BLUE: [u8; 3] = [0, 0, 255];
-    const PT_PER_MM: f64 = 72.0 / 25.4;
 
     fn mm(x: f64, y: f64) -> Point {
         Point::new(x * PT_PER_MM, y * PT_PER_MM)
@@ -382,16 +423,18 @@ mod tests {
     }
 
     #[test]
-    fn a_gradient_stroke_is_stitched_in_black_with_one_warning() {
-        let gradient = |doc: &mut Document, y: f64| {
+    fn gradient_and_pattern_strokes_are_stitched_in_black_with_one_warning() {
+        let painted = |doc: &mut Document, y: f64, paint: Paint| {
             let mut a = Appearance::basic(Paint::None, Paint::None, 1.0);
             if let Some(s) = a.stroke_mut() {
-                s.paint = Paint::Pattern { pattern: "dots".into(), xf: Default::default() };
+                s.paint = paint;
             }
             Arc::new(Node::path(doc.alloc_id(), line_mm(0.0, y, 10.0, y), a))
         };
         let mut d = doc_with(vec![]);
-        let children = vec![gradient(&mut d, 0.0), gradient(&mut d, 20.0)];
+        let pattern = Paint::Pattern { pattern: "dots".into(), xf: Default::default() };
+        let gradient = Paint::Gradient(Box::new(GradientPaint::new(Gradient::default())));
+        let children = vec![painted(&mut d, 0.0, gradient), painted(&mut d, 20.0, pattern)];
         let mut layer = (*d.layers[0]).clone();
         *layer.children_mut().unwrap() = children;
         d.layers = vec![Arc::new(layer)];
@@ -399,6 +442,84 @@ mod tests {
         assert_eq!(out.plan.blocks.len(), 1);
         assert_eq!(out.plan.blocks[0].thread.rgb, [0, 0, 0]);
         assert_eq!(out.warnings, vec!["a stroke with a gradient or pattern was stitched in black".to_string()]);
+    }
+
+    /// `doc_with(art)` with its one layer changed by `f`.
+    fn layer_with(art: Vec<(PathData, Appearance)>, f: impl FnOnce(&mut NodeKind)) -> Document {
+        let mut d = doc_with(art);
+        let mut layer = (*d.layers[0]).clone();
+        f(&mut layer.kind);
+        d.layers = vec![Arc::new(layer)];
+        d
+    }
+
+    #[test]
+    fn template_and_non_printing_layers_are_not_stitched() {
+        let art = || vec![stroked(line_mm(0.0, 0.0, 10.0, 0.0), RED)];
+        let template = layer_with(art(), |k| {
+            if let NodeKind::Layer { template, .. } = k {
+                *template = true;
+            }
+        });
+        let hidden = layer_with(art(), |k| {
+            if let NodeKind::Layer { printable, .. } = k {
+                *printable = false;
+            }
+        });
+        for d in [template, hidden] {
+            assert_eq!(from_document(&d, &FromDocOptions::default()).unwrap_err(), "nothing to stitch: the document has no stroked paths");
+        }
+        assert!(from_document(&doc_with(art()), &FromDocOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn clipping_paths_are_not_stitched_and_clipped_art_is_stitched_in_full_with_a_warning() {
+        let mut d = Document::new(500.0, 500.0);
+        let (p, a) = stroked(square_mm(5.0), BLUE);
+        let clip = Node::path(d.alloc_id(), p, a);
+        let (p, a) = stroked(line_mm(0.0, 0.0, 10.0, 0.0), RED);
+        let art = Node::path(d.alloc_id(), p, a);
+        let mut group = Node::group(d.alloc_id(), vec![Arc::new(clip), Arc::new(art)]);
+        group.set_clips(true);
+        // A path marked as a clipping path, outside a clip group.
+        let (p, a) = stroked(line_mm(0.0, 30.0, 10.0, 30.0), BLUE);
+        let mut marked = Node::new(d.alloc_id(), NodeKind::Path { path: p, rule: Default::default(), live: None, clipping: true, guide: false });
+        marked.appearance = a.into();
+        let mut layer = Node::layer(d.alloc_id(), "Art", LayerColor::Preset(0));
+        *layer.children_mut().unwrap() = vec![Arc::new(group), Arc::new(marked)];
+        d.layers = vec![Arc::new(layer)];
+        let out = from_document(&d, &FromDocOptions::default()).unwrap();
+        assert_eq!(out.plan.blocks.len(), 1, "{:?}", out.plan);
+        assert_eq!(out.plan.blocks[0].thread.rgb, RED);
+        assert_eq!(out.plan.points().last(), Some(Pt { x: 100, y: 0 }), "the clipped line in full");
+        assert_eq!(out.warnings, vec!["clipped art was stitched in full: the clip was ignored".to_string()]);
+        // A clipping layer clips by its first child in the same way.
+        let mut d = doc_with(vec![stroked(square_mm(5.0), BLUE), stroked(line_mm(0.0, 0.0, 10.0, 0.0), RED)]);
+        let mut layer = (*d.layers[0]).clone();
+        layer.set_clips(true);
+        d.layers = vec![Arc::new(layer)];
+        let out = from_document(&d, &FromDocOptions::default()).unwrap();
+        assert_eq!(out.plan.blocks.iter().map(|b| b.thread.rgb).collect::<Vec<_>>(), vec![RED]);
+        assert_eq!(out.warnings.len(), 1);
+    }
+
+    #[test]
+    fn flattened_points_are_bounded_before_stitching() {
+        // A quarter circle flattens to several points but sews only two 12 mm stitches.
+        let k = 0.552_284_749_8 * 10.0;
+        let sp = SubPath::new(
+            vec![Anchor::with_handles(mm(10.0, 0.0), mm(10.0, 0.0), mm(10.0, k)), Anchor::with_handles(mm(0.0, 10.0), mm(k, 10.0), mm(0.0, 10.0))],
+            false,
+        );
+        assert_eq!(run_of(&sp, 120, 3).unwrap_err(), TOO_MANY_STEPS);
+        assert_eq!(run_of(&sp, 120, MAX_STEPS).unwrap().len(), 3);
+        // The running total counts: a walk that already holds nearly the limit stops at the
+        // next path's points.
+        let d = doc_with(vec![stroked(PathData::single(SubPath::polyline(&[mm(0.0, 0.0), mm(1.0, 0.0), mm(2.0, 0.0), mm(3.0, 0.0)], false)), RED)]);
+        let o = FromDocOptions { stitch_length: 120, ..Default::default() };
+        let mut w = Walk::new(&o);
+        w.steps = MAX_STEPS - 3;
+        assert_eq!(w.node(&d.layers[0], false, false).unwrap_err(), TOO_MANY_STEPS);
     }
 
     #[test]
