@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod dst;
+pub mod exp;
 mod palette;
 
 pub use palette::default_thread;
@@ -246,6 +247,11 @@ impl Builder {
         let (from, n) = self.run.unwrap_or((self.at, 0));
         self.run = Some((from, n + 1));
         self.step(dx, dy);
+    }
+
+    fn trim(&mut self) {
+        self.flush();
+        self.push(Step::Trim);
     }
 
     /// A move outside any run of jumps (it never reads as part of a trim): one jump, if it
