@@ -69,8 +69,17 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 app.run("app.home", json!({})).ok();
             }
             ui.add_space(2.0);
+            let safe = vectorcraft_plugins::safe_mode::active().then(|| egui::RichText::new(tl!("Safe Mode")).color(t.warning).size(12.0));
+            let safe_w = safe.as_ref().map_or(0.0, |label| {
+                let text = ui.painter().layout_no_wrap(label.text().to_string(), egui::FontId::proportional(12.0), t.warning);
+                text.size().x + 2.0 * ui.spacing().button_padding.x + 8.0 + ui.spacing().item_spacing.x
+            });
             // With the macOS menu bar the menus are at the top of the screen instead.
-            let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
+            let menus_end = if app.services.native_menu.is_some() {
+                ui.cursor().min.x
+            } else {
+                menus::menu_bar_beside(app, ui, if safe_w > 0.0 { safe_w + 8.0 } else { 0.0 })
+            };
             // The right-side group fills the space after the menus from the right; when it runs
             // short, Discord goes first (it is also under Help), then the search icon (the palette
             // stays under its shortcut), then the workspace switcher narrows.
@@ -80,11 +89,6 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             // In Safe Mode, a label that stays in the bar whatever document is open, and opens
             // Help › Safe Mode; the other controls fit in the room it leaves, and the workspace
             // switcher (also under Window › Workspace) goes when a minimal one doesn't fit.
-            let safe = vectorcraft_plugins::safe_mode::active().then(|| egui::RichText::new(tl!("Safe Mode")).color(t.warning).size(12.0));
-            let safe_w = safe.as_ref().map_or(0.0, |label| {
-                let text = ui.painter().layout_no_wrap(label.text().to_string(), egui::FontId::proportional(12.0), t.warning);
-                text.size().x + 2.0 * ui.spacing().button_padding.x + 8.0 + ui.spacing().item_spacing.x
-            });
             let room = (right.width() - safe_w).max(0.0);
             let switcher = safe.is_none() || room >= 64.0 + 8.0;
             // Built-in workspace names translate; the user's own stay as typed.

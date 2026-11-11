@@ -57,10 +57,10 @@ mod submenus;
 mod tree;
 mod ui_commands;
 
-pub use bar::menu_bar;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use bar::menu_open;
 pub(crate) use bar::{home_key, home_showing};
+pub use bar::{menu_bar, menu_bar_beside};
 #[cfg(test)]
 use bar::{menu_body, pointer_reaches_title};
 pub use context::{context_items, context_menu_body, ruler_menu_body, ruler_unit_items};
