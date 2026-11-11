@@ -367,7 +367,7 @@ mod tests {
         b[124..124 + tc.len()].copy_from_slice(tc);
         let i = read(&b, &ReadOptions::default()).unwrap();
         assert_eq!(i.plan.name, "TEST");
-        assert_eq!(i.plan.blocks[0].thread, Thread { rgb: [0x10, 0x20, 0x30], name: Some("Navy".into()), code: Some("N1".into()) });
+        assert_eq!(i.plan.blocks[0].thread, Thread { rgb: [0x10, 0x20, 0x30], name: Some("Navy".into()), code: Some("N1".into()), brand: None });
         assert_eq!(i.plan.blocks[1].thread, crate::default_thread(1));
         assert!(is_dst(&b));
         assert!(!is_dst(b"XX:"));

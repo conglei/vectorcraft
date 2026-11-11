@@ -84,7 +84,7 @@ fn thread(value: &str) -> Option<Thread> {
     let text = |s: Option<&str>| s.filter(|s| !s.is_empty()).map(str::to_string);
     let name = text(parts.next());
     let code = text(parts.next());
-    Some(Thread { rgb: [r, g, b], name, code })
+    Some(Thread { rgb: [r, g, b], name, code, brand: None })
 }
 
 /// The name and thread colours from a header. Counts and extents are not trusted, so they
@@ -122,7 +122,7 @@ mod tests {
         let f = read(b"LA:Rose          \rST:      1\rTC:#FF0000,Red,R1\rTC:#00ff00\rTC:junk\r\x1aTC:#0000FF\r");
         assert_eq!(f.name, "Rose");
         assert_eq!(f.threads.len(), 2);
-        assert_eq!(f.threads[0], Thread { rgb: [255, 0, 0], name: Some("Red".into()), code: Some("R1".into()) });
-        assert_eq!(f.threads[1], Thread { rgb: [0, 255, 0], name: None, code: None });
+        assert_eq!(f.threads[0], Thread { rgb: [255, 0, 0], name: Some("Red".into()), code: Some("R1".into()), brand: None });
+        assert_eq!(f.threads[1], Thread { rgb: [0, 255, 0], name: None, code: None, brand: None });
     }
 }

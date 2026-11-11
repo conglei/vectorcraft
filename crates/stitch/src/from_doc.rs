@@ -369,7 +369,7 @@ impl<'o> Walk<'o> {
                 if last.is_some() {
                     lead.push(Step::Jump(start));
                 }
-                self.blocks.push(Block { thread: Thread { rgb, name: None, code: None }, steps: vec![] });
+                self.blocks.push(Block { thread: Thread { rgb, name: None, code: None, brand: None }, steps: vec![] });
             }
         }
         let added = lead.len() + run.len();

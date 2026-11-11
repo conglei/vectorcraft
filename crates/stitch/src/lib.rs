@@ -15,6 +15,7 @@ mod profile;
 mod run;
 mod satin;
 mod stats;
+mod thread;
 mod to_doc;
 
 pub use calibration::{CalibrationPart, calibration};
@@ -30,4 +31,8 @@ pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use run::run_stitches;
 pub use satin::{SatinParams, satin};
 pub use stats::{Stats, ThreadStats, stats};
+pub use thread::{
+    JSON_FORMAT, MAX_BRAND, MAX_CHART_BYTES, MAX_CHART_NAME, MAX_CHART_THREADS, MAX_CODE, MAX_NAME, MAX_WEIGHT, NeedleUse, Needles, STARTER_BRAND,
+    STARTER_NAME, ThreadChart, ThreadMatch, ThreadSpec, assign_needles, delta_e, hex, lab, starter_chart,
+};
 pub use to_doc::{THREAD_WIDTH_MM, to_document};
