@@ -56,6 +56,12 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         description: "lock stitches at the start and end of each run; not given: off when everything stitched is on the layer an opened stitch file made (it has its own), on otherwise, with a warning when that file's runs get them too",
     },
     FormatOption {
+        name: "travelTrims",
+        ty: "boolean",
+        default: "true",
+        description: "a trim before travel long enough that the machine would read it as one (see jumpsPerTrim); trims the plan already has stay either way; not given: off when everything stitched is on the layer an opened stitch file made (its own trims are kept, none are added), on otherwise",
+    },
+    FormatOption {
         name: "jumpsPerTrim",
         ty: "integer",
         default: "3",
@@ -63,7 +69,12 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
     },
     FormatOption { name: "trimBeforeColorChange", ty: "boolean", default: "false", description: "a trim before each colour change" },
     FormatOption { name: "start", ty: "string", default: "\"center\"", description: "the file's origin: center (of the stitches) or firstStitch" },
-    FormatOption { name: "returnToStart", ty: "boolean", default: "true", description: "the file ends with travel back to its origin" },
+    FormatOption {
+        name: "returnToStart",
+        ty: "boolean",
+        default: "true",
+        description: "the file ends with travel back to its origin; not given: off when everything stitched is on the layer an opened stitch file made (re-exporting it adds no travel the file did not have), on otherwise",
+    },
     FormatOption {
         name: "name",
         ty: "string",
@@ -79,6 +90,10 @@ struct Options {
     profile: MachineProfile,
     /// Lock stitches, if given.
     locks: Option<bool>,
+    /// Travel trims, if given.
+    travel_trims: Option<bool>,
+    /// Whether the file returns to its start, if given.
+    return_to_start: Option<bool>,
     write: WriteOptions,
     name: Option<String>,
 }
@@ -144,6 +159,14 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
         None | Some(Value::Null) => None,
         Some(_) => Some(switch_or(p, "locks", true, cmd)?),
     };
+    let travel_trims = match p.get("travelTrims") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(switch_or(p, "travelTrims", true, cmd)?),
+    };
+    let return_to_start = match p.get("returnToStart") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(switch_or(p, "returnToStart", true, cmd)?),
+    };
     let stitch_length = length(cmd, p, "stitchLength", 2.5, 0.5, 12.0)?;
     let min_stitch = length(cmd, p, "minStitch", 0.3, 0.0, 2.0)?;
     let max_stitch = length(cmd, p, "maxStitch", max_mm, 1.0, max_mm)?;
@@ -163,9 +186,11 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
         from: FromDocOptions { mode, stitch_length: units(stitch_length), min_stitch: units(min_stitch), only: None },
         profile,
         locks,
+        travel_trims,
+        return_to_start,
         write: WriteOptions {
             start,
-            return_to_start: switch_or(p, "returnToStart", true, cmd)?,
+            return_to_start: return_to_start.unwrap_or(true),
             jumps_per_trim,
             trim_before_color_change: switch_or(p, "trimBeforeColorChange", false, cmd)?,
         },
@@ -175,8 +200,9 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
 
 /// The plan for `doc` with options `o`, named, prepared for the machine, and its warnings. When
 /// `locks` was not given, runs get lock stitches unless every run came from an opened stitch file
-/// (which has its own), with a warning when the plan mixes the two.
-fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
+/// (which has its own), with a warning when the plan mixes the two. `travelTrims` follows the same
+/// rule: art on an opened file's layer keeps the trims the file had and gets none added.
+fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>, bool)> {
     let from = FromDocOptions { only: selection, ..o.from.clone() };
     let mut made = from_document(doc, &from).map_err(|e| bad(cmd, e))?;
     let title = std::path::Path::new(&doc.title).file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.trim().is_empty());
@@ -185,10 +211,12 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
     if o.locks.is_none() && made.marked_runs > 0 && made.unmarked_runs > 0 {
         made.warnings.push(MIXED_LOCKS.to_string());
     }
-    let prepared = prepare(&made.plan, &o.profile, &PrepareOptions { locks }).map_err(|e| bad(cmd, e))?;
+    let travel_trims = o.travel_trims.unwrap_or(made.unmarked_runs > 0);
+    let prepared = prepare(&made.plan, &o.profile, &PrepareOptions { locks, travel_trims }).map_err(|e| bad(cmd, e))?;
     let mut warnings = made.warnings;
     warnings.extend(prepared.warnings);
-    Ok((prepared.plan, warnings))
+    // Everything stitched came from an opened stitch file.
+    Ok((prepared.plan, warnings, made.unmarked_runs == 0))
 }
 
 /// What an export of `doc` as `format` (`dst` or `exp`) with options `p` writes: the stitch plan
@@ -196,10 +224,12 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
 /// machine), the file, and the warnings of both. Errors name `cmd`.
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
     let o = options(cmd, p, format)?;
-    let (plan, mut warnings) = planned(cmd, doc, &o, selection)?;
+    let (plan, mut warnings, opened) = planned(cmd, doc, &o, selection)?;
+    // Not given: an opened file did not return to its start, so its re-export adds no such travel.
+    let write = WriteOptions { return_to_start: o.return_to_start.unwrap_or(!opened), ..o.write.clone() };
     let mut out = match format {
-        "exp" => exp::write(&plan, &o.write),
-        _ => dst::write(&plan, &o.write),
+        "exp" => exp::write(&plan, &write),
+        _ => dst::write(&plan, &write),
     }
     .map_err(|e| bad(cmd, e))?;
     warnings.append(&mut out.warnings);

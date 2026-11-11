@@ -8,7 +8,7 @@ use vectorcraft_geom::{AnchorKind, BezPath, PathEl, SubPath};
 
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
-use crate::to_doc::is_marked;
+use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
 /// How far a flattened curve may stray from the true one, in millimetres.
@@ -105,6 +105,16 @@ struct Walk<'o> {
     unmarked_runs: usize,
 }
 
+/// How a run follows the one before it in the same thread colour.
+#[derive(Clone, Copy)]
+enum Join {
+    /// Art drawn by hand: a trim and a jump, unless the runs are within `min_stitch`.
+    Drawn,
+    /// A run of an opened stitch file: a jump, preceded by a trim only where `trim` says the
+    /// file had one.
+    Opened { trim: bool },
+}
+
 /// What a node lies under.
 #[derive(Clone, Copy, Default)]
 struct Under {
@@ -177,6 +187,8 @@ impl<'o> Walk<'o> {
         let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
         let mut subpaths: Vec<&SubPath> = vec![];
         collect_subpaths(n, &mut subpaths);
+        // Only the first run of a path can follow the trim a file held.
+        let mut trim = up.marked && follows_trim(n);
         for sp in subpaths {
             let budget = MAX_STEPS.saturating_sub(self.steps);
             let run = match mode {
@@ -191,26 +203,39 @@ impl<'o> Walk<'o> {
                     self.unmarked_runs += 1;
                 }
             }
-            self.add_run(rgb, &run, mode)?;
+            let after = if up.marked { Join::Opened { trim } } else { Join::Drawn };
+            if !run.is_empty() {
+                trim = false;
+            }
+            self.add_run(rgb, &run, mode, after)?;
         }
         Ok(())
     }
 
     /// Sew `run` in thread `rgb`: a new block at a colour change (which starts with a jump to the
     /// run, except at the very start), otherwise a trim and a jump unless the run starts within
-    /// `min_stitch` of the needle.
-    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode) -> Result<(), String> {
+    /// `min_stitch` of the needle. A run of an opened stitch file ([`Join::Opened`]) is trimmed
+    /// only where the file trimmed.
+    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode, join: Join) -> Result<(), String> {
         let Some(&start) = run.first() else { return Ok(()) };
         let mut skip_first = false;
         let mut lead: Vec<Step> = vec![];
         match self.blocks.last() {
             Some(b) if b.thread.rgb == rgb => {
                 let near = self.pos.is_some_and(|p| p.dist(start) <= f64::from(self.o.min_stitch));
-                if near {
-                    // In run mode a first stitch where the needle already is would sew nothing.
-                    skip_first = mode == Mode::Run && self.pos == Some(start);
-                } else {
-                    lead = vec![Step::Trim, Step::Jump(start)];
+                match join {
+                    Join::Opened { trim: true } => {
+                        lead.push(Step::Trim);
+                        if self.pos != Some(start) {
+                            lead.push(Step::Jump(start));
+                        }
+                    }
+                    Join::Opened { trim: false } if !near => lead.push(Step::Jump(start)),
+                    _ if near => {
+                        // In run mode a first stitch where the needle already is would sew nothing.
+                        skip_first = mode == Mode::Run && self.pos == Some(start);
+                    }
+                    _ => lead = vec![Step::Trim, Step::Jump(start)],
                 }
             }
             last => {
