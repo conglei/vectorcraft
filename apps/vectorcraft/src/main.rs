@@ -463,6 +463,7 @@ fn main() -> std::process::ExitCode {
                 let launch_dir = prefs_path().filter(|_| prefs_enabled()).and_then(|p| Some(p.parent()?.join("Launch")));
                 let stopped = safe_mode::begin_launch(launch_dir.as_deref(), safe_mode_flag);
                 prefs_dir::attach_plugin_store(&mut session);
+                prefs_dir::attach_image_providers(&mut session);
                 let mut app = VectorcraftApp::new(session, services(cc.winit_window().cloned(), cc.egui_ctx.clone()));
                 app.set_startup_update_check(true);
                 load_prefs(&mut app, saved);

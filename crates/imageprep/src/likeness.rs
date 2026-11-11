@@ -108,13 +108,7 @@ pub fn likeness(original: &Raster, prepared: &Raster) -> Likeness {
     };
     let bg = flat_border(&b);
     let a = flatten(&a, [255, 255, 255]);
-    let mask: Vec<bool> = b
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|p| p[3] >= 128 && bg.is_none_or(|c| dist(&p[..], &c) > FLAT))
-        .collect();
+    let mask: Vec<bool> = b.rgba.as_chunks::<4>().0.iter().map(|p| p[3] >= 128 && bg.is_none_or(|c| dist(&p[..], &c) > FLAT)).collect();
     let b = flatten(&b, [255, 255, 255]);
     let (w, h) = (gw as usize, gh as usize);
     // The subject's outermost ring is a blend of subject and background in the scaled image, and
@@ -157,7 +151,10 @@ pub fn likeness(original: &Raster, prepared: &Raster) -> Likeness {
     while y + WINDOW <= h.max(WINDOW) {
         let mut x = 0;
         while x + WINDOW <= w.max(WINDOW) {
-            let idx: Vec<usize> = (y..(y + WINDOW).min(h)).flat_map(|yy| (x..(x + WINDOW).min(w)).map(move |xx| yy * w + xx)).filter(|&i| mask.get(i) == Some(&true)).collect();
+            let idx: Vec<usize> = (y..(y + WINDOW).min(h))
+                .flat_map(|yy| (x..(x + WINDOW).min(w)).map(move |xx| yy * w + xx))
+                .filter(|&i| mask.get(i) == Some(&true))
+                .collect();
             if idx.len() * 2 >= WINDOW * WINDOW {
                 windows.push(ssim_of(&idx));
             }

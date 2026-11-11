@@ -216,6 +216,12 @@ pub struct Prefs {
     pub autosave_interval: u32,
     pub recovery_folder: String,
     pub recovery_off_for_complex: bool,
+    /// File Handling › Photo Preparation › Image Model (`photoProvider`): which provider
+    /// `photo.prepare` uses when its params name none: `nomodel` (the default: nothing leaves this
+    /// computer) or `gemini` (the photo is sent to Google's Gemini API; needs `GEMINI_API_KEY`).
+    /// Choosing `gemini` here, or naming it in the params, is the opt-in to that call
+    /// ([`cmd::photo`]).
+    pub photo_provider: String,
     pub recent_files_count: u32,
     pub low_res_proxy_eps: bool,
     pub anti_aliased_bitmaps: bool,
@@ -487,6 +493,7 @@ impl Default for Prefs {
             autosave_recovery: true,
             autosave_interval: 2,
             recovery_folder: String::new(),
+            photo_provider: s("nomodel"),
             recovery_off_for_complex: false,
             recent_files_count: 20,
             low_res_proxy_eps: false,

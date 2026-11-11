@@ -124,14 +124,8 @@ fn a_missing_key_sends_nothing() {
 #[test]
 fn http_errors_say_what_to_do_without_the_key() {
     let photo = synthetic_photo(64, 64, 4);
-    let cases = [
-        (400, "refused the request"),
-        (403, "check GEMINI_API_KEY"),
-        (404, MODEL_VAR),
-        (429, "rate limit"),
-        (503, "unavailable"),
-        (418, "HTTP 418"),
-    ];
+    let cases =
+        [(400, "refused the request"), (403, "check GEMINI_API_KEY"), (404, MODEL_VAR), (429, "rate limit"), (503, "unavailable"), (418, "HTTP 418")];
     for (status, want) in cases {
         let body = json!({"error": {"code": status, "message": format!("bad thing with key {KEY}"), "status": "X"}});
         let t = Recorded::new(Ok(HttpReply { status, body: serde_json::to_vec(&body).unwrap() }));
@@ -145,7 +139,8 @@ fn http_errors_say_what_to_do_without_the_key() {
 #[test]
 fn bad_answers_are_errors() {
     let photo = synthetic_photo(64, 64, 5);
-    let run = |reply: Result<HttpReply, TransportError>| gemini(Recorded::new(reply), Some(KEY)).prepare(&photo, &PrepareOptions::default()).unwrap_err();
+    let run =
+        |reply: Result<HttpReply, TransportError>| gemini(Recorded::new(reply), Some(KEY)).prepare(&photo, &PrepareOptions::default()).unwrap_err();
     let raw = |b: &[u8]| Ok(HttpReply { status: 200, body: b.to_vec() });
     assert!(run(raw(b"<html>")).contains("not JSON"));
     assert!(run(ok(json!({}))).contains("no result"));
@@ -169,9 +164,12 @@ fn an_oversize_answer_image_is_refused_before_decoding() {
     let big = image::RgbaImage::new(5000, 5000);
     let mut png = Vec::new();
     big.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-    let e = gemini(Recorded::new(ok(json!({"candidates": [{"content": {"parts": [{"inlineData": {"data": vectorcraft_format::base64_encode(&png)}}]}}]}))), Some(KEY))
-        .prepare(&synthetic_photo(64, 64, 6), &PrepareOptions::default())
-        .unwrap_err();
+    let e = gemini(
+        Recorded::new(ok(json!({"candidates": [{"content": {"parts": [{"inlineData": {"data": vectorcraft_format::base64_encode(&png)}}]}}]}))),
+        Some(KEY),
+    )
+    .prepare(&synthetic_photo(64, 64, 6), &PrepareOptions::default())
+    .unwrap_err();
     assert!(e.contains("5000 × 5000"), "{e}");
 }
 
@@ -196,7 +194,14 @@ fn live_gemini_call() {
     match out {
         Ok(p) => {
             let l = likeness(&photo, &p.image);
-            println!("model {} width {} height {} likeness {:.3} subject {:.2} seconds {secs:.1}", g.model(), p.image.width, p.image.height, l.score, l.subject);
+            println!(
+                "model {} width {} height {} likeness {:.3} subject {:.2} seconds {secs:.1}",
+                g.model(),
+                p.image.width,
+                p.image.height,
+                l.score,
+                l.subject
+            );
             println!("notes {:?} likeness notes {:?}", p.notes, l.notes);
         }
         Err(e) => panic!("after {secs:.1} s: {e}"),

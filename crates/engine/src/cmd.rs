@@ -68,6 +68,7 @@ mod patterncmds;
 pub mod patternlib;
 pub mod pdfcmds;
 pub mod perspgrid;
+pub mod photo;
 pub mod place;
 pub mod plugin;
 pub(crate) mod plugin_call;
@@ -385,6 +386,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(halftone::specs());
         v.extend(stitch::specs());
         v.extend(stitchthreads::specs());
+        v.extend(photo::specs());
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(actionset::specs());

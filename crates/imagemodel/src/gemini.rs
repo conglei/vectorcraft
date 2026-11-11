@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use vectorcraft_imageprep::{ImageProvider, Prepared, PrepareOptions, Raster, check, decode_capped, downscale, encode_png, flatten, resize_exact};
+use vectorcraft_imageprep::{ImageProvider, PrepareOptions, Prepared, Raster, check, decode_capped, downscale, encode_png, flatten, resize_exact};
 
 use crate::transport::{HttpReply, Transport, TransportError, UreqTransport};
 
@@ -33,8 +33,8 @@ pub const MAX_RESULT_PIXELS: u64 = 4096 * 4096;
 /// The error when there is no key.
 pub const MISSING_KEY: &str = "set GEMINI_API_KEY to use the Gemini provider; the no-model path still works";
 /// What the model is asked to do in faithful mode.
-pub const FAITHFUL_PROMPT: &str = "Edit this photo for embroidery digitizing. Remove the background completely and replace it with a transparent background, \
-or with plain flat white if transparency is not possible. Keep the main subject exactly as it is: the same pose, proportions, markings, \
+pub const FAITHFUL_PROMPT: &str = "Edit this photo for embroidery digitizing. Remove the background completely and replace it with one plain, flat, \
+pure white colour (#FFFFFF): no checkerboard or transparency pattern, no shadow, no gradient, no texture. Keep the main subject exactly as it is: the same pose, proportions, markings, \
 colours, expression and framing, at the same position and scale in the image. Do not restyle, stylize, cartoonize, beautify, add or remove \
 anything on the subject. Lightly reduce noise and blur only. Return only the edited image.";
 
@@ -55,7 +55,8 @@ impl Gemini {
     /// The provider the apps install: the key from [`KEY_VAR`], the model from [`MODEL_VAR`] or
     /// [`DEFAULT_MODEL`], HTTPS through [`UreqTransport`].
     pub fn from_env(user_agent: &str) -> Self {
-        let model = std::env::var(MODEL_VAR).ok().map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let model =
+            std::env::var(MODEL_VAR).ok().map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string());
         Self::new(&model, DEFAULT_ENDPOINT, Arc::new(UreqTransport::new(user_agent)), Box::new(|| std::env::var(KEY_VAR).ok()))
     }
 
@@ -176,7 +177,9 @@ impl ImageProvider for Gemini {
         }
         let headers = [("content-type", "application/json"), ("x-goog-api-key", key.as_str())];
         let reply = self.transport.post(&url, &headers, body).map_err(|e| match e {
-            TransportError::Timeout => format!("Gemini took too long to answer (more than {} s); the no-model path still works", crate::TIMEOUT.as_secs()),
+            TransportError::Timeout => {
+                format!("Gemini took too long to answer (more than {} s); the no-model path still works", crate::TIMEOUT.as_secs())
+            }
             TransportError::TooLarge => format!("Gemini's answer is larger than {} MB and was not read", crate::MAX_RESPONSE_BYTES >> 20),
             TransportError::Network(m) => format!("couldn't reach Gemini ({}); the no-model path still works", scrub(&m, &key)),
         })?;
@@ -201,7 +204,7 @@ impl ImageProvider for Gemini {
         notes.push(if transparent {
             "background removed (transparent)".to_string()
         } else {
-            "background replaced by the model (no transparency returned): check the subject's edges".to_string()
+            "background replaced by a flat colour (no transparency returned): check the subject's edges".to_string()
         });
         if !options.keep_alpha {
             out = flatten(&out, [255, 255, 255]);

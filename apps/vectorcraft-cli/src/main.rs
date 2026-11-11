@@ -245,6 +245,7 @@ fn with_stores(mut h: Headless) -> Headless {
     prefs_dir::attach_plugin_store(&mut h.session);
     prefs_dir::attach_pdf_preset_store(&mut h.session);
     prefs_dir::attach_custom_dictionary(&mut h.session);
+    prefs_dir::attach_image_providers(&mut h.session);
     h
 }
 
@@ -307,7 +308,10 @@ fn mcp(args: &[String], safe_mode: bool) -> Result<(), String> {
         // Every thread of this process, not only the server's: nothing reaches past the roots.
         file_access::confine_process(roots.clone());
         eprintln!("vectorcraft-cli: files confined: {}", roots.describe());
-        Box::new(accepting_grants(Headless::with_document().with_automation_roots(Some(roots)), allow_grants))
+        let mut h = Headless::with_document().with_automation_roots(Some(roots));
+        // Reads and writes stay within the roots; Gemini still runs only when asked for.
+        prefs_dir::attach_image_providers(&mut h.session);
+        Box::new(accepting_grants(h, allow_grants))
     } else if headless || safe_mode || allow_grants {
         Box::new(accepting_grants(with_stores(Headless::with_document()), allow_grants))
     } else if let Some(addr) = connect {

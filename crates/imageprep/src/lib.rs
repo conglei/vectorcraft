@@ -188,7 +188,9 @@ pub fn flatten(img: &Raster, rgb: [u8; 3]) -> Raster {
 /// `img` as PNG bytes.
 pub fn encode_png(img: &Raster) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    to_image(img)?.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).map_err(|e| format!("couldn't encode the image as PNG: {e}"))?;
+    to_image(img)?
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| format!("couldn't encode the image as PNG: {e}"))?;
     Ok(out)
 }
 
@@ -203,7 +205,8 @@ pub fn decode_capped(bytes: &[u8], max_pixels: u64) -> Result<Raster, String> {
     if u64::from(w) * u64::from(h) > max_pixels {
         return Err(format!("the image is {w} × {h} pixels, more than the {} megapixels taken", max_pixels / 1_000_000));
     }
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| format!("couldn't read the image: {e}"))?;
+    let mut reader =
+        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| format!("couldn't read the image: {e}"))?;
     let mut limits = image::Limits::default();
     // Room for 16 bits a channel: more fails as a decode error instead of allocating.
     limits.max_alloc = Some(max_pixels.saturating_mul(8));
