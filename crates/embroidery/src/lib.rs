@@ -12,7 +12,7 @@ mod palette;
 
 pub use palette::default_thread;
 
-use vectorcraft_stitch::{Block, MAX_STEPS, Pt, Step, StitchPlan, Thread};
+use vectorcraft_stitch::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
 /// The largest file a reader accepts.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -79,7 +79,6 @@ pub struct Input {
 }
 
 const TOO_LONG: &str = "a stitch is longer than the format allows: prepare the plan first";
-const TOO_MANY: &str = "the design has more than 2000000 stitches";
 
 /// What a format writes for each kind of record. Moves are in file orientation (y up); a move
 /// beyond the format's limit is an error, never a dropped or shortened record.
@@ -130,7 +129,7 @@ fn travel(sink: &mut impl Sink, a: Pt, b: Pt, max: i32) -> Result<(), String> {
     let parts = ((dx.abs() + m - 1) / m).max((dy.abs() + m - 1) / m);
     // Guards against a far-away design turning into an unbounded number of records.
     if parts > MAX_STEPS as i64 {
-        return Err(TOO_MANY.to_string());
+        return Err(TOO_MANY_STEPS.to_string());
     }
     let mut at = a;
     for k in 1..=parts {
@@ -229,7 +228,7 @@ impl Builder {
     fn count(&mut self) -> Result<(), String> {
         self.records += 1;
         if self.records > MAX_STEPS {
-            return Err(TOO_MANY.to_string());
+            return Err(TOO_MANY_STEPS.to_string());
         }
         Ok(())
     }

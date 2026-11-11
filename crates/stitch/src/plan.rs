@@ -4,11 +4,15 @@
 pub const UNITS_PER_MM: f64 = 10.0;
 /// The most steps a plan may hold.
 pub const MAX_STEPS: usize = 2_000_000;
+/// The error for a plan past [`MAX_STEPS`].
+pub const TOO_MANY_STEPS: &str = "the design has more than 2000000 stitches";
+/// Document points per millimetre.
+pub const PT_PER_MM: f64 = 72.0 / 25.4;
 
 /// Largest coordinate magnitude, in units, that a point may take.
 const LIMIT: f64 = 10_000_000.0;
 /// Millimetres per document point.
-const MM_PER_PT: f64 = 25.4 / 72.0;
+pub(crate) const MM_PER_PT: f64 = 25.4 / 72.0;
 
 /// A position in plan units (0.1 mm), y down.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -26,7 +30,8 @@ pub enum Step {
     Jump(Pt),
     /// Cut the thread.
     Trim,
-    /// Pause the machine (a colour change within a block's thread is not needed).
+    /// Pause the machine without changing thread, e.g. to place appliqué fabric. DST and EXP
+    /// write it as the same record as a colour change.
     Stop,
 }
 
@@ -99,7 +104,7 @@ impl StitchPlan {
     /// Whether the plan is within the step limit.
     pub fn check(&self) -> Result<(), String> {
         if self.steps() > MAX_STEPS {
-            return Err(format!("the design has more than {MAX_STEPS} stitches"));
+            return Err(TOO_MANY_STEPS.to_string());
         }
         Ok(())
     }
@@ -133,5 +138,6 @@ mod tests {
         assert!(plan.check().is_ok());
         let big = StitchPlan { name: "t".into(), blocks: vec![Block { thread: Thread::default(), steps: vec![Step::Trim; MAX_STEPS + 1] }] };
         assert_eq!(big.check().unwrap_err(), "the design has more than 2000000 stitches");
+        assert_eq!(TOO_MANY_STEPS, format!("the design has more than {MAX_STEPS} stitches"));
     }
 }

@@ -217,7 +217,7 @@ fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                     let k = records(d, p.max_jump);
                     count = count.saturating_add(usize::try_from(k - 1).unwrap_or(usize::MAX));
                     if count > crate::MAX_STEPS {
-                        return Err(format!("the design has more than {} stitches", crate::MAX_STEPS));
+                        return Err(crate::TOO_MANY_STEPS.to_string());
                     }
                     for i in 1..k {
                         let at = |from: i32, to: i32| -> i32 {

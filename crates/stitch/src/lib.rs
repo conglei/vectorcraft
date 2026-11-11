@@ -16,7 +16,7 @@ mod to_doc;
 
 pub use calibration::{CalibrationPart, calibration};
 pub use from_doc::{FromDocOptions, Mode, Planned, from_document};
-pub use plan::{Block, MAX_STEPS, Pt, Step, StitchPlan, Thread, UNITS_PER_MM};
+pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use profile::{COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use run::run_stitches;

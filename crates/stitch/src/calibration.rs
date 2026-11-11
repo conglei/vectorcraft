@@ -7,8 +7,7 @@
 
 use vectorcraft_geom::{PathData, Point, SubPath};
 
-/// Document points per millimetre.
-const PT_PER_MM: f64 = 72.0 / 25.4;
+use crate::PT_PER_MM;
 
 const BLACK: [u8; 3] = [0, 0, 0];
 const RED: [u8; 3] = [200, 30, 40];
@@ -69,7 +68,7 @@ mod tests {
         colours.dedup();
         assert_eq!(colours.len(), 3);
         let b = parts.iter().filter_map(|p| p.path.bounds()).fold(None::<Rect>, |a, r| Some(a.map_or(r, |a| a.union(r)))).unwrap();
-        let side = 100.0 * 72.0 / 25.4;
+        let side = 100.0 * PT_PER_MM;
         assert!((b.x0).abs() < 1e-6 && (b.y0).abs() < 1e-6, "{b:?}");
         assert!((b.width() - side).abs() < 1e-6, "{b:?}");
         assert!((b.height() - side).abs() < 1e-6, "{b:?}");

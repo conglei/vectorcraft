@@ -3,10 +3,9 @@
 
 use serde_json::{Value, json};
 
-use super::*;
+use vectorcraft_stitch::PT_PER_MM;
 
-/// Document points per millimetre.
-const PT_PER_MM: f64 = 72.0 / 25.4;
+use super::*;
 
 fn session() -> Session {
     let mut s = Session::new();
