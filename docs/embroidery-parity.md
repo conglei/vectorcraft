@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `stitch.preview`: realistic thread preview, jump, needle point and function overlays, density map) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -19,7 +19,7 @@ the gap table here; the issue descriptions repeat its contents with file referen
 
 **12 of 41 basic-tier rows done (5) or partial (7), measured by automated tests; roughly 12% of the
 basic tier's hours (estimated).** VectorCraft has a stitch plan model, machine profiles, running and
-manual stitches along stroked paths, a small-stitch filter, fixed lock stitches, and DST and EXP
+manual stitches along stroked paths, tatami fills of filled paths, satin columns along strokes, a small-stitch filter, fixed lock stitches, and DST and EXP
 readers and writers, reached through `document.export`, `document.open`, `stitch.info` and
 `stitch.calibration`, and a PNG preview of the export's stitches (`stitch.preview`: lit thread or a
 density map, with optional jump, needle point and function marks). Fuzz tests feed garbage and mutated DST and EXP files to both readers. Files
@@ -27,6 +27,7 @@ written by VectorCraft and read by an independent implementation (pyembroidery, 
 [development.md](development.md#checking-stitch-files-against-another-reader)) give the same needle
 points, and the reverse. **No file has been stitched on a machine yet**: the jumps-per-trim default,
 the `ST:` count, the start position and the lock stitch length are unverified until the
+calibration stitch-out. There is no underlay, compensation, preview or thread chart yet. VectorCraft also has
 calibration stitch-out. There are no fills, satin, simulator, preview panel or thread charts. VectorCraft also has
 most of the drawing side that a digitizer needs (shapes, pen, booleans, offsets, Image Trace, type,
 a renderer, a command system, a CLI and MCP), which commercial packages either build themselves or
@@ -113,13 +114,13 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 | Stitch plan model | Ordered stitches in 0.1 mm units with jump, trim, stop and colour change functions, grouped by object and colour | B | **done**: `vectorcraft-stitch` plan in 0.1 mm units with stitch, jump, trim and stop steps in colour blocks, capped at 2,000,000 steps; grouping by object waits for stitch objects (E4) | E1 |
 | Machine profile and limits | Maximum stitch (12.1 mm ternary, 12.7 mm binary), maximum jump, minimum stitch, trim encoding, needle count | B | **done**: profiles `generic` and `commercial15`; long stitches and jumps split, travel that would read as a trim gets one (measured from where the lock stitches leave the needle; none at the start of a colour, which the colour change has cut), warnings for needle count and field size; maximum and minimum stitch and jumps per trim are export options, needles, field and maximum jump are not | E1 |
 | Running stitches | Run, triple (bean), backstitch, stem stitch; stitch length, minimum length, chord gap on curves | B | **partial**: run (stitch length, corners kept, path end hit exactly) and manual along stroked paths; no triple, backstitch or stem stitch | E3 |
-| Satin column | Two rails with direction lines; spacing fixed or by width; varying width | B | variable-width stroke outlines (`effects::stroke::width`) give rails for strokes; no rail pairing for filled shapes | E3 |
-| Tatami fill | Rows at an angle with staggered penetrations, holes respected, travel hidden under the fill | B | Scribble effect makes hole-aware zig-zag rows (`effects::stylize::scribble`); booleans and regions (`pathops`) | E3 |
+| Satin column | Two rails with direction lines; spacing fixed or by width; varying width | B | **partial** (2026-11-11, measured by tests): `stroke: {type: satin}` sews a column centred on a stroked path, rails mitred from the centre line, fixed spacing peak to peak, square ends, width from the stroke weight or an option; no direction lines, varying width or rail pairing for filled shapes | E3 |
+| Tatami fill | Rows at an angle with staggered penetrations, holes respected, travel hidden under the fill | B | **partial** (2026-11-11, measured by tests): filled paths sew rows at an angle, spacing and stitch length, staggered penetrations, holes by the fill rule, sections sewn continuously and joined by an inset run along the edge; travel is along the edge, not hidden under unsewn fill; no underlay | E3 |
 | Zigzag and E stitch | Open column stitches | B | nothing | E3 |
 | Manual stitch | Each node is one needle point | B | **partial**: export mode `manual` makes each anchor a needle point for the whole document; not yet a per-object stitch type | E3 |
 | Underlay | Centre run, edge run, zigzag, double zigzag, tatami; two layers; own settings for lettering | B | inset paths (`pathops::offset_path`) | E3 |
 | Pull and push compensation | Widen across the stitch direction, in mm or percent, per side | B | offsets | E3 |
-| Auto split, auto jump, stitch shortening | Split satin stitches over a maximum (about 7 mm); shorten on the inside of sharp turns | B | nothing | E3 |
+| Auto split, auto jump, stitch shortening | Split satin stitches over a maximum (about 7 mm); shorten on the inside of sharp turns | B | **partial**: satin and fill stitches over the machine's maximum stitch are split evenly, satin split points staggered; the split length is not separate from the maximum; no shortening | E3 |
 | Lock stitches | Tie in and tie off by rule: always, after a trim or colour change, or by connector length | B | **partial**: one fixed pattern (three 0.6 mm stitches) at the start and end of every run, on or off; no rules or other patterns; length untested on a machine | E3 |
 | Trims and connectors | Trim by connector length; connectors as jumps or travel runs | B | nothing | E3 |
 | Small-stitch filter | Drop stitches below a minimum on output | B | **done**: stitches shorter than `minStitch` are dropped when a plan is prepared | E1 |
@@ -214,7 +215,7 @@ in the StitchCraft project (see "Where the work is tracked" above); claim work t
 |---|---|---|---|---|
 | E1 | Stitch plan core | **Done** (2026-11-11, measured by tests): stitch plan model, machine profiles, physical limits, small-stitch filter, plan statistics (`stitch.info`), in `vectorcraft-stitch` at L2 | — | 0 (was 25–40) |
 | E2 | Machine files | DST and EXP **done** (2026-11-11, measured by tests; not yet stitched on a machine): `vectorcraft-embroidery` at L3, engine adapters, format table rows, property and fuzz tests, round-trip checks, `vectorcraft-cli convert`. Remaining: TBF and U01, then PES, JEF and VP3, and a batch convert view | E1 | 30–55 (was 45–80) |
-| E3 | Basic stitch types | Run family, satin column, tatami, zigzag, E stitch, manual; underlay; compensation; split and shortening; lock stitches; trims | E1 | 70–110 |
+| E3 | Basic stitch types | First pass **partial** (2026-11-11, measured by tests; not stitched on a machine): tatami fill and satin column ([spec](superpowers/specs/2026-11-11-embroidery-stitch-types-design.md)). Remaining: run family, zigzag, E stitch, manual per object; underlay; compensation; shortening; lock rules; trims by connector length | E1 | 55–90 (was 70–110) |
 | E4 | Stitch objects | Stitch type and parameters stored on document objects, regeneration on edit, stitch angle lines, fabric presets, a parameters panel | E3 | 40–65 |
 | E5 | Preview and simulator | First pass **done** (2026-11-11, measured by tests): `stitch.preview` in `vectorcraft-stitch` (realistic thread, needle point, jump and function overlays, density map, as PNG). Remaining: simulator, preview panel and view toggles in the app, travel controls, fabric textures | E1 | 20–40 (was 30–50) |
 | E6 | Threads | User-importable thread charts, a small original default set, matching, colourways, needle assignment | E1 | 15–25 |
@@ -286,6 +287,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | First pass of E3, measured by tests, not stitched on a machine: filled paths sew as tatami fills and stroked paths as running stitch or satin columns, by the export options `fill` and `stroke`. Rows updated: satin column, tatami fill, auto split. E3 reduced to 55–90 h (estimated) |
 | 2026-11-11 | minor | E5 first pass, measured by tests: `stitch.preview` renders the plan an export would write as lit thread on fabric or as a density map, with optional jump, needle point and function marks, as a PNG (design: [the preview spec](superpowers/specs/2026-11-11-embroidery-preview-design.md)). Rows updated: realistic preview, needle points and function markers, density map (each partial). E5 reduced to 20–40 h (estimated) |
 | 2026-11-11 | minor | An opened stitch file re-exports with the trims it had and no more: a run the file trimmed before is marked on its path, runs reached by a jump alone are no longer trimmed, and travel trims are off on that layer by default (`travelTrims` on `document.export` and `stitch.info` forces them on or off). A trim before a colour change is not kept (`trimBeforeColorChange` writes one). Row updated: reading stitch files |
 | 2026-11-11 | minor | Execution tracking moved to Linear (team StitchCraft, `STI`; project `P-STI-31`): one issue per gap with blocking relations from the "Depends on" column, five owner-decision issues, the calibration stitch-out and its follow-ups, and the re-export travel-trim observation. This document keeps behaviour, status and evidence; scores and estimates unchanged |
