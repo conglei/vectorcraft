@@ -9,7 +9,8 @@
 //! (mutated object streams, archives and indexed PNG previews, hostile image dimensions), nor the
 //! font files a folder search reads (damaged fonts, collections whose headers give any count of
 //! faces), nor scripts written for the reference app checked without running them (garbage,
-//! generated script text and mutated scripts).
+//! generated script text and mutated scripts), nor embroidery stitch files (DST and EXP: garbage,
+//! with and without a DST header, and mutated files) read directly or opened.
 //!
 //! `PROPTEST_CASES=20000 cargo test -p vectorcraft-engine --test import_fuzz` runs a deeper search.
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Robustness).
@@ -2778,6 +2779,94 @@ proptest! {
         }
         bytes.truncate(cut.max(8));
         survive_dxf("mutated dxf", &bytes, cut % 2 == 0)?;
+    }
+}
+
+// ---------- Embroidery stitch files (DST, EXP) ----------
+
+/// The calibration design written as DST and as EXP with the default export options.
+fn stitch_samples() -> &'static [Vec<u8>; 2] {
+    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 2]> = std::sync::OnceLock::new();
+    SAMPLES.get_or_init(|| {
+        let mut s = vectorcraft_engine::Session::new();
+        s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
+        s.execute("stitch.calibration", &json!({})).unwrap();
+        let mut file = |format: &str| {
+            let r = s.execute("document.export", &json!({ "format": format })).unwrap();
+            vectorcraft_format::base64_decode(r["dataBase64"].as_str().unwrap()).unwrap()
+        };
+        [file("dst"), file("exp")]
+    })
+}
+
+#[test]
+fn the_stitch_samples_open() {
+    for (bytes, format) in stitch_samples().iter().zip(["dst", "exp"]) {
+        let mut s = vectorcraft_engine::Session::new();
+        let p = json!({"name": format!("x.{format}"), "dataBase64": vectorcraft_format::base64_encode(bytes)});
+        s.execute("document.open", &p).unwrap();
+        let info = s.execute("stitch.info", &json!({ "format": format })).unwrap();
+        assert!(info["stitches"].as_u64().unwrap() > 100, "{format}: {info}");
+    }
+}
+
+/// `bytes` read by the format's reader with the shortest, default and longest trim runs, then
+/// opened as `x.<format>` through `document.open` and measured with `stitch.info`; whatever opens
+/// must render and export.
+fn survive_stitch(what: &str, bytes: &[u8], format: &str, jumps_per_trim: u8) -> Result<(), TestCaseError> {
+    let r = catch_quiet(|| {
+        let _ = vectorcraft_embroidery::dst::is_dst(bytes);
+        for jumps_per_trim in [2, 3, 8] {
+            let o = vectorcraft_embroidery::ReadOptions { jumps_per_trim };
+            let _ = match format {
+                "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
+                _ => vectorcraft_embroidery::exp::read(bytes, &o),
+            };
+        }
+    });
+    r.map_err(|msg| TestCaseError::fail(format!("{what}: the {format} reader panicked: {msg}")))?;
+    survive(what, || {
+        let mut s = vectorcraft_engine::Session::new();
+        let p = json!({
+            "name": format!("x.{format}"),
+            "dataBase64": vectorcraft_format::base64_encode(bytes),
+            "stitch": {"jumpsPerTrim": jumps_per_trim},
+        });
+        no_panic(s.execute("document.open", &p)).ok()?;
+        let _ = no_panic(s.execute("stitch.info", &json!({ "format": format })));
+        let _ = no_panic(s.execute("stitch.info", &json!({ "format": format, "machine": "generic", "mode": "manual", "locks": false })));
+        Some((*s.doc().ok()?.doc).clone())
+    })
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn dst_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), header in any::<bool>(), jumps in 2u8..=8) {
+        let mut b = if header { stitch_samples()[0][..512].to_vec() } else { vec![] };
+        b.extend(bytes);
+        survive_stitch("dst garbage", &b, "dst", jumps)?;
+    }
+
+    #[test]
+    fn exp_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), jumps in 2u8..=8) {
+        survive_stitch("exp garbage", &bytes, "exp", jumps)?;
+    }
+
+    #[test]
+    fn mutated_stitch_files_never_panic(
+        exp in any::<bool>(),
+        edits in prop::collection::vec((any::<usize>(), any::<u8>()), 1..=8),
+        jumps in 2u8..=8,
+    ) {
+        let (i, format) = if exp { (1, "exp") } else { (0, "dst") };
+        let mut bytes = stitch_samples()[i].clone();
+        let n = bytes.len();
+        for &(at, b) in &edits {
+            bytes[at % n] = b;
+        }
+        survive_stitch("mutated stitch file", &bytes, format, jumps)?;
     }
 }
 

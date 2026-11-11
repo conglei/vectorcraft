@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9c5f1a2ba98d7c043221dee3654e2a5a640d41bbedd4433f35fccd69bbffa5c3 # shrinks to blocks = [[Stitch(Pt { x: 0, y: 0 })], [Stitch(Pt { x: 0, y: 243 })]], locks = false
+cc 7c691d887e53fc6662896482fa2e7ab07a33c12117523693be19fb79bbba8d08 # shrinks to blocks = [[Stitch(Pt { x: -90, y: 0 }), Stitch(Pt { x: -79, y: 0 }), Stitch(Pt { x: 158, y: 0 })]], locks = true

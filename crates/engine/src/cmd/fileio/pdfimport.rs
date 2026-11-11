@@ -11,7 +11,7 @@ use super::super::{Result, Session, bad, check_numbers, number_or, parse_range, 
 use super::{err, source};
 
 /// The `document.open` options besides the file. The PDF ones (pages, box, password, text,
-/// layers) and the DXF ones are ignored by other formats.
+/// layers), the DXF ones and the stitch file ones are ignored by other formats.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadOptions {
     /// 1-based pages to import, such as `"2-3, 5"`; `None` = every page.
@@ -32,6 +32,8 @@ pub struct LoadOptions {
     pub layers: bool,
     /// How a DXF drawing comes in (the `dxf` param, see [`super::dxfimport`]).
     pub dxf: vectorcraft_cad::ImportOptions,
+    /// How a DST or EXP file comes in (the `stitch` param, see [`super::stitchfile`]), checked.
+    pub stitch: Option<Value>,
     /// An Illustrator EPS or `.ai` that carries the editing copy of its art opens from it (its
     /// layers, hidden objects and the art outside its artboards); else only what its page or PDF
     /// part prints comes in.
@@ -58,6 +60,7 @@ impl Default for LoadOptions {
             text_as: TextAs::default(),
             layers: true,
             dxf: Default::default(),
+            stitch: None,
             editing_data: true,
             trust_editing_data: false,
             legacy_names: vectorcraft_eps::NameEncoding::default(),
@@ -70,8 +73,8 @@ impl LoadOptions {
     /// From command params: `pages` (`"2-3, 5"`, a page number or `"all"`), `page` (one page, when
     /// `pages` isn't given), `cropTo` (or `crop`), `password`, `colorMode` (`rgb` | `cmyk`) with `grays`,
     /// `textAs` (`text` | `outlines`), `layers` (true | false), `editingData` (true | false | `always`),
-    /// `legacyNameEncoding` (one of [`vectorcraft_eps::NameEncoding::LABELS`]) and `dxf` (the DXF
-    /// import options).
+    /// `legacyNameEncoding` (one of [`vectorcraft_eps::NameEncoding::LABELS`]), `dxf` (the DXF
+    /// import options) and `stitch` (the DST and EXP ones).
     pub fn from_params(cmd: &str, p: &Value) -> Result<Self> {
         let pages = match p.get("pages").filter(|v| !v.is_null()).or_else(|| p.get("page").filter(|v| !v.is_null())) {
             None => None,
@@ -108,7 +111,23 @@ impl LoadOptions {
                 .ok_or_else(|| bad(cmd, format!("legacyNameEncoding must be one of {}", vectorcraft_eps::NameEncoding::LABELS.join(", "))))?,
         };
         let dxf = super::dxfimport::options(cmd, p.get("dxf"))?;
-        Ok(Self { pages, crop, password, color_mode, grays, text_as, layers, dxf, editing_data, trust_editing_data, legacy_names, native: true })
+        let stitch = p.get("stitch").filter(|v| !v.is_null()).cloned();
+        super::stitchfile::read_options(cmd, stitch.as_ref())?;
+        Ok(Self {
+            pages,
+            crop,
+            password,
+            color_mode,
+            grays,
+            text_as,
+            layers,
+            dxf,
+            stitch,
+            editing_data,
+            trust_editing_data,
+            legacy_names,
+            native: true,
+        })
     }
 
     /// Does the document read only part of the file, or read it differently (a page range, another

@@ -6475,6 +6475,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vectorcraft-embroidery"
+version = "0.21.0"
+dependencies = [
+ "proptest",
+ "vectorcraft-stitch",
+]
+
+[[package]]
 name = "vectorcraft-engine"
 version = "0.21.0"
 dependencies = [
@@ -6507,6 +6515,7 @@ dependencies = [
  "vectorcraft-cad",
  "vectorcraft-color",
  "vectorcraft-doc",
+ "vectorcraft-embroidery",
  "vectorcraft-eps",
  "vectorcraft-format",
  "vectorcraft-geom",
@@ -6517,6 +6526,7 @@ dependencies = [
  "vectorcraft-plugins",
  "vectorcraft-render",
  "vectorcraft-scriptcheck",
+ "vectorcraft-stitch",
  "vectorcraft-svg",
  "vectorcraft-testkit",
  "vectorcraft-text",
@@ -6724,6 +6734,17 @@ name = "vectorcraft-scriptcheck"
 version = "0.21.0"
 dependencies = [
  "proptest",
+]
+
+[[package]]
+name = "vectorcraft-stitch"
+version = "0.21.0"
+dependencies = [
+ "kurbo 0.13.1",
+ "proptest",
+ "vectorcraft-color",
+ "vectorcraft-doc",
+ "vectorcraft-geom",
 ]
 
 [[package]]

@@ -17,6 +17,7 @@
 //! - `eps`: EPS export options (flattened transparency, previews, the embedded document), `document.exportEps`.
 //! - `dxfimport`: the DXF options `document.open` and Place read, `document.dxfInfo`.
 //! - `metafile`: EMF and WMF export, open and place.
+//! - `stitchfile`: DST and EXP embroidery files: export options, open, and the plan `stitch.info` reports.
 //! - `importer`: files that importer plug-ins open (`document.open {importer}`, and extensions no
 //!   built-in format reads).
 //! - `mesh3d`: 3D assets as OBJ, glTF, USDA and USDZ mesh files (`assets.export3D`).
@@ -54,6 +55,7 @@ pub mod psdread;
 mod pxrread;
 mod save;
 mod screens;
+pub(crate) mod stitchfile;
 mod svg;
 mod text;
 mod tgaread;
@@ -205,6 +207,8 @@ mod tests_eps;
 mod tests_dxfimport;
 #[cfg(test)]
 mod tests_metafile;
+#[cfg(test)]
+mod tests_stitchfile;
 
 #[cfg(test)]
 mod tests_pdfoutput;

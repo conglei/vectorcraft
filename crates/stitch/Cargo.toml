@@ -1,0 +1,18 @@
+[package]
+name = "vectorcraft-stitch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VectorCraft embroidery: the stitch plan, machine profiles and stitches from paths"
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-geom = { workspace = true }
+vectorcraft-color = { workspace = true }
+vectorcraft-doc = { workspace = true }
+kurbo = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
