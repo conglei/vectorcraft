@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (DSB machine file, the format the owner's machine reads; the Embroidery menu, Stitch Info, Stitch File Options and the `stitch_info` and `export_stitch` MCP tools; execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `bai_mirror` machine profile with speed and panel formats; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (E6 first pass: thread charts, matching and needle assignment; DSB machine file, the format the owner's machine reads; the Embroidery menu, Stitch Info, Stitch File Options and the `stitch_info` and `export_stitch` MCP tools; execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `bai_mirror` machine profile with speed and panel formats; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -17,7 +17,7 @@ the gap table here; the issue descriptions repeat its contents with file referen
 
 ## Summary
 
-**12 of 41 basic-tier rows done (5) or partial (7), measured by automated tests; roughly 12% of the
+**14 of 41 basic-tier rows done (5) or partial (9), measured by automated tests; roughly 13% of the
 basic tier's hours (estimated).** VectorCraft has a stitch plan model, machine profiles, running and
 manual stitches along stroked paths, tatami fills of filled paths, satin columns along strokes, a small-stitch filter, fixed lock stitches, and DST and EXP
 readers and writers, reached through `document.export`, `document.open`, `stitch.info` and
@@ -27,7 +27,7 @@ written by VectorCraft and read by an independent implementation (pyembroidery, 
 [development.md](development.md#checking-stitch-files-against-another-reader)) give the same needle
 points, and the reverse. **No file has been stitched on a machine yet**: the jumps-per-trim default,
 the `ST:` count, the start position and the lock stitch length are unverified until the
-calibration stitch-out. There is no underlay, compensation, preview or thread chart yet. VectorCraft also has
+calibration stitch-out. There is no underlay or compensation yet; thread charts import from files and match by colour, with no brand chart shipped. VectorCraft also has
 calibration stitch-out. There are no fills, satin, simulator, preview panel or thread charts. VectorCraft also has
 most of the drawing side that a digitizer needs (shapes, pen, booleans, offsets, Image Trace, type,
 a renderer, a command system, a CLI and MCP), which commercial packages either build themselves or
@@ -165,9 +165,9 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 
 | Feature | Commercial behaviour | Tier | VectorCraft today | Gap |
 |---|---|---|---|---|
-| Thread charts and matching | Per-brand charts with codes; match a palette to a chart | B | swatch libraries, palette quantization to a supplied list (`trace`); no thread data | E6 |
+| Thread charts and matching | Per-brand charts with codes; match a palette to a chart | B | **partial** (measured by tests): charts import from CSV or JSON (`stitch.threads.import`, kept in a Threads folder), a 24-colour original starter set, nearest thread by CIE76 delta E (`stitch.threads.match`, and in `stitch.info` with a chart active); no brand chart ships, no panel, the active chart is per session | E6 |
 | Colourways | Several colour schemes per design | M | Recolor Artwork exists; no colourway record | E6 |
-| Needle assignment | Map colours to needle numbers for the machine | B | nothing | E6 |
+| Needle assignment | Map colours to needle numbers for the machine | B | **partial** (measured by tests): `stitch.needles` numbers the colours in sewing order up to the machine's needles (15 on `bai_mirror`) and warns past them; informational, the DSB writer does not read it, no manual reassignment | E6 |
 | Realistic preview | Stitches drawn as lit thread on a fabric background | B | **partial** (measured by tests): `stitch.preview` draws the export's plan as shaded thread capsules with a soft shadow on a flat fabric colour, as a PNG; no panel in the app, no fabric textures | E5 |
 | Stitch simulator | Animated stitch-out, with speed and range | B | nothing | E5 |
 | Needle points, connectors, function markers | View toggles | B | **partial** (measured by tests): `stitch.preview` options `showNeedles`, `showJumps` (dashed connectors) and `showFunctions` (trim, stop and colour change rings); no toggles in the app UI | E5 |
@@ -220,7 +220,7 @@ in the StitchCraft project (see "Where the work is tracked" above); claim work t
 | E3 | Basic stitch types | First pass **partial** (2026-11-11, measured by tests; not stitched on a machine): tatami fill and satin column ([spec](superpowers/specs/2026-11-11-embroidery-stitch-types-design.md)). Remaining: run family, zigzag, E stitch, manual per object; underlay; compensation; shortening; lock rules; trims by connector length | E1 | 55–90 (was 70–110) |
 | E4 | Stitch objects | Stitch type and parameters stored on document objects, regeneration on edit, stitch angle lines, fabric presets, a parameters panel | E3 | 40–65 |
 | E5 | Preview and simulator | First pass **done** (2026-11-11, measured by tests): `stitch.preview` in `vectorcraft-stitch` (realistic thread, needle point, jump and function overlays, density map, as PNG). Remaining: simulator, preview panel and view toggles in the app, travel controls, fabric textures | E1 | 20–40 (was 30–50) |
-| E6 | Threads | User-importable thread charts, a small original default set, matching, colourways, needle assignment | E1 | 15–25 |
+| E6 | Threads | First pass **done** (2026-11-11, measured by tests): import-only thread charts, a small original default set, matching, needle assignment ([spec](superpowers/specs/2026-11-11-embroidery-threads-design.md)). Remaining: colourways, a Threads panel, the active chart in the preferences, the writer following the needle assignment | E1 | 8–14 (was 15–25) |
 | E7 | Production | Hoop library and fit, worksheet as PDF, thread, bobbin and run-time estimates, design checker, export to a folder | E2, E6 | 30–50 |
 | E8 | Sequencing | Entry and exit points, closest join, start and end, colour-block list, overlap removal, auto-routing, branching | E4 | 45–75 |
 | E9 | Lettering | Font outlines to satin columns, letter joins, small-letter rules, monograms, team names. Pre-digitized fonts are original work and are sized separately | E3, E8 | 60–110 |
@@ -306,6 +306,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | E6 first pass, measured by tests: import-only thread charts (CSV and JSON, fuzzed), a 24-colour original starter set, nearest-thread matching in CIE L*a*b* (`stitch.threads.*`, `stitch.info` names threads with a chart active) and needle assignment (`stitch.needles`); design: [the threads spec](superpowers/specs/2026-11-11-embroidery-threads-design.md). Rows updated: thread charts and matching, needle assignment (each partial). E6 reduced to 8-14 h (estimated) |
 | 2026-11-11 | minor | E2 first slice: DSB reader and writer (`vectorcraft-embroidery`), format table row, `stitch.info` and `export_stitch` formats, property and fuzz tests, cross-check with pyembroidery. Row updated: machine file formats (DSB). Not yet stitched on a machine |
 | 2026-11-11 | minor | An Embroidery menu with Stitch Info (stitches, jumps, trims, colour changes, size and a row per thread), Calibration Design and Export Stitch File, with a Stitch File Options dialog after Export As picks a DST or EXP file; `stitch_info` and `export_stitch` MCP tools and a `stitch-out` prompt. Measured by headless dialog and MCP tests; no row's score moves |
 | 2026-11-11 | minor | Long stitches, measured by tests and a cross-check with an independent reader: a stitch longer than the maximum is `k − 1` jumps and a final stitch in `k` equal pieces, not `k` jumps and a stitch of zero length, so a 30 mm stitch (two jumps) no longer reads as a trim and gets no trim; travel ending in a stitch sews its last part with that stitch; the DST reader opens equal jumps ending in an equal stitch as a long stitch, not a trim. Rows updated: machine profile, DST |
