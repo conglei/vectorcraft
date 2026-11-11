@@ -178,6 +178,16 @@ mod tests {
         assert_eq!(read(&[0x00, 0x00, 0x1A], &ReadOptions::default()).unwrap().warnings, Vec::<String>::new());
     }
 
+    #[test]
+    fn the_thread_is_trimmed_before_the_return_to_the_start() {
+        let b = write(&tiny(), &WriteOptions::default()).unwrap().bytes;
+        assert_eq!(&b[b.len() - 8..], [0x80, 0x80, 0x07, 0x00, 0x80, 0x04, 0xFB, 0x05]);
+        let mut p = tiny();
+        p.blocks[0].steps.push(Step::Trim);
+        let b = write(&p, &WriteOptions::default()).unwrap().bytes;
+        assert_eq!(b.iter().filter(|c| **c == 0x07).count(), 1, "{b:02x?}");
+    }
+
     /// A plan whose moves fit the format: every move at most 127 units per axis.
     fn arb_plan() -> impl Strategy<Value = StitchPlan> {
         let op = prop_oneof![

@@ -147,6 +147,9 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
     let start = origin(plan, o.start).ok_or("nothing to stitch")?;
     let mut at = start;
     let mut started = false;
+    // Whether stitches were written since the last trim or colour change: the thread is still
+    // attached to the work.
+    let mut attached = false;
     let color_change = |sink: &mut dyn Sink| {
         if o.trim_before_color_change {
             sink.trim();
@@ -156,6 +159,7 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
     for (i, block) in plan.blocks.iter().enumerate() {
         if i > 0 {
             color_change(sink);
+            attached = false;
         }
         for step in &block.steps {
             match *step {
@@ -169,6 +173,7 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
                     let (dx, dy) = delta(at, p, max).ok_or(TOO_LONG)?;
                     sink.stitch(dx, dy);
                     at = p;
+                    attached = true;
                 }
                 Step::Jump(p) => {
                     if started {
@@ -177,12 +182,20 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
                         at = p;
                     }
                 }
-                Step::Trim => sink.trim(),
+                Step::Trim => {
+                    sink.trim();
+                    attached = false;
+                }
+                // A stop pauses the machine; the thread stays attached.
                 Step::Stop => color_change(sink),
             }
         }
     }
-    if o.return_to_start {
+    if o.return_to_start && at != start {
+        // Cut first, so the travel back does not drag the thread across the work.
+        if attached {
+            sink.trim();
+        }
         travel(sink, at, start, max)?;
     }
     Ok(())

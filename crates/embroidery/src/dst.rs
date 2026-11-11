@@ -238,6 +238,28 @@ mod tests {
     }
 
     #[test]
+    fn the_thread_is_trimmed_before_the_return_to_the_start() {
+        // Centre (5, 5): the last stitch (10, 10) is attached, so the travel back is trimmed first.
+        let b = write(&tiny(), &WriteOptions::default()).unwrap().bytes;
+        let recs: Vec<[u8; 3]> = b[512..].chunks(3).map(|r| [r[0], r[1], r[2]]).collect();
+        let n = recs.len();
+        assert_eq!(n, 1 + 3 + 3 + 1 + 1, "{recs:?}");
+        let moves: Vec<(i32, i32)> = recs[4..8].iter().map(|r| record::decode(*r)).collect();
+        assert_eq!(moves, vec![(2, 0), (-4, 0), (2, 0), (-5, 5)]);
+        assert!(recs[4..8].iter().all(|r| r[2] == 0x83));
+        assert_eq!(recs[n - 1], END);
+        assert_eq!(&b[20..30], b"ST:      9");
+        // A plan that already ends with a trim gets no second one.
+        let mut p = tiny();
+        p.blocks[0].steps.push(Step::Trim);
+        let b = write(&p, &WriteOptions::default()).unwrap().bytes;
+        assert_eq!((b.len() - 512) / 3, 9);
+        // Without the return, the file ends on the last stitch.
+        let b = write(&tiny(), &WriteOptions { return_to_start: false, ..Default::default() }).unwrap().bytes;
+        assert_eq!((b.len() - 512) / 3, 5);
+    }
+
+    #[test]
     fn header_threads_colour_the_blocks() {
         let mut p = tiny();
         p.blocks.push(Block { thread: Thread::default(), steps: vec![Step::Stitch(Pt { x: 0, y: 0 })] });
