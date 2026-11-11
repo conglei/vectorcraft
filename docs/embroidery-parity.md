@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `bai_mirror` machine profile with speed and panel formats; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -112,7 +112,7 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 | Feature | Commercial behaviour | Tier | VectorCraft today | Gap |
 |---|---|---|---|---|
 | Stitch plan model | Ordered stitches in 0.1 mm units with jump, trim, stop and colour change functions, grouped by object and colour | B | **done**: `vectorcraft-stitch` plan in 0.1 mm units with stitch, jump, trim and stop steps in colour blocks, capped at 2,000,000 steps; grouping by object waits for stitch objects (E4) | E1 |
-| Machine profile and limits | Maximum stitch (12.1 mm ternary, 12.7 mm binary), maximum jump, minimum stitch, trim encoding, needle count | B | **done**: profiles `generic` and `commercial15`; long stitches and jumps split, travel that would read as a trim gets one (measured from where the lock stitches leave the needle; none at the start of a colour, which the colour change has cut), warnings for needle count and field size; maximum and minimum stitch and jumps per trim are export options, needles, field and maximum jump are not | E1 |
+| Machine profile and limits | Maximum stitch (12.1 mm ternary, 12.7 mm binary), maximum jump, minimum stitch, trim encoding, needle count | B | **done**: profiles `generic`, `commercial15` and `bai_mirror` (the owner's machine: the `commercial15` limits, plus 1,200 stitches per minute and the formats its panel reads, DST and DSB, with a warning when an export is another format; see [Machine facts](#machine-facts)); long stitches and jumps split, travel that would read as a trim gets one (measured from where the lock stitches leave the needle; none at the start of a colour, which the colour change has cut), warnings for needle count and field size; maximum and minimum stitch and jumps per trim are export options, needles, field and maximum jump are not | E1 |
 | Running stitches | Run, triple (bean), backstitch, stem stitch; stitch length, minimum length, chord gap on curves | B | **partial**: run (stitch length, corners kept, path end hit exactly) and manual along stroked paths; no triple, backstitch or stem stitch | E3 |
 | Satin column | Two rails with direction lines; spacing fixed or by width; varying width | B | **partial** (2026-11-11, measured by tests): `stroke: {type: satin}` sews a column centred on a stroked path, rails mitred from the centre line, fixed spacing peak to peak, square ends, width from the stroke weight or an option; no direction lines, varying width or rail pairing for filled shapes | E3 |
 | Tatami fill | Rows at an angle with staggered penetrations, holes respected, travel hidden under the fill | B | **partial** (2026-11-11, measured by tests): filled paths sew rows at an angle, spacing and stitch length, staggered penetrations, holes by the fill rule, sections sewn continuously and joined by an inset run along the edge; travel is along the edge, not hidden under unsewn fill; no underlay | E3 |
@@ -251,6 +251,23 @@ before a stitch-out.
 - **Patents.** Several patents cover image-to-embroidery methods (for example US6370442, US6804573,
   US8798781). Their status needs a check by someone qualified before the photo pipeline ships.
 
+## Machine facts
+
+The owner's machine, a commercial single-head 15-needle model, from reseller pages only (the
+maker's own site did not load). Sources: the Swing Design product page and Q&A,
+<https://www.swingdesign.com/products/bai-mirror-hat-multi-needle-15-needle-commercial-embroidery-machine>,
+<https://www.swingdesign.com/a/answers/6395939/what-file-type-does-the-bai-mirror-take>, and the
+MagneticHoop 1501 guide,
+<https://www.magnetichoop.com/blogs/news/bai-mirror-1501-embroidery-machine-2025-complete-guide-to-features-operations-business-success>.
+
+| Fact | Value | Confidence |
+|---|---|---|
+| Needles | 15, one head | high |
+| Field | 350 x 500 mm (profile `field_mm` is 500 x 350: width, height); one page says 500 x 800 mm | medium; the majority figure, the other unverified |
+| Speed | 1,200 stitches per minute flat, 850 on caps | high |
+| Panel formats | DST, and DSB on some pages; not EXP, PES or JEF | medium |
+| Longest stitch, jumps per trim | not found; the DST defaults (12.1 mm, 3) stay | unknown until the stitch-out |
+
 ## Open questions
 
 1. Which hosted image model is the first provider, and which styles ship first.
@@ -287,6 +304,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Named machine profile `bai_mirror` (machine option value): the `commercial15` limits plus `max_spm` (1,200) and `formats` (DST, DSB) on profiles; an export in another format warns. Row updated: machine profile. Machine facts section added |
 | 2026-11-11 | minor | First pass of E3, measured by tests, not stitched on a machine: filled paths sew as tatami fills and stroked paths as running stitch or satin columns, by the export options `fill` and `stroke`. Rows updated: satin column, tatami fill, auto split. E3 reduced to 55–90 h (estimated) |
 | 2026-11-11 | minor | E5 first pass, measured by tests: `stitch.preview` renders the plan an export would write as lit thread on fabric or as a density map, with optional jump, needle point and function marks, as a PNG (design: [the preview spec](superpowers/specs/2026-11-11-embroidery-preview-design.md)). Rows updated: realistic preview, needle points and function markers, density map (each partial). E5 reduced to 20–40 h (estimated) |
 | 2026-11-11 | minor | An opened stitch file re-exports with the trims it had and no more: a run the file trimmed before is marked on its path, runs reached by a jump alone are no longer trimmed, and travel trims are off on that layer by default (`travelTrims` on `document.export` and `stitch.info` forces them on or off). A trim before a colour change is not kept (`trimBeforeColorChange` writes one). Row updated: reading stitch files |

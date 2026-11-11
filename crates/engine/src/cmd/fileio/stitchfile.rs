@@ -29,7 +29,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "machine",
         ty: "string",
         default: "\"commercial15\"",
-        description: "the machine's limits: commercial15 (15 needles, a 500 x 350 mm field) or generic (no needle or field limits)",
+        description: "the machine's limits: commercial15 (15 needles, a 500 x 350 mm field), bai_mirror (a commercial single-head 15-needle machine, 350 x 500 mm; the same limits, and a warning for a format its panel does not read) or generic (no needle or field limits)",
     },
     FormatOption {
         name: "mode",
@@ -231,7 +231,7 @@ fn jumps_per_trim(cmd: &str, p: &Value, key: &str) -> Result<u8> {
 fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let limit = max_move(cmd, format)?;
     let max_mm = f64::from(limit) / UNITS_PER_MM;
-    let machine = one_of(cmd, p, "machine", "commercial15", &["generic", "commercial15"])?;
+    let machine = one_of(cmd, p, "machine", "commercial15", &["generic", "commercial15", "bai_mirror"])?;
     let mode = match text_param(p, "mode", cmd)? {
         None => None,
         Some(_) => match one_of(cmd, p, "mode", "run", &["run", "manual"])? {
@@ -260,7 +260,7 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
         _ => Start::Center,
     };
     let name = text_param(p, "name", cmd)?.map(str::to_string);
-    let mut profile = profile(machine).ok_or_else(|| bad(cmd, format!("machine `{machine}`: generic or commercial15")))?;
+    let mut profile = profile(machine).ok_or_else(|| bad(cmd, format!("machine `{machine}`: generic, commercial15 or bai_mirror")))?;
     profile.max_stitch = units(max_stitch).min(limit);
     // EXP's longer moves (127 units) serve its jumps too.
     profile.max_jump = if format == "exp" { limit } else { profile.max_jump.min(limit) };
@@ -317,6 +317,10 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
     let o = options(cmd, p, format)?;
     let (plan, mut warnings, opened) = planned(cmd, doc, &o, selection)?;
+    if !o.profile.formats.is_empty() && !o.profile.formats.contains(&format) {
+        let list = o.profile.formats.iter().map(|f| f.to_uppercase()).collect::<Vec<_>>().join(" and ");
+        warnings.push(format!("this machine's panel reads {list}, not {}", format.to_uppercase()));
+    }
     // Not given: an opened file did not return to its start, so its re-export adds no such travel.
     let write = WriteOptions { return_to_start: o.return_to_start.unwrap_or(!opened), ..o.write.clone() };
     let mut out = match format {
