@@ -50,6 +50,7 @@ vectorcraft-ui-egui = { path = "crates/ui-egui" }
 vectorcraft-mcp = { path = "crates/mcp" }
 vectorcraft-testkit = { path = "crates/testkit" }
 vectorcraft-cad = { path = "crates/cad" }
+vectorcraft-embroidery = { path = "crates/embroidery" }
 vectorcraft-eps = { path = "crates/eps" }
 vectorcraft-metafile = { path = "crates/metafile" }
 vectorcraft-plugins = { path = "crates/plugins" }

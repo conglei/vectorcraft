@@ -6475,6 +6475,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vectorcraft-embroidery"
+version = "0.21.0"
+dependencies = [
+ "proptest",
+ "vectorcraft-stitch",
+]
+
+[[package]]
 name = "vectorcraft-engine"
 version = "0.21.0"
 dependencies = [
