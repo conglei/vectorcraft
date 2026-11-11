@@ -1433,13 +1433,13 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "ui.stitchInfo",
         "Stitch Info…",
         "",
-        "{format?: dst (default) | exp, …stitch.info options} open Stitch Info (dialog `stitchInfo`: field `format`; read-only, it shows what stitch.info returns for the format: stitches, jumps, trims, colour changes, records, size in mm, a row per thread and the warnings, or the command's error), over the options the last stitch export used; off without a document",
+        "{format?: dst (default) | dsb | exp, …stitch.info options} open Stitch Info (dialog `stitchInfo`: field `format`; read-only, it shows what stitch.info returns for the format: stitches, jumps, trims, colour changes, records, size in mm, a row per thread and the warnings, or the command's error), over the options the last stitch export used; off without a document",
     ),
     (
         "ui.stitchOptionsDialog",
         "Stitch File Options Dialog",
         "",
-        "{format?: dst (default) | exp, path?, …document.export stitch options} open Stitch File Options (dialog `stitchOptions`: fields = these options over the ones used last; `mode` and `locks` null leave them to the engine); OK checks them, remembers them and writes path (else asks). Export As… → DST or EXP opens it too",
+        "{format?: dst (default) | dsb | exp, path?, …document.export stitch options} open Stitch File Options (dialog `stitchOptions`: fields = these options over the ones used last; `mode` and `locks` null leave them to the engine); OK checks them, remembers them and writes path (else asks). Export As… → DST, DSB or EXP opens it too",
     ),
     (
         "file.saveForWeb",

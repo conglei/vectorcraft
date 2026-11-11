@@ -1,4 +1,4 @@
-//! DST and EXP stitch files through the commands: export with the stitch options, open by content
+//! DST, DSB and EXP stitch files through the commands: export with the stitch options, open by content
 //! or extension, `stitch.info`, refused options and the format table.
 
 use serde_json::{Value, json};
@@ -65,6 +65,16 @@ fn a_stroked_rectangle_exports_and_reopens() {
 }
 
 #[test]
+fn dsb_exports_by_format_and_opens_by_extension() {
+    round_trip("dsb", "a.dsb", Some(b"LA:"));
+    // There is no signature: the content alone does not make it a DSB file, but the extension does.
+    let mut s = red_rectangle();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dsb"})).unwrap());
+    let r = s.execute("document.open", &json!({"name": "a.dsb", "dataBase64": vectorcraft_format::base64_encode(&bytes)})).unwrap();
+    assert_eq!(r["format"], "dsb");
+}
+
+#[test]
 fn exp_exports_by_format_and_opens_by_extension() {
     round_trip("exp", "a.exp", None);
     let mut s = red_rectangle();
@@ -98,6 +108,7 @@ fn read_plan(format: &str, bytes: &[u8]) -> vectorcraft_stitch::StitchPlan {
     let o = Default::default();
     match format {
         "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
+        "dsb" => vectorcraft_embroidery::dsb::read(bytes, &o),
         _ => vectorcraft_embroidery::exp::read(bytes, &o),
     }
     .unwrap()
@@ -106,7 +117,7 @@ fn read_plan(format: &str, bytes: &[u8]) -> vectorcraft_stitch::StitchPlan {
 
 #[test]
 fn an_opened_stitch_file_re_exports_its_needle_points_unchanged() {
-    for format in ["dst", "exp"] {
+    for format in ["dst", "dsb", "exp"] {
         let mut s = session();
         s.execute("stitch.calibration", &json!({})).unwrap();
         let first = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
@@ -202,6 +213,10 @@ fn stitch_info_counts_the_records_the_file_holds() {
     let bytes = b64(&s.execute("document.export", &json!({"format": "dst"})).unwrap());
     assert_eq!(info["records"].as_u64(), Some(header_st(&bytes)), "{info}");
     assert_eq!(info["records"].as_u64(), Some(((bytes.len() - 512) / 3) as u64), "{info}");
+    let info = s.execute("stitch.info", &json!({"format": "dsb"})).unwrap();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dsb"})).unwrap());
+    assert_eq!(info["records"].as_u64(), Some(header_st(&bytes)), "{info}");
+    assert_eq!(info["records"].as_u64(), Some(((bytes.len() - 512) / 3) as u64), "{info}");
     let info = s.execute("stitch.info", &json!({"format": "exp"})).unwrap();
     let bytes = b64(&s.execute("document.export", &json!({"format": "exp"})).unwrap());
     assert_eq!(info["records"].as_u64(), Some(exp_records(&bytes)), "{info}");
@@ -291,7 +306,7 @@ fn bad_stitch_options_are_refused() {
 fn an_empty_document_is_an_error_not_an_empty_file() {
     let mut s = session();
     for id in ["document.export", "stitch.info"] {
-        for format in ["dst", "exp"] {
+        for format in ["dst", "dsb", "exp"] {
             let e = s.execute(id, &json!({"format": format})).unwrap_err().to_string();
             assert!(e.contains("nothing to stitch"), "{id} {format}: {e}");
         }
@@ -312,7 +327,7 @@ fn a_file_of_too_many_colour_changes_is_refused() {
 fn the_formats_are_listed() {
     let mut s = Session::new();
     let r = s.execute("document.formats", &json!({})).unwrap();
-    for (id, label, max) in [("dst", "DST stitch file", 12.1), ("exp", "EXP stitch file", 12.7)] {
+    for (id, label, max) in [("dst", "DST stitch file", 12.1), ("dsb", "DSB stitch file", 12.7), ("exp", "EXP stitch file", 12.7)] {
         let f = r["formats"].as_array().unwrap().iter().find(|f| f["id"] == id).unwrap_or_else(|| panic!("{id} not listed"));
         assert_eq!((f["read"].as_bool(), f["write"].as_bool(), f["raster"].as_bool()), (Some(true), Some(true), Some(false)), "{f}");
         assert_eq!(f["label"], label);
@@ -326,6 +341,8 @@ fn the_formats_are_listed() {
         assert_eq!(format_for_name(&format!("a.{id}")).map(|f| f.id), Some(id));
     }
     assert_eq!(detect("a.bin", b"LA:design").map(|f| f.id), Some("dst"), "DST by its content");
+    assert_eq!(detect("a.dsb", &[0x0A, 0x00]).map(|f| f.id), Some("dsb"), "DSB by its extension");
+    assert_eq!(detect("a.dsb", b"LA:design").map(|f| f.id), Some("dsb"), "its DST-style header does not make it DST");
     assert_eq!(detect("a.exp", &[0x0A, 0x00]).map(|f| f.id), Some("exp"), "EXP by its extension");
 }
 
@@ -569,6 +586,11 @@ fn bai_mirror_warns_for_a_format_its_panel_does_not_read() {
     s.execute("stitch.calibration", &json!({})).unwrap();
     let dst = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": "dst"})).unwrap();
     assert_eq!(dst["warnings"], json!([]), "{dst}");
+    // DSB is on its panel too: no warning, in the info or in the exported file.
+    let dsb = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": "dsb"})).unwrap();
+    assert_eq!(dsb["warnings"], json!([]), "{dsb}");
+    let file = s.execute("document.export", &json!({"format": "dsb", "machine": "bai_mirror"})).unwrap();
+    assert_eq!(file["warnings"], json!([]), "{file}");
     let exp = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": "exp"})).unwrap();
     let warnings = exp["warnings"].as_array().unwrap();
     assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("panel reads DST and DSB, not EXP"))), "{exp}");
@@ -585,6 +607,8 @@ fn stitch_options_are_checked_without_exporting() {
     assert!(check_stitch_options(&json!({"stitchLength": 3, "jumpsPerTrim": 5, "machine": "generic"}), "exp").is_ok());
     // The longest stitch is DST's 12.1 mm, EXP's 12.7.
     assert!(check_stitch_options(&json!({"maxStitch": 12.7}), "exp").is_ok());
+    assert!(check_stitch_options(&json!({"maxStitch": 12.7}), "dsb").is_ok());
+    assert!(check_stitch_options(&json!({"maxStitch": 12.8}), "dsb").is_err());
     for (p, name) in
         [(json!({"maxStitch": 12.7}), "maxStitch"), (json!({"stitchLength": 13}), "stitchLength"), (json!({"jumpsPerTrim": 9}), "jumpsPerTrim")]
     {
@@ -598,4 +622,37 @@ fn stitch_options_are_checked_without_exporting() {
 fn the_calibration_design_is_in_the_embroidery_menu() {
     let spec = crate::command_specs().iter().find(|c| c.id == "stitch.calibration").unwrap();
     assert_eq!(spec.menu, ["Embroidery"]);
+}
+
+/// A DSB file of stitches, a trim, a jump and more stitches, then (`before_change`) a trim, a jump
+/// and a needle change before the last stitches. Records are `[control, |dy|, |dx|]`.
+fn dsb_with_trims(before_change: bool) -> Vec<u8> {
+    let mut b = vec![b' '; 512];
+    b[..4].copy_from_slice(b"LA:T");
+    b.extend([0x00, 0, 0, 0x00, 0, 30, 0x00, 30, 0, 0xE7, 0, 0, 0x01, 0, 100, 0x00, 0, 30, 0x00, 30, 0]);
+    if before_change {
+        b.extend([0xE7, 0, 0, 0x01, 0, 50, 0xE9, 0, 0, 0x00, 0, 30]);
+    }
+    b.extend([0xF8, 0, 0]);
+    b
+}
+
+#[test]
+fn a_dsb_trim_survives_read_open_and_stitch_info_unless_the_colour_change_cuts_it() {
+    let trims = |file: &[u8]| {
+        let mut s = Session::new();
+        let data = vectorcraft_format::base64_encode(file);
+        s.execute("document.open", &json!({"name": "t.dsb", "dataBase64": data})).unwrap();
+        let options = json!({"format": "dsb", "mode": "manual", "locks": false, "travelTrims": false, "returnToStart": false});
+        s.execute("stitch.info", &options).unwrap()["trims"].as_u64().unwrap()
+    };
+    // A trim in the middle of a block is kept.
+    assert_eq!(trims(&dsb_with_trims(false)), 1);
+    // The reader keeps both trims, but one sits at the end of a colour block with no run after it
+    // in that block: the document marks a trim on the run that follows it, and the colour change
+    // cuts the thread anyway, so only the mid-block trim is left.
+    let two = dsb_with_trims(true);
+    let plan = vectorcraft_embroidery::dsb::read(&two, &Default::default()).unwrap().plan;
+    assert_eq!(trim_count(&plan), 2);
+    assert_eq!(trims(&two), 1);
 }

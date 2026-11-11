@@ -2782,11 +2782,11 @@ proptest! {
     }
 }
 
-// ---------- Embroidery stitch files (DST, EXP) ----------
+// ---------- Embroidery stitch files (DST, DSB, EXP) ----------
 
-/// The calibration design written as DST and as EXP with the default export options.
-fn stitch_samples() -> &'static [Vec<u8>; 2] {
-    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 2]> = std::sync::OnceLock::new();
+/// The calibration design written as DST, EXP and DSB with the default export options.
+fn stitch_samples() -> &'static [Vec<u8>; 3] {
+    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 3]> = std::sync::OnceLock::new();
     SAMPLES.get_or_init(|| {
         let mut s = vectorcraft_engine::Session::new();
         s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
@@ -2795,13 +2795,13 @@ fn stitch_samples() -> &'static [Vec<u8>; 2] {
             let r = s.execute("document.export", &json!({ "format": format })).unwrap();
             vectorcraft_format::base64_decode(r["dataBase64"].as_str().unwrap()).unwrap()
         };
-        [file("dst"), file("exp")]
+        [file("dst"), file("exp"), file("dsb")]
     })
 }
 
 #[test]
 fn the_stitch_samples_open() {
-    for (bytes, format) in stitch_samples().iter().zip(["dst", "exp"]) {
+    for (bytes, format) in stitch_samples().iter().zip(["dst", "exp", "dsb"]) {
         let mut s = vectorcraft_engine::Session::new();
         let p = json!({"name": format!("x.{format}"), "dataBase64": vectorcraft_format::base64_encode(bytes)});
         s.execute("document.open", &p).unwrap();
@@ -2820,6 +2820,7 @@ fn survive_stitch(what: &str, bytes: &[u8], format: &str, jumps_per_trim: u8) ->
             let o = vectorcraft_embroidery::ReadOptions { jumps_per_trim };
             let _ = match format {
                 "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
+                "dsb" => vectorcraft_embroidery::dsb::read(bytes, &o),
                 _ => vectorcraft_embroidery::exp::read(bytes, &o),
             };
         }
@@ -2860,13 +2861,20 @@ proptest! {
     }
 
     #[test]
+    fn dsb_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), header in any::<bool>(), jumps in 2u8..=8) {
+        let mut b = if header { stitch_samples()[2][..512].to_vec() } else { vec![] };
+        b.extend(bytes);
+        survive_stitch("dsb garbage", &b, "dsb", jumps)?;
+    }
+
+    #[test]
     fn mutated_stitch_files_never_panic(
-        exp in any::<bool>(),
+        which in 0usize..3,
         edits in prop::collection::vec((any::<usize>(), any::<u8>()), 1..=8),
         jumps in 2u8..=8,
     ) {
-        let (i, format) = if exp { (1, "exp") } else { (0, "dst") };
-        let mut bytes = stitch_samples()[i].clone();
+        let format = ["dst", "exp", "dsb"][which];
+        let mut bytes = stitch_samples()[which].clone();
         let n = bytes.len();
         for &(at, b) in &edits {
             bytes[at % n] = b;

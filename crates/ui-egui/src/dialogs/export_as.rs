@@ -195,7 +195,7 @@ fn options_or_write(
                 eps_options::open(app, &params);
                 return Ok(Value::Null);
             }
-            if matches!(f.id, "dst" | "exp") {
+            if matches!(f.id, "dst" | "dsb" | "exp") {
                 stitch_options::open(app, &params);
                 return Ok(Value::Null);
             }

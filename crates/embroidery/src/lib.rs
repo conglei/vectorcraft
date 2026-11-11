@@ -1,4 +1,4 @@
-//! VectorCraft embroidery machine files: DST and EXP readers and writers.
+//! VectorCraft embroidery machine files: DST, DSB and EXP readers and writers.
 //!
 //! Writers take a [`StitchPlan`] that is already within the format's limits (the caller
 //! prepares it for the machine) and return the file's bytes. Readers treat their input as
@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod dsb;
 pub mod dst;
 pub mod exp;
 mod palette;

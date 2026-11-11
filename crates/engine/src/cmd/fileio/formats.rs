@@ -508,12 +508,22 @@ pub const FORMATS: &[Format] = &[
     reader("heif", "HEIC/HEIF", &["heic", "heif"], "image/heic", true),
     // jxl-oxide reads a JPEG XL file's first frame, which is stored as PNG. Exports don't write it.
     reader("jxl", "JPEG XL", &["jxl"], "image/jxl", true),
-    // Embroidery machine files: DST is recognised by its content, EXP (no signature) by its
-    // extension.
+    // Embroidery machine files: DST is recognised by its content, DSB and EXP (no signature) by
+    // their extension.
     Format {
         id: "dst",
         label: "DST stitch file",
         extensions: &["dst"],
+        mime: "application/octet-stream",
+        read: true,
+        write: true,
+        raster: false,
+        options: stitchfile::OPTIONS,
+    },
+    Format {
+        id: "dsb",
+        label: "DSB stitch file",
+        extensions: &["dsb"],
         mime: "application/octet-stream",
         read: true,
         write: true,
@@ -573,6 +583,7 @@ pub const OPEN_EXTS: &[&str] = &[
     "vctemplate",
     "dxf",
     "dst",
+    "dsb",
     "exp",
     "emf",
     "wmf",
@@ -592,7 +603,7 @@ pub const OPEN_EXTS: &[&str] = &[
 /// type (shared-mime-info's) also covers `.epsf`, so file managers offer VectorCraft for it.
 pub const UNASSOCIATED_EXTS: &[&str] = &[
     "psd", "pdd", "psb", "epsf", "ps", "pns", "dib", "rle", "tga", "vda", "icb", "vst", "pcx", "pxr", "jpf", "jpx", "jp2", "j2k", "j2c", "jpc",
-    "heic", "heif", "jxl", "dst", "exp",
+    "heic", "heif", "jxl", "dst", "dsb", "exp",
 ];
 
 /// The extension that picks each writable format when exporting (the format's first; PNG-8 shares
@@ -665,6 +676,7 @@ pub const PLACE_EXTS: &[&str] = &[
     "vctemplate",
     "dxf",
     "dst",
+    "dsb",
     "exp",
     "emf",
     "wmf",

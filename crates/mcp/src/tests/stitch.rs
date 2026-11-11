@@ -50,7 +50,7 @@ fn the_stitch_tools_are_listed_with_the_export_options() {
         ] {
             assert!(props.contains_key(key), "{name}: {key}");
         }
-        assert_eq!(props["format"]["enum"], json!(["dst", "exp"]), "{name}");
+        assert_eq!(props["format"]["enum"], json!(["dst", "dsb", "exp"]), "{name}");
         assert_eq!(tool["inputSchema"]["additionalProperties"], false);
     }
     let info = tools.iter().find(|t| t["name"] == "stitch_info").unwrap();

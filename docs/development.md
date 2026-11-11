@@ -414,7 +414,7 @@ panic, fix the code and add the input as a regular test.
 
 ## Checking stitch files against another reader
 
-DST and EXP have no official specification, so the embroidery readers and writers are also checked
+DST, DSB and EXP have no official specification, so the embroidery readers and writers are also checked
 by hand against an independent implementation: the MIT-licensed `pyembroidery` package from PyPI,
 used as a black box (install it and call it; do not read or copy its source). This is not part of
 CI and needs Python and network access to PyPI.
@@ -436,6 +436,12 @@ CI and needs Python and network access to PyPI.
 5. The reverse: build a pattern with pyembroidery (stitches, a trim, jumps, a colour change), write
    it as DST and EXP, open both with VectorCraft and compare the needle points with what
    pyembroidery reads back from its own files.
+6. DSB: export `--export /tmp/cal.dsb` and read it with `pyembroidery.read` as for DST. pyembroidery
+   has no DSB writer, so the reverse is a hand-made file: its reader takes a 512-byte header and
+   records `[control, |dy|, |dx|]` (stitch `0x00`, jump `0x01`, `+0x20` x negative, `+0x40` y
+   negative, trim `0xE7`, needle change `0xE9..0xF7`, end `0xF8`); build one with a short script
+   and open it with `vectorcraft-cli run --in`. Needle points and colour changes should match; DSB
+   writes a trim as its own record, so trim counts match too.
 
 Needle points and colour changes should match exactly. Jump and trim counts may differ: each
 implementation has its own rules for splitting long moves and for reading a run of jumps as a trim.

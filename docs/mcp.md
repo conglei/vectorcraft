@@ -5457,14 +5457,14 @@ Calibration Design and Export Stitch File… (Export As on DST, then Stitch File
 | Tool or command | What it does |
 |---|---|
 | `stitch_info` | The `stitch.info` command. Returns `{stitches, jumps, trims, colorChanges, records, widthMm, heightMm, threads: [{rgb, stitches, lengthMm}], warnings}` for the file an export with the same options would write; a document with no stroked paths is an error. |
-| `export_stitch` | Writes the file: `document.export` with `format` `dst` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
+| `export_stitch` | Writes the file: `document.export` with `format` `dst`, `dsb` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
 | `run_command stitch.calibration` | Adds a 100 mm test piece for a first stitch-out, as one group of paths in three thread colours; one undo step. `{x?, y?}` puts its top-left corner. |
 | `run_command stitch.preview` | Draws the stitch plan over the art. Added by another change: use it when `list_commands` with `filter: "stitch"` lists it. |
 
-Both tools take the options of `document.formats` for `dst` and `exp` (lengths in mm): `machine`
+Both tools take the options of `document.formats` for `dst`, `dsb` and `exp` (lengths in mm): `machine`
 (`commercial15` default, or `generic`), `mode` (`run` or `manual`; not given, art on the layer an opened
 stitch file made keeps its needle points), `stitchLength` (0.5–12, default 2.5), `minStitch` (0–2, default 0.3),
-`maxStitch` (1–12.1 for DST, 1–12.7 for EXP, which is also its default), `locks`, `jumpsPerTrim` (2–8,
+`maxStitch` (1–12.1 for DST, 1–12.7 for EXP and DSB, which is also their default), `locks`, `jumpsPerTrim` (2–8,
 default 3), `trimBeforeColorChange`, `start` (`center` or `firstStitch`), `returnToStart`, `name` and
 `selectedOnly`. The `stitch-out` prompt walks through drawing or opening a design, checking `stitch_info` and
 exporting.
