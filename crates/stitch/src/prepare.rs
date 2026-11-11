@@ -41,6 +41,31 @@ fn records(d: i64, max: i32) -> i64 {
     ((d + m - 1) / m).max(1)
 }
 
+/// The `i`-th of `k` equal steps from `a` to `b`, rounded to whole units: `i == k` is `b`
+/// itself. Consecutive points differ by at most `ceil(d / k)` per axis, `d` the larger axis
+/// distance, and by the same amount to within one unit.
+fn between(a: Pt, b: Pt, i: i64, k: i64) -> Pt {
+    let at = |from: i32, to: i32| -> i32 {
+        let delta = f64::from(to) - f64::from(from);
+        // Between `from` and `to`, so it fits an i32.
+        (f64::from(from) + (delta * i as f64 / k.max(1) as f64).round()) as i32
+    };
+    Pt { x: at(a.x, b.x), y: at(a.y, b.y) }
+}
+
+/// Whether [`split_long_jumps`] sews the last part of the jump from `a` to `b` as the stitch that
+/// follows it, `next`: the jump needs splitting, `next` is a stitch at `b`, and the last part is
+/// no longer than `max_stitch`. Travel then ends in a stitch rather than in a jump and a stitch
+/// in place: one jump record fewer.
+fn folds(a: Pt, b: Pt, next: Option<&Step>, p: &MachineProfile) -> bool {
+    let d = cheb(a, b);
+    if d <= i64::from(p.max_jump) || next != Some(&Step::Stitch(b)) {
+        return false;
+    }
+    let k = records(d, p.max_jump);
+    cheb(between(a, b, k - 1, k), b) <= i64::from(p.max_stitch)
+}
+
 fn position(step: &Step) -> Option<Pt> {
     match step {
         Step::Stitch(p) | Step::Jump(p) => Some(*p),
@@ -91,16 +116,33 @@ fn drop_small_stitches(plan: &StitchPlan, p: &MachineProfile) -> StitchPlan {
     StitchPlan { name: plan.name.clone(), blocks }
 }
 
-/// Pass 2: a stitch longer than `max_stitch` becomes a jump to its end point and a stitch.
-fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
-    map_blocks(plan, |steps, pos| {
+/// Pass 4: a stitch longer than `max_stitch` becomes `k = ceil(d / max)` equal pieces, `d` its
+/// larger axis distance and `max` the smaller of `max_stitch` and `max_jump`: `k − 1` jumps and a
+/// final stitch that ends exactly on the stitch's end point. The pieces differ by at most one unit
+/// per axis (see [`between`]), so none is longer than `max` and no stitch has zero length. A split
+/// stitch is not travel: it gets no trim and no lock stitches (the thread stays attached).
+/// Returns the plan and how many stitches needed `jumps_per_trim` or more jumps, which a machine
+/// that trims after that many jump records cuts.
+fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<(StitchPlan, usize), String> {
+    let max = p.max_stitch.min(p.max_jump).max(1);
+    let mut count = plan.steps();
+    let mut cut = 0;
+    let plan = map_blocks(plan, |steps, pos| {
         let mut out = Vec::with_capacity(steps.len());
         for s in steps {
-            if let Step::Stitch(pt) = s
-                && let Some(q) = *pos
-                && cheb(q, *pt) > i64::from(p.max_stitch)
+            if let Step::Stitch(b) = s
+                && let Some(a) = *pos
+                && cheb(a, *b) > i64::from(max)
             {
-                out.push(Step::Jump(*pt));
+                let k = records(cheb(a, *b), max);
+                count = count.saturating_add(usize::try_from(k - 1).unwrap_or(usize::MAX));
+                if count > crate::MAX_STEPS {
+                    return Err(crate::TOO_MANY_STEPS.to_string());
+                }
+                if p.jumps_per_trim > 0 && k > i64::from(p.jumps_per_trim) {
+                    cut += 1;
+                }
+                out.extend((1..k).map(|i| Step::Jump(between(a, *b, i, k))));
             }
             if let Some(pt) = position(s) {
                 *pos = Some(pt);
@@ -108,13 +150,17 @@ fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPl
             out.push(*s);
         }
         Ok(out)
-    })
+    })?;
+    Ok((plan, cut))
 }
 
-/// Pass 4: a travel (consecutive jumps) that needs `jumps_per_trim` or more records gets a
+/// Pass 3: a travel (consecutive jumps) that needs `jumps_per_trim` or more jump records gets a
 /// `Trim` before it, unless one is already there, nothing has been sewn yet, or it starts a
 /// block (the colour change already cut the thread). It runs after the lock stitches, so travel is
-/// measured from where the needle really is.
+/// measured from where the needle really is, and before long stitches are split, which are not
+/// travel on their own. Records are counted as passes 4 and 5 write them: when travel ends in a
+/// stitch in place and its last part folds into that stitch ([`folds`]), that part is not a jump;
+/// when it ends in a long stitch, that stitch's jumps continue the same run.
 fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
     let mut stitched = false;
     let mut prev_trim = false;
@@ -128,11 +174,25 @@ fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                 let end = steps.iter().skip(i).take_while(|s| matches!(s, Step::Jump(_))).count() + i;
                 let mut at = *pos;
                 let mut total = 0i64;
+                let mut last = None;
                 for j in steps.get(i..end).unwrap_or_default() {
                     if let Step::Jump(pt) = j {
                         total += at.map_or(1, |q| records(cheb(q, *pt), p.max_jump));
+                        last = at.map(|q| (q, *pt));
                         at = Some(*pt);
                     }
+                }
+                if let Some((a, b)) = last
+                    && folds(a, b, steps.get(end), p)
+                {
+                    total -= 1;
+                }
+                // A long stitch after the travel adds its jumps to the same run of records.
+                let max = p.max_stitch.min(p.max_jump).max(1);
+                if let (Some(a), Some(Step::Stitch(b))) = (at, steps.get(end))
+                    && cheb(a, *b) > i64::from(max)
+                {
+                    total += records(cheb(a, *b), max) - 1;
                 }
                 if p.jumps_per_trim > 0 && total >= i64::from(p.jumps_per_trim) && stitched && !prev_trim {
                     out.push(Step::Trim);
@@ -170,7 +230,7 @@ fn toward(from: Pt, to: Pt, len: i32) -> Pt {
     Pt { x: from.x.saturating_add((dx * k).round() as i32), y: from.y.saturating_add((dy * k).round() as i32) }
 }
 
-/// Pass 3: three back-and-forth stitches at each end of every run of two or more stitches.
+/// Pass 2: three back-and-forth stitches at each end of every run of two or more stitches.
 fn add_locks(plan: &StitchPlan) -> StitchPlan {
     let blocks = plan.blocks.iter().map(|b| Block { thread: b.thread.clone(), steps: locked(&b.steps) }).collect();
     StitchPlan { name: plan.name.clone(), blocks }
@@ -208,12 +268,15 @@ fn locked(steps: &[Step]) -> Vec<Step> {
     out
 }
 
-/// Pass 5: split jumps longer than `max_jump` into equal parts.
+/// Pass 5: split jumps longer than `max_jump` into equal parts. When the travel ends in a stitch
+/// in place, its last part is sewn by that stitch ([`folds`]): `k − 1` jumps and a stitch, not `k`
+/// jumps and a stitch of zero length. The pieces of a split stitch (pass 4) are no longer than
+/// `max_jump` and are left alone.
 fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
     let mut count = plan.steps();
     map_blocks(plan, |steps, pos| {
         let mut out = Vec::with_capacity(steps.len());
-        for s in steps {
+        for (n, s) in steps.iter().enumerate() {
             if let (Step::Jump(b), Some(a)) = (s, *pos) {
                 let d = cheb(a, *b);
                 if d > i64::from(p.max_jump) {
@@ -222,13 +285,10 @@ fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                     if count > crate::MAX_STEPS {
                         return Err(crate::TOO_MANY_STEPS.to_string());
                     }
-                    for i in 1..k {
-                        let at = |from: i32, to: i32| -> i32 {
-                            let delta = f64::from(to) - f64::from(from);
-                            // Between `from` and `to`, so it fits an i32.
-                            (f64::from(from) + (delta * i as f64 / k as f64).round()) as i32
-                        };
-                        out.push(Step::Jump(Pt { x: at(a.x, b.x), y: at(a.y, b.y) }));
+                    out.extend((1..k).map(|i| Step::Jump(between(a, *b, i, k))));
+                    if folds(a, *b, steps.get(n + 1), p) {
+                        *pos = Some(*b);
+                        continue;
                     }
                 }
             }
@@ -241,9 +301,16 @@ fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
     })
 }
 
-/// Pass 6: what the machine cannot do, as warnings.
-fn check(plan: &StitchPlan, p: &MachineProfile) -> Vec<String> {
+/// Pass 6: what the machine cannot do, as warnings. `cut`: how many stitches were split into
+/// `jumps_per_trim` or more jumps.
+fn check(plan: &StitchPlan, p: &MachineProfile, cut: usize) -> Vec<String> {
     let mut warnings = Vec::new();
+    if cut > 0 {
+        let t = p.jumps_per_trim;
+        let mm = f64::from(i32::from(t).saturating_mul(p.max_stitch.min(p.max_jump))) / crate::UNITS_PER_MM;
+        let what = if cut == 1 { "1 stitch is".to_string() } else { format!("{cut} stitches are") };
+        warnings.push(format!("{what} longer than {mm:.1} mm: split into {t} or more jumps, which a machine that trims after {t} jumps cuts"));
+    }
     let st = stats(plan);
     if let Some(n) = p.needles
         && st.threads.len() > usize::from(n)
@@ -263,19 +330,19 @@ fn check(plan: &StitchPlan, p: &MachineProfile) -> Vec<String> {
     warnings
 }
 
-/// Makes `plan` safe for `profile`: small stitches dropped, long stitches and jumps split,
-/// locks added, long travel trimmed (measured after the locks), and what remains wrong reported as warnings.
+/// Makes `plan` safe for `profile`: small stitches dropped, locks added, long travel trimmed
+/// (measured after the locks), long stitches and jumps split, and what remains wrong reported as
+/// warnings.
 pub fn prepare(plan: &StitchPlan, profile: &MachineProfile, o: &PrepareOptions) -> Result<Prepared, String> {
     plan.check()?;
     let plan = drop_small_stitches(plan, profile);
-    let plan = split_long_stitches(&plan, profile)?;
-    plan.check()?;
     let plan = if o.locks { add_locks(&plan) } else { plan };
     plan.check()?;
     let plan = if o.travel_trims { trim_long_travel(&plan, profile)? } else { plan };
     plan.check()?;
+    let (plan, cut) = split_long_stitches(&plan, profile)?;
     let plan = split_long_jumps(&plan, profile)?;
-    let warnings = check(&plan, profile);
+    let warnings = check(&plan, profile, cut);
     Ok(Prepared { plan, warnings })
 }
 
@@ -308,35 +375,69 @@ mod tests {
     #[test]
     fn a_long_stitch_becomes_jumps_then_a_stitch() {
         let p = prepare(&plan(vec![S(0, 0), S(200, 0)]), &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().plan;
-        assert_eq!(p.blocks[0].steps, vec![S(0, 0), J(100, 0), J(200, 0), S(200, 0)]);
+        assert_eq!(p.blocks[0].steps, vec![S(0, 0), J(100, 0), S(200, 0)]);
+    }
+
+    #[test]
+    fn a_stitch_long_enough_to_read_as_a_trim_is_reported() {
+        let o = PrepareOptions { locks: false, ..Default::default() };
+        // 36.3 mm: two jumps and a stitch. 36.4 mm: three jumps.
+        assert!(prepare(&plan(vec![S(0, 0), S(363, 0)]), &GENERIC, &o).unwrap().warnings.is_empty());
+        let p = prepare(&plan(vec![S(0, 0), S(364, 0), S(0, 0)]), &GENERIC, &o).unwrap();
+        assert!(!p.plan.blocks[0].steps.contains(&Step::Trim));
+        assert_eq!(p.warnings, vec!["2 stitches are longer than 36.3 mm: split into 3 or more jumps, which a machine that trims after 3 jumps cuts"]);
+    }
+
+    #[test]
+    fn travel_ending_in_a_stitch_in_place_sews_its_last_part() {
+        let o = PrepareOptions { locks: false, travel_trims: false };
+        let p = prepare(&plan(vec![S(0, 0), J(300, 0), S(300, 0), S(330, 0)]), &GENERIC, &o).unwrap().plan;
+        assert_eq!(p.blocks[0].steps, vec![S(0, 0), J(100, 0), J(200, 0), S(300, 0), S(330, 0)]);
+        // A last part longer than the longest stitch stays a jump.
+        let short = MachineProfile { max_stitch: 50, ..GENERIC };
+        let p = prepare(&plan(vec![S(0, 0), J(300, 0), S(300, 0), S(330, 0)]), &short, &o).unwrap().plan;
+        assert_eq!(p.blocks[0].steps, vec![S(0, 0), J(100, 0), J(200, 0), J(300, 0), S(300, 0), S(330, 0)]);
+    }
+
+    #[test]
+    fn a_30_mm_stitch_is_two_jumps_and_a_stitch_with_no_trim() {
+        for profile in [&GENERIC, &COMMERCIAL15] {
+            for locks in [false, true] {
+                let p = prepare(&plan(vec![S(0, 0), S(300, 0)]), profile, &PrepareOptions { locks, ..Default::default() }).unwrap().plan;
+                let steps = &p.blocks[0].steps;
+                assert!(!steps.contains(&Step::Trim), "{}: {steps:?}", profile.id);
+                let i = steps.iter().position(|s| matches!(s, Step::Jump(_))).expect("the first jump");
+                // The start lock leaves the needle at 6.
+                let pieces = if locks { [J(104, 0), J(202, 0), S(300, 0)] } else { [J(100, 0), J(200, 0), S(300, 0)] };
+                assert_eq!(steps[i..i + 3], pieces, "{}: {steps:?}", profile.id);
+            }
+        }
     }
 
     #[test]
     fn travel_of_three_jump_records_is_trimmed_first() {
-        let p = prepare(
-            &plan(vec![S(0, 0), S(30, 0), J(300, 0), S(300, 0), S(330, 0)]),
-            &GENERIC,
-            &PrepareOptions { locks: false, ..Default::default() },
-        )
-        .unwrap()
-        .plan;
-        assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(30, 0), Step::Trim, J(120, 0), J(210, 0), J(300, 0), S(300, 0), S(330, 0)]);
+        let o = PrepareOptions { locks: false, ..Default::default() };
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(400, 0), S(400, 0), S(430, 0)]), &GENERIC, &o).unwrap().plan;
+        assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(30, 0), Step::Trim, J(123, 0), J(215, 0), J(308, 0), S(400, 0), S(430, 0)]);
+        // 27 mm of travel ending in a stitch is two jumps and that stitch: no trim.
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(300, 0), S(300, 0), S(330, 0)]), &GENERIC, &o).unwrap().plan;
+        assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(30, 0), J(120, 0), J(210, 0), S(300, 0), S(330, 0)]);
     }
 
     #[test]
     fn travel_is_measured_from_where_the_lock_stitches_leave_the_needle() {
-        // Before locks, 30 -> 272 is 242 units: two records. The end lock leaves the needle at 24,
-        // and 24 -> 272 is 248 units: three records, which the machine reads as a trim.
-        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(272, 0), S(272, 0), S(300, 0)]), &GENERIC, &PrepareOptions::default()).unwrap().plan;
+        // Before locks, 30 -> 390 is 360 units: two jumps and the stitch. The end lock leaves the
+        // needle at 24, and 24 -> 390 is 366 units: three jumps, which the machine reads as a trim.
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(390, 0), S(390, 0), S(420, 0)]), &GENERIC, &PrepareOptions::default()).unwrap().plan;
         let steps = &p.blocks[0].steps;
         let trim = steps.iter().position(|s| *s == Step::Trim).expect("a trim before the travel");
         assert_eq!(steps.get(trim - 1), Some(&S(24, 0)), "{steps:?}");
-        assert_eq!(steps[trim + 1..trim + 4], [J(107, 0), J(189, 0), J(272, 0)], "{steps:?}");
+        assert_eq!(steps[trim + 1..trim + 5], [J(116, 0), J(207, 0), J(299, 0), S(390, 0)], "{steps:?}");
     }
 
     #[test]
     fn travel_trims_can_be_turned_off_and_the_plans_own_trims_stay() {
-        let steps = vec![S(0, 0), S(30, 0), Step::Trim, J(120, 0), S(120, 0), S(150, 0), J(450, 0), S(450, 0), S(480, 0)];
+        let steps = vec![S(0, 0), S(30, 0), Step::Trim, J(120, 0), S(120, 0), S(150, 0), J(550, 0), S(550, 0), S(580, 0)];
         let o = PrepareOptions { locks: false, travel_trims: false };
         let p = prepare(&plan(steps.clone()), &GENERIC, &o).unwrap().plan;
         assert_eq!(p.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count(), 1, "{:?}", p.blocks[0].steps);
@@ -349,7 +450,7 @@ mod tests {
         let mut p = plan(vec![S(0, 0), S(30, 0)]);
         p.blocks.push(Block { thread: Thread { rgb: [1, 2, 3], ..Default::default() }, steps: vec![J(400, 0), S(400, 0), S(430, 0)] });
         let out = prepare(&p, &GENERIC, &PrepareOptions { locks: false, ..Default::default() }).unwrap().plan;
-        assert_eq!(out.blocks[1].steps, vec![J(123, 0), J(215, 0), J(308, 0), J(400, 0), S(400, 0), S(430, 0)]);
+        assert_eq!(out.blocks[1].steps, vec![J(123, 0), J(215, 0), J(308, 0), S(400, 0), S(430, 0)]);
     }
 
     #[test]
@@ -396,6 +497,33 @@ mod tests {
 
     proptest! {
         #[test]
+        fn a_long_stitch_is_equal_jumps_and_one_stitch(
+            x0 in -5000i32..5000, y0 in -5000i32..5000, len in 122i64..5000, t in 0.0f64..1.0, sign in any::<(bool, bool)>(),
+        ) {
+            // A point at Chebyshev distance `len` from (x0, y0), in any direction.
+            let other = (len as f64 * t).round() as i32;
+            let (mut dx, mut dy) = if t < 0.5 { (len as i32, other) } else { (other, len as i32) };
+            if sign.0 { dx = -dx; }
+            if sign.1 { dy = -dy; }
+            let (a, b) = (Pt { x: x0, y: y0 }, Pt { x: x0 + dx, y: y0 + dy });
+            let o = PrepareOptions { locks: false, ..Default::default() };
+            let out = prepare(&plan(vec![Step::Stitch(a), Step::Stitch(b)]), &GENERIC, &o).unwrap().plan;
+            let steps = &out.blocks[0].steps;
+            let max = i64::from(GENERIC.max_stitch);
+            let k = (len + max - 1) / max;
+            prop_assert_eq!(steps.len() as i64, k + 1, "{:?}", steps);
+            prop_assert_eq!(steps.first(), Some(&Step::Stitch(a)));
+            prop_assert_eq!(steps.last(), Some(&Step::Stitch(b)));
+            let mut at = a;
+            for s in &steps[1..] {
+                let (Step::Jump(p) | Step::Stitch(p)) = *s else { return Err(TestCaseError::fail(format!("{s:?}"))) };
+                prop_assert!(cheb(at, p) <= max, "{:?} is {} from {:?}", s, cheb(at, p), at);
+                at = p;
+            }
+            prop_assert!(steps[1..steps.len() - 1].iter().all(|s| matches!(s, Step::Jump(_))), "{:?}", steps);
+        }
+
+        #[test]
         fn prepared_plans_respect_the_machine(
             blocks in proptest::collection::vec(proptest::collection::vec(step(), 0..40), 0..=3),
             locks in any::<bool>(),
@@ -412,18 +540,30 @@ mod tests {
             let mut stitched = false;
             for b in &out.blocks {
                 let mut cut = true;
-                // Jump records in the current run of jumps, and whether a cut precedes the run.
+                // Jump records in the current run of jumps, whether a cut precedes the run, and the
+                // smallest and largest move of the run on each axis.
                 let mut run = 0i64;
                 let mut announced = true;
+                let mut moves: Option<[i64; 4]> = None;
                 for s in &b.steps {
+                    // A run that needs a trim and has none must be a split stitch: equal pieces
+                    // (to within a unit per axis) ending in this stitch.
+                    let unannounced = run >= n && !announced;
                     match *s {
                         Step::Stitch(p) => {
                             if let Some(q) = pos {
                                 prop_assert!(cheb(q, p) <= i64::from(GENERIC.max_stitch), "stitch {s:?} is {} from {q:?}", cheb(q, p));
+                                if unannounced {
+                                    let (dx, dy) = (i64::from(p.x) - i64::from(q.x), i64::from(p.y) - i64::from(q.y));
+                                    let [x0, x1, y0, y1] = moves.unwrap_or([dx, dx, dy, dy]);
+                                    let equal = x0.min(dx) + 1 >= x1.max(dx) && y0.min(dy) + 1 >= y1.max(dy);
+                                    prop_assert!(equal, "{} jump records without a trim: {:?}", run, b.steps);
+                                }
                             }
                             pos = Some(p);
                             stitched = true;
                             run = 0;
+                            moves = None;
                             cut = false;
                         }
                         Step::Jump(p) => {
@@ -433,21 +573,24 @@ mod tests {
                             // Records the writer needs: ceil(larger axis distance / max_jump), at least one.
                             let r = pos.map_or(1, |q| ((cheb(q, p) + i64::from(max) - 1) / i64::from(max)).max(1));
                             prop_assert_eq!(r, 1, "jump {:?} from {:?} needs {} records", s, pos, r);
+                            if let Some(q) = pos {
+                                let (dx, dy) = (i64::from(p.x) - i64::from(q.x), i64::from(p.y) - i64::from(q.y));
+                                let [x0, x1, y0, y1] = moves.unwrap_or([dx, dx, dy, dy]);
+                                moves = Some([x0.min(dx), x1.max(dx), y0.min(dy), y1.max(dy)]);
+                            }
                             run += r;
-                            prop_assert!(run < n || announced, "{} jump records without a trim: {:?}", run, b.steps);
                             pos = Some(p);
                             cut = false;
                         }
-                        Step::Trim => {
+                        Step::Trim | Step::Stop => {
+                            prop_assert!(!unannounced, "{} jump records without a trim: {:?}", run, b.steps);
                             run = 0;
-                            cut = true;
-                        }
-                        Step::Stop => {
-                            run = 0;
-                            cut = false;
+                            moves = None;
+                            cut = matches!(s, Step::Trim);
                         }
                     }
                 }
+                prop_assert!(run < n || announced, "{} jump records without a trim: {:?}", run, b.steps);
             }
         }
     }

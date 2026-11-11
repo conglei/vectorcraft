@@ -319,6 +319,27 @@ mod tests {
     }
 
     #[test]
+    fn equal_jumps_ending_in_an_equal_stitch_are_a_long_stitch_not_a_trim() {
+        let st = |x: i32, y: i32| record::encode(x, y, STITCH).unwrap();
+        let jp = |x: i32, y: i32| record::encode(x, y, JUMP).unwrap();
+        let trims = |body: &[[u8; 3]]| {
+            let plan = read(&with_body(body), &ReadOptions::default()).unwrap().plan;
+            plan.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count()
+        };
+        // A 90 mm stitch as the writer splits it: seven jumps and a stitch, each about 113 units.
+        let long = [st(0, 0), jp(113, 0), jp(112, 0), jp(113, 0), jp(112, 0), jp(113, 0), jp(112, 0), jp(113, 0), st(112, -1), END];
+        assert_eq!(trims(&long), 0);
+        let plan = read(&with_body(&long), &ReadOptions::default()).unwrap().plan;
+        assert_eq!(plan.blocks[0].steps.last(), Some(&Step::Stitch(Pt { x: 900, y: 1 })));
+        // Still trims: the trim encoding (small moves that cancel), travel ending in a stitch in
+        // place, travel ending in a shorter stitch, and equal moves too small to be a split stitch.
+        assert_eq!(trims(&[st(0, 0), jp(2, 0), jp(-4, 0), jp(2, 0), jp(100, 0), jp(100, 0), st(100, 0), END]), 1);
+        assert_eq!(trims(&[st(0, 0), jp(100, 0), jp(100, 0), jp(100, 0), st(0, 0), END]), 1);
+        assert_eq!(trims(&[st(0, 0), jp(100, 0), jp(100, 0), jp(100, 0), st(30, 0), END]), 1);
+        assert_eq!(trims(&[st(0, 0), jp(1, 0), jp(1, 0), jp(1, 0), st(1, 0), END]), 1);
+    }
+
+    #[test]
     fn any_third_byte_with_the_end_bits_ends_the_file() {
         // 0xFB carries every bit of 0xF3 and one more.
         let b = with_body(&[record::encode(0, 0, STITCH).unwrap(), [0, 0, 0xFB], record::encode(1, 0, STITCH).unwrap()]);
