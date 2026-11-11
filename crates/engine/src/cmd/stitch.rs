@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, Node};
 use vectorcraft_geom::Affine;
-use vectorcraft_stitch::{THREAD_WIDTH_MM, calibration, stats};
+use vectorcraft_stitch::{PT_PER_MM, THREAD_WIDTH_MM, calibration, stats};
 
 use super::edit::roots_of;
 use super::fileio::stitchfile;
@@ -15,8 +15,6 @@ use super::{CommandSpec, Result, Session, bad, cmd, has_doc, number_or, switch_o
 
 const C: &str = "stitch.info";
 const CALIBRATION: &str = "stitch.calibration";
-/// Document points per millimetre.
-const PT_PER_MM: f64 = 72.0 / 25.4;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -25,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Info",
             [],
             None,
-            "{format?: dst (default) | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | generic (no needle or field limits), mode?: run (default; running stitch along each stroked path) | manual (one needle point per anchor), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP 12.7, its default too: longer stitches are split by jumps), locks?: true (lock stitches at the start and end of each run), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch, returnToStart?: true, name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone)} what document.export {format: dst|exp} with the same options would write → {stitches, jumps, trims, colorChanges, widthMm, heightMm, threads: [{rgb: \"#rrggbb\", stitches, lengthMm}] (one per thread colour, in sewing order), warnings}; a document with no stroked paths is an error",
+            "{format?: dst (default) | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | generic (no needle or field limits), mode?: run (default; running stitch along each stroked path) | manual (one needle point per anchor; the default for a document opened from a stitch file, whose needle points then export unchanged), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP 12.7, its default too: longer stitches are split by jumps), locks?: true (lock stitches at the start and end of each run; false by default for a document opened from a stitch file), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch, returnToStart?: true, name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone)} what document.export {format: dst|exp} with the same options would write → {stitches, jumps, trims, colorChanges, records (the records in the file, for DST its header's stitch count: travel, trims and the end record included), widthMm, heightMm, threads: [{rgb: \"#rrggbb\", stitches, lengthMm}] (one per thread colour, in sewing order), warnings}; a document with no stroked paths is an error",
             has_doc,
             info
         ),
@@ -34,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Calibration Design",
             [],
             None,
-            "{x?: 0, y?: 0 (the design's top-left corner, document units)} adds a 100 mm test piece for a first stitch-out, as one group of paths stroked in three thread colours: a square, scale ticks along its top edge, an F that shows direction and mirroring, and a near and a far pair of squares that show colour registration; it stitches off-centre from the square's top-left corner; one undo step → {id} of the group",
+            "{x?: 0, y?: 0 (the design's top-left corner, document units)} adds a 100 mm test piece for a first stitch-out, as one group of paths stroked in three thread colours: a square, scale ticks along its top edge, an F that shows direction and mirroring, and a near and a far pair of squares, each pair trimmed apart, that show whether trims happen where the file asks; it stitches off-centre from the square's top-left corner; one undo step → {id} of the group",
             has_doc,
             add_calibration
         ),
@@ -80,7 +78,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let (plan, warnings) = stitchfile::plan(C, &st.doc, p, format, selection)?;
+    let (plan, out) = stitchfile::written(C, &st.doc, p, format, selection)?;
     let st = stats(&plan);
     let threads: Vec<Value> = st
         .threads
@@ -95,9 +93,10 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         "jumps": st.jumps,
         "trims": st.trims,
         "colorChanges": st.color_changes,
+        "records": out.records,
         "widthMm": st.width_mm,
         "heightMm": st.height_mm,
         "threads": threads,
-        "warnings": warnings,
+        "warnings": out.warnings,
     }))
 }

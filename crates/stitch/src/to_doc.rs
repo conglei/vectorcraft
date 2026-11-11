@@ -6,15 +6,21 @@ use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, Document, LayerColor, Node, Unit};
 use vectorcraft_geom::{PathData, Point, Rect, SubPath};
 
-use crate::{Pt, Step, StitchPlan};
+use crate::{PT_PER_MM, Pt, Step, StitchPlan};
 
 /// The width a thread is drawn at, in millimetres.
 pub const THREAD_WIDTH_MM: f64 = 0.4;
 
-/// Document points per millimetre.
-const PT_PER_MM: f64 = 72.0 / 25.4;
 /// Room left around the stitches on the artboard, in millimetres.
 const MARGIN_MM: f64 = 10.0;
+/// The object data key that marks the layer [`to_document`] makes.
+const MARK: (&str, &str) = ("stitchFile", "1");
+
+/// Whether `doc` was made from a stitch plan by [`to_document`] (a layer carries its mark), so
+/// its paths are needle points to export unchanged.
+pub fn is_stitch_document(doc: &Document) -> bool {
+    doc.layers.iter().any(|l| l.extras().attrs.as_deref().is_some_and(|a| a.data.iter().any(|(k, v)| k == MARK.0 && v == MARK.1)))
+}
 
 fn point(p: Pt) -> Point {
     let (x, y) = p.to_mm();
@@ -24,7 +30,8 @@ fn point(p: Pt) -> Point {
 /// `plan` as a document in millimetres: one layer, `Stitches`, holding a group per block
 /// (`Colour 1`, `Colour 2`, …) of open paths, one per run of stitches between trims, jumps and
 /// stops, whose corner anchors are the needle points, stroked in the thread colour. Jumps are not
-/// drawn. The one artboard is the stitches' extents grown by 10 mm on each side.
+/// drawn. The one artboard is the stitches' extents grown by 10 mm on each side. The layer carries
+/// the object data `stitchFile=1`, which [`is_stitch_document`] looks for.
 pub fn to_document(plan: &StitchPlan) -> Document {
     let mut doc = Document::new(1.0, 1.0);
     doc.units = Unit::Millimeters;
@@ -59,6 +66,7 @@ pub fn to_document(plan: &StitchPlan) -> Document {
         groups.push(Arc::new(group));
     }
     let mut layer = Node::layer(doc.alloc_id(), "Stitches", LayerColor::Preset(0));
+    layer.edit_attrs(|a| a.data.push((MARK.0.to_string(), MARK.1.to_string())));
     if let Some(children) = layer.children_mut() {
         *children = groups;
     }
@@ -135,16 +143,31 @@ mod tests {
         assert!(!path.subpaths[0].closed);
         assert_eq!(path.subpaths[0].anchors.len(), 3);
         let stroke = runs[0].appearance.stroke().unwrap();
-        assert!((stroke.width - THREAD_WIDTH_MM * 72.0 / 25.4).abs() < 1e-9);
+        assert!((stroke.width - THREAD_WIDTH_MM * PT_PER_MM).abs() < 1e-9);
         assert_eq!(stroke.paint.color().unwrap().to_rgba8(1.0), [200, 10, 20, 255]);
         assert!(runs[0].appearance.fill_paint().is_none());
         // Extents −10..32 mm by 0..31.5 mm, grown by 10 mm on each side.
-        let pt = 72.0 / 25.4;
+        let pt = PT_PER_MM;
         let r = doc.artboards[0].rect;
         assert_eq!(doc.artboards.len(), 1);
         for (got, want) in [(r.x0, -20.0), (r.y0, -10.0), (r.x1, 42.0), (r.y1, 41.5)] {
             assert!((got - want * pt).abs() < 1e-9, "{got} != {want} mm");
         }
+    }
+
+    #[test]
+    fn a_document_from_a_plan_is_marked_as_one() {
+        let doc = to_document(&sample());
+        assert!(is_stitch_document(&doc));
+        let data = doc.layers[0].extras().attrs.as_deref().map(|a| a.data.clone()).unwrap_or_default();
+        assert_eq!(data, vec![("stitchFile".to_string(), "1".to_string())]);
+        assert!(!is_stitch_document(&vectorcraft_doc::Document::new(100.0, 100.0)));
+        // Art drawn by hand is not: the mark is on the layer, not the paths.
+        let mut other = to_document(&sample());
+        let mut layer = (*other.layers[0]).clone();
+        layer.edit_attrs(|a| a.data.clear());
+        other.layers = vec![Arc::new(layer)];
+        assert!(!is_stitch_document(&other));
     }
 
     #[test]

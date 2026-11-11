@@ -3,6 +3,7 @@
 
 use serde_json::{Value, json};
 
+use vectorcraft_doc::NodeId;
 use vectorcraft_stitch::PT_PER_MM;
 
 use super::*;
@@ -71,6 +72,72 @@ fn exp_exports_by_format_and_opens_by_extension() {
     assert!(!b64(&r).starts_with(b"LA:"), "not a DST file");
 }
 
+/// The `ST` value of a DST header.
+fn header_st(bytes: &[u8]) -> u64 {
+    std::str::from_utf8(&bytes[23..30]).unwrap().trim().parse().unwrap()
+}
+
+/// The records of an EXP file: four bytes for a control record, two for a stitch.
+fn exp_records(bytes: &[u8]) -> u64 {
+    let (mut n, mut i) = (0, 0);
+    while i < bytes.len() {
+        i += if bytes[i] == 0x80 { 4 } else { 2 };
+        n += 1;
+    }
+    n
+}
+
+/// The needle points of each block of `plan`, in order.
+fn needle_points(plan: &vectorcraft_stitch::StitchPlan) -> Vec<Vec<vectorcraft_stitch::Pt>> {
+    use vectorcraft_stitch::Step;
+    plan.blocks.iter().map(|b| b.steps.iter().filter_map(|s| if let Step::Stitch(p) = s { Some(*p) } else { None }).collect()).collect()
+}
+
+/// The stitch plan in a DST or EXP file.
+fn read_plan(format: &str, bytes: &[u8]) -> vectorcraft_stitch::StitchPlan {
+    let o = Default::default();
+    match format {
+        "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
+        _ => vectorcraft_embroidery::exp::read(bytes, &o),
+    }
+    .unwrap()
+    .plan
+}
+
+#[test]
+fn an_opened_stitch_file_re_exports_its_needle_points_unchanged() {
+    for format in ["dst", "exp"] {
+        let mut s = session();
+        s.execute("stitch.calibration", &json!({})).unwrap();
+        let first = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
+        let data = vectorcraft_format::base64_encode(&first);
+        s.execute("document.open", &json!({"name": format!("cal.{format}"), "dataBase64": data})).unwrap();
+        // Default options: the file's own needle points, no second set of lock stitches.
+        let info = s.execute("stitch.info", &json!({"format": format})).unwrap();
+        let again = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
+        let (a, b) = (needle_points(&read_plan(format, &first)), needle_points(&read_plan(format, &again)));
+        assert_eq!(a.len(), 3, "{format}");
+        assert_eq!(a, b, "{format}: the needle points changed");
+        assert_eq!(info["stitches"].as_u64(), Some(a.iter().map(Vec::len).sum::<usize>() as u64), "{format}: {info}");
+        // Options given explicitly still apply.
+        let changed = b64(&s.execute("document.export", &json!({"format": format, "mode": "run", "locks": true})).unwrap());
+        assert_ne!(needle_points(&read_plan(format, &changed)), a, "{format}");
+    }
+}
+
+#[test]
+fn stitch_info_counts_the_records_the_file_holds() {
+    let mut s = session();
+    s.execute("stitch.calibration", &json!({})).unwrap();
+    let info = s.execute("stitch.info", &json!({})).unwrap();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst"})).unwrap());
+    assert_eq!(info["records"].as_u64(), Some(header_st(&bytes)), "{info}");
+    assert_eq!(info["records"].as_u64(), Some(((bytes.len() - 512) / 3) as u64), "{info}");
+    let info = s.execute("stitch.info", &json!({"format": "exp"})).unwrap();
+    let bytes = b64(&s.execute("document.export", &json!({"format": "exp"})).unwrap());
+    assert_eq!(info["records"].as_u64(), Some(exp_records(&bytes)), "{info}");
+}
+
 #[test]
 fn stitch_info_reports_counts_and_size() {
     let mut s = session();
@@ -99,8 +166,11 @@ fn stitch_info_takes_the_selection() {
     s.execute("select.set", &json!({"ids": [short]})).unwrap();
     let selected = s.execute("stitch.info", &json!({"locks": false, "selectedOnly": true})).unwrap();
     assert_eq!(selected["stitches"], 5, "{selected}");
-    // The export writes the same selection.
-    s.execute("document.export", &json!({"format": "dst", "locks": false, "selectedOnly": true})).unwrap();
+    // The export writes the same selection: its file holds those stitches and records.
+    let bytes = b64(&s.execute("document.export", &json!({"format": "dst", "locks": false, "selectedOnly": true})).unwrap());
+    assert_eq!(header_st(&bytes), selected["records"].as_u64().unwrap(), "{selected}");
+    let written = vectorcraft_embroidery::dst::read(&bytes, &Default::default()).unwrap().plan;
+    assert_eq!(needle_points(&written).iter().map(Vec::len).sum::<usize>(), 5);
     s.execute("select.none", &json!({})).unwrap();
     let e = s.execute("stitch.info", &json!({"selectedOnly": true})).unwrap_err().to_string();
     assert!(e.contains("select"), "{e}");
@@ -195,8 +265,19 @@ fn the_calibration_design_stitches_as_documented() {
     let mut s = session();
     let before = s.execute("stitch.info", &json!({})).unwrap_err().to_string();
     assert!(!before.is_empty());
-    let r = s.execute("stitch.calibration", &json!({})).unwrap();
-    assert!(r["id"].as_u64().is_some(), "{r}");
+    let r = s.execute("stitch.calibration", &json!({"x": 10, "y": 20})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let group = s.doc().unwrap().doc.node(NodeId(id)).unwrap().clone();
+    assert_eq!(group.name.as_deref(), Some("Stitch Calibration"));
+    assert_eq!(
+        group.children().unwrap().iter().map(|c| c.name.clone().unwrap()).collect::<Vec<_>>(),
+        ["square", "ticks", "F", "near pair", "far pair"]
+    );
+    // The design's top-left corner is at (x, y), and it is 100 mm square.
+    let b = group.geometric_bounds().unwrap();
+    for (got, want) in [(b.x0, 10.0), (b.y0, 20.0), (b.x1, 10.0 + 100.0 * PT_PER_MM), (b.y1, 20.0 + 100.0 * PT_PER_MM)] {
+        assert!((got - want).abs() < 1e-9, "{b:?}");
+    }
     let info = s.execute("stitch.info", &json!({"locks": false})).unwrap();
     assert_eq!(info["colorChanges"], 2, "{info}");
     assert_eq!(info["widthMm"].as_f64(), Some(100.0), "{info}");

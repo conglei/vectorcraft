@@ -4,9 +4,9 @@
 
 use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
-use vectorcraft_embroidery::{ReadOptions, Start, WriteOptions, dst, exp};
+use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dst, exp};
 use vectorcraft_stitch::{
-    FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, UNITS_PER_MM, from_document, prepare, profile, to_document,
+    FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, UNITS_PER_MM, from_document, is_stitch_document, prepare, profile, to_document,
 };
 
 use super::super::{Result, bad, number_or, switch_or, text_param};
@@ -29,7 +29,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "mode",
         ty: "string",
         default: "\"run\"",
-        description: "run (running stitch along each stroked path) or manual (one needle point per anchor)",
+        description: "run (running stitch along each stroked path) or manual (one needle point per anchor); a document opened from a stitch file defaults to manual, so its needle points export unchanged",
     },
     FormatOption { name: "stitchLength", ty: "number", default: "2.5", description: "running stitch length in mm, 0.5–12" },
     FormatOption {
@@ -44,7 +44,12 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         default: "12.1",
         description: "the longest stitch in mm, 1–12.1 (12.7 for EXP, its default too); longer ones are split by jumps",
     },
-    FormatOption { name: "locks", ty: "boolean", default: "true", description: "lock stitches at the start and end of each run" },
+    FormatOption {
+        name: "locks",
+        ty: "boolean",
+        default: "true",
+        description: "lock stitches at the start and end of each run; a document opened from a stitch file defaults to false (it has its own)",
+    },
     FormatOption {
         name: "jumpsPerTrim",
         ty: "integer",
@@ -90,7 +95,7 @@ fn length(cmd: &str, p: &Value, key: &str, default: f64, lo: f64, hi: f64) -> Re
     Ok(v)
 }
 
-/// A length in mm in plan units. `mm` is finite and at most 12, so it fits.
+/// A length in mm in plan units. `mm` is finite and at most 12.7, so it fits.
 fn units(mm: f64) -> i32 {
     (mm * UNITS_PER_MM).round() as i32
 }
@@ -116,12 +121,14 @@ fn jumps_per_trim(cmd: &str, p: &Value, key: &str) -> Result<u8> {
     }
 }
 
-/// The stitch options in `p` for `format` (`dst` or `exp`).
-fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
+/// The stitch options in `p` for `format` (`dst` or `exp`). `opened`: the document was opened from
+/// a stitch file, so `mode` defaults to `manual` and `locks` to off, and its needle points export
+/// unchanged; options given explicitly win.
+fn options(cmd: &str, p: &Value, format: &str, opened: bool) -> Result<Options> {
     let limit = max_move(cmd, format)?;
     let max_mm = f64::from(limit) / UNITS_PER_MM;
     let machine = one_of(cmd, p, "machine", "commercial15", &["generic", "commercial15"])?;
-    let mode = match one_of(cmd, p, "mode", "run", &["run", "manual"])? {
+    let mode = match one_of(cmd, p, "mode", if opened { "manual" } else { "run" }, &["run", "manual"])? {
         "manual" => Mode::Manual,
         _ => Mode::Run,
     };
@@ -143,7 +150,7 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     Ok(Options {
         from: FromDocOptions { mode, stitch_length: units(stitch_length), min_stitch: units(min_stitch), only: None },
         profile,
-        prepare: PrepareOptions { locks: switch_or(p, "locks", true, cmd)? },
+        prepare: PrepareOptions { locks: switch_or(p, "locks", !opened, cmd)? },
         write: WriteOptions {
             start,
             return_to_start: switch_or(p, "returnToStart", true, cmd)?,
@@ -166,25 +173,27 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
     Ok((prepared.plan, warnings))
 }
 
-/// The stitch plan an export of `doc` as `format` (`dst` or `exp`) with options `p` writes, and its
-/// warnings: the stroked paths of `doc` (only `selection` and what it holds, when given) as
-/// stitches, prepared for the machine. Errors name `cmd`.
-pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
-    planned(cmd, doc, &options(cmd, p, format)?, selection)
+/// What an export of `doc` as `format` (`dst` or `exp`) with options `p` writes: the stitch plan
+/// (the stroked paths of `doc`, only `selection` and what it holds when given, prepared for the
+/// machine), the file, and the warnings of both. Errors name `cmd`.
+pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
+    let o = options(cmd, p, format, is_stitch_document(doc))?;
+    let (plan, mut warnings) = planned(cmd, doc, &o, selection)?;
+    let mut out = match format {
+        "exp" => exp::write(&plan, &o.write),
+        _ => dst::write(&plan, &o.write),
+    }
+    .map_err(|e| bad(cmd, e))?;
+    warnings.append(&mut out.warnings);
+    out.warnings = warnings;
+    Ok((plan, out))
 }
 
 /// `doc` as a DST or EXP file. `selection`: only those objects; an export's `selectedOnly` has
 /// already left the rest out of `doc`, so it passes `None`.
 pub(super) fn encode(doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<Encoded> {
-    let o = options(C, p, format)?;
-    let (plan, mut warnings) = planned(C, doc, &o, selection)?;
-    let out = match format {
-        "exp" => exp::write(&plan, &o.write),
-        _ => dst::write(&plan, &o.write),
-    }
-    .map_err(|e| bad(C, e))?;
-    warnings.extend(out.warnings);
-    Ok(Encoded { warnings, ..Encoded::one(out.bytes) })
+    let (_, out) = written(C, doc, p, format, selection)?;
+    Ok(Encoded { warnings: out.warnings, ..Encoded::one(out.bytes) })
 }
 
 /// The stitch read options (`document.open`'s `stitch` object): `{jumpsPerTrim?: 2–8}`.
