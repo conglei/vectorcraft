@@ -2835,6 +2835,11 @@ fn survive_stitch(what: &str, bytes: &[u8], format: &str, jumps_per_trim: u8) ->
         no_panic(s.execute("document.open", &p)).ok()?;
         let _ = no_panic(s.execute("stitch.info", &json!({ "format": format })));
         let _ = no_panic(s.execute("stitch.info", &json!({ "format": format, "machine": "generic", "mode": "manual", "locks": false })));
+        // The preview of whatever opened, at the smallest scale so a hostile file stays cheap.
+        let _ = no_panic(
+            s.execute("stitch.preview", &json!({ "format": format, "scale": 0.5, "showJumps": true, "showNeedles": true, "showFunctions": true })),
+        );
+        let _ = no_panic(s.execute("stitch.preview", &json!({ "format": format, "scale": 0.5, "view": "density" })));
         Some((*s.doc().ok()?.doc).clone())
     })
 }

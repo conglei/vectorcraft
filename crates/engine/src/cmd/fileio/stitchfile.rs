@@ -237,6 +237,13 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
     Ok((plan, out))
 }
 
+/// The stitch plan an export of `doc` as `format` with options `p` writes, and its warnings,
+/// without writing the file (the writer's own warnings are left out). As [`written`] otherwise.
+pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
+    let o = options(cmd, p, format)?;
+    planned(cmd, doc, &o, selection)
+}
+
 /// `doc` as a DST or EXP file. `selection`: only those objects; an export's `selectedOnly` has
 /// already left the rest out of `doc`, so it passes `None`.
 pub(super) fn encode(doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<Encoded> {
