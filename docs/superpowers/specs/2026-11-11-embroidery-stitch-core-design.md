@@ -87,13 +87,15 @@ in this order:
    except the last stitch of a run.
 2. **Long stitches.** A stitch longer than `max_stitch` becomes jumps to within range and then a
    stitch, so the needle never comes down at a point the design did not ask for.
-3. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
-   sees N jump records in a row. A travel that needs N or more jump records therefore gets an
-   explicit `Trim` before it, so the file says what the machine will do.
-4. **Lock stitches** (option `locks`, on by default). A run is the stitches between two of: plan
+3. **Lock stitches** (option `locks`, on by default). A run is the stitches between two of: plan
    start, trim, colour change, plan end. At the start of each run of two or more stitches, three
    stitches of 0.6 mm back and forth along the run's first segment; at its end, the same along its
    last segment. The length and count are estimates to tune at the stitch-out.
+4. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
+   sees N jump records in a row. A travel that needs N or more jump records therefore gets an
+   explicit `Trim` before it, so the file says what the machine will do. Travel is measured from
+   where the needle really is, after the lock stitches. Travel at the start of a block gets no
+   `Trim`: the colour change has already cut the thread.
 5. **Long jumps.** A jump longer than `max_jump` is split into equal parts.
 6. **Checks, as warnings.** More distinct threads than `needles`; extents larger than `field_mm`;
    no stitches in a block.
@@ -106,7 +108,10 @@ thread: colour, stitch count and stitched length in mm. Thread consumption and r
 Until stitch objects exist (E4), stitches come from a document by one fixed rule.
 
 - The walk covers visible art bottom to top, through layers and groups. With `selectedOnly`, only
-  the selection.
+  the selection. Template layers and layers set not to print are skipped, as they do not print.
+- Clipping paths (the first object of a clip group or a clipping layer, and paths marked as a
+  clip) are not stitched. The art they clip is stitched in full, outside what the canvas shows,
+  with one warning: "clipped art was stitched in full: the clip was ignored".
 - A path or compound path **with a stroke** is stitched along its outline. The thread colour is the
   stroke's solid colour. A gradient or pattern stroke is stitched in black, with a warning.
 - **Mode `run`** (default): the path is flattened (tolerance 0.05 mm) and stepped at `stitchLength`
@@ -133,6 +138,9 @@ Decided during implementation:
   counts as a filled object without a stroke).
 - **Art too far from the origin is an error.** A point that does not fit the plan's `i32` units of
   0.1 mm stops the plan with an error rather than being clamped.
+- **Flattened curves are bounded.** A subpath whose flattened points, or the plan's running total
+  with them, pass the 2,000,000-step limit stops with the step-limit error before more points
+  are made.
 
 ## A document from a plan
 
@@ -143,9 +151,14 @@ Opening a stitch file gives a new document in millimetres.
   stroked 0.4 mm in the thread colour.
 - Jumps are not drawn.
 - The artboard is the design's extents plus a 10 mm margin.
+- The layer carries the object data `stitchFile=1` (`is_stitch_document` looks for it), which
+  survives saving.
 
-Exporting that document with mode `manual` reproduces the needle points. Trims and lock stitches
-may differ; export with `locks: false` to keep the file's own.
+When the document carries that mark, `document.export` to DST or EXP and `stitch.info` default to
+`mode: manual` and `locks: false`, so exporting an opened file with default options reproduces its
+needle points. Options given explicitly win: `{mode: run, locks: true}` re-stitches it. Trims may
+differ. Small-stitch removal still applies: a stitch closer than `minStitch` (0.3 mm by default)
+to the one before is dropped; pass `minStitch: 0` to keep every needle point.
 
 ## DST
 
@@ -161,10 +174,14 @@ written by hand from the tables in this section.
 | `LA:` | 16 | The design name: ASCII letters, digits, space, `-` and `_` only, truncated, space-padded on the right |
 | `ST:` | 7 | Number of 3-byte records in the file, including the end record; right-aligned, space-padded |
 | `CO:` | 3 | Number of colour-change records |
-| `+X:` `-X:` `+Y:` `-Y:` | 5 each | Extents from the start point in 0.1 mm, file orientation (y up) |
+| `+X:` `-X:` `+Y:` `-Y:` | 5 each | Extents from the start point in 0.1 mm, file orientation (y up), over stitches and travel; the small jumps of a trim are left out |
 | `AX:` `AY:` | 6 each | End point relative to the start: a sign, then a 5-wide number |
 | `MX:` `MY:` | 6 each | `+    0` |
 | `PD:` | 6 | `******` |
+
+A count too large for its field shows the field's largest value, with a warning ("the stitch
+count is too large for the file header", "the colour change count is too large for the file
+header").
 
 No extended fields (`AU:`, `CP:`, `TC:`) are written: reports say some machines reject them. The
 reader accepts them, and takes thread colours from `TC:` lines when present.
@@ -192,14 +209,16 @@ reader accepts them, and takes thread colours from `TC:` lines when present.
 **Start and end.** Option `start`: `center` (default) puts the file's origin at the centre of the
 stitch extents, so the file opens with jumps from the centre to the first stitch; `firstStitch`
 puts the origin at the first needle point. Option `returnToStart` (default on) ends with jumps back
-to the origin, so `AX` and `AY` are zero.
+to the origin, so `AX` and `AY` are zero. When stitches were written since the last trim or colour
+change, a trim comes first, so the travel back does not drag the thread across the work. EXP does
+the same.
 
 **Reader.** Requires 512 bytes of header and reads the name from `LA:`; counts and extents in the
 header are not trusted. Decoding stops at the end record or at a short read. A run of
 `jumpsPerTrim` (default 3) or more jumps becomes a trim followed by one jump. A colour change with
 a move applies the move. Sequin records are skipped, with a warning. Threads with no colour in the
-file get colours from a small original built-in list, in order. Input over 64 MB or 2,000,000
-records is an error.
+file get colours from a small original built-in list, in order. Input over 64 MB, 2,000,000
+records or 10,000 blocks ("the file has too many colour changes") is an error.
 
 `is_dst(bytes)`: the first three bytes are `LA:`. Otherwise the `.dst` extension decides.
 
@@ -219,8 +238,9 @@ files are a later task. A jump runs all the way to the target and the stitch aft
 
 **Reader**, lenient because the two reference implementations disagree: `80 02 dx dy` is a stitch;
 `80 04` and `80 06` are jumps; `80 80 07 00`, the trim the writer emits, is a trim (any `80 80`
-record reads as one); any other control byte with bit 0 set is a stop; `80 10` ends the file; a single trailing `1A` is ignored; an unknown control byte ends reading with a warning. The
-same size limits as DST apply.
+record reads as one); any other control byte with bit 0 set is a stop; `80 10` ends the file; a
+single trailing `1A` is ignored; an unknown control byte ends reading with a warning. The same
+size and count limits as DST apply.
 
 EXP has no signature, so only the `.exp` extension selects it.
 
@@ -235,9 +255,12 @@ Everything is reachable from the CLI, MCP and both apps, because it goes through
   or `generic`), `mode` (`run` | `manual`), `stitchLength`, `minStitch`, `maxStitch`, `locks`,
   `jumpsPerTrim`, `trimBeforeColorChange`, `start`, `returnToStart`, `name`, `selectedOnly`. An
   unknown key is refused. The reply carries the warnings; `stitch.info` gives the statistics.
+  For a document opened from a stitch file, `mode` defaults to `manual` and `locks` to `false`
+  (see [A document from a plan](#a-document-from-a-plan)).
 - **`document.open`** of a `.dst` or `.exp` file, with an optional `stitch: {jumpsPerTrim}` object.
 - **`stitch.info`** (query): the statistics and warnings an export with the same options would
-  give, without writing a file.
+  give, without saving a file, and `records`: the number of records the file would hold (for DST
+  the header's `ST` value), counted by the same writer the export uses.
 - **`stitch.calibration`**: adds the calibration design to the document as ordinary stroked paths,
   generated in code. See [Stitch-out acceptance](#stitch-out-acceptance).
 
@@ -263,8 +286,9 @@ sibling app's UI spec; until then the options are command parameters.
   reaches `jumps_per_trim` without a trim before it.
 - **Stitch crate.** Running stitch hits corners and the path end; rounding does not drift over a
   long path; lock stitches appear where the rules say; warnings fire for needle count and field.
-- **Engine.** Export, open and `stitch.info` through commands; open-then-export in `manual` mode
-  reproduces the needle points; the command sweep covers the new commands.
+- **Engine.** Export, open and `stitch.info` through commands; opening the calibration file and
+  exporting it with default options reproduces its needle points, through DST and EXP; the
+  command sweep covers the new commands.
 - **Cross-check, by hand, not in CI.** Our files read with pyembroidery (installed from PyPI, used
   as a black box) give the same stitches, and its files read with ours. Recorded in
   `docs/development.md`. CI workflows are not changed.
@@ -276,13 +300,16 @@ sibling app's UI spec; until then the options are command parameters.
 - a 100 mm square with 10 mm ticks: size and scale;
 - a letter F in one corner: whether the design is mirrored or upside down;
 - three colours: how the machine handles colour changes and needle assignment;
-- two shapes 30 mm apart and two 5 mm apart: whether trims happen where the file asks;
+- two squares 30 mm apart and two 5 mm apart, in one colour and trimmed apart: whether trims
+  happen where the file asks (both pairs ask for a trim, so the design does not show a short
+  travel without one);
 - a design whose first stitch is off-centre: where the machine places the start.
 
 The operator records: whether the file loads; the stitch count, colour count and size the panel
-shows against `stitch.info`; measured size; orientation; where trims and stops happened; whether
-lock stitches hold. The spec's unverified defaults are then corrected, and the results go into
-`docs/embroidery-parity.md`.
+shows against `stitch.info` (`records` for the count, which includes travel, trims and the end
+record; `widthMm` and `heightMm` for the size); measured size; orientation; where trims and stops
+happened; whether lock stitches hold. The spec's unverified defaults are then corrected, and the
+results go into `docs/embroidery-parity.md`.
 
 The work is done when the automated tests pass under `cargo xtask ci` and the calibration design
 stitches correctly from both a DST file and, if the machine accepts it, an EXP file.

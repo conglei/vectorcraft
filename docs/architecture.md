@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (the embroidery crates `stitch` and `embroidery`) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (the embroidery crates `stitch` and `embroidery`; the library crate count corrected to 24) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft is built today. The design rationale lives in the local, gitignored `plan/architecture.md`;
 this file describes what is committed. Day-to-day rules (clean-room, never crash, quality gates) are in
@@ -8,7 +8,7 @@ this file describes what is committed. Day-to-day rules (clean-room, never crash
 
 ## Shape
 
-A Cargo workspace of 23 library crates under `crates/`, three apps under `apps/` and `xtask`, ~354k lines of Rust,
+A Cargo workspace of 24 library crates under `crates/`, three apps under `apps/` and `xtask`, ~354k lines of Rust,
 pure Rust (no handwritten JS/TS). The same engine runs the desktop app, the browser build (WASM), the headless
 CLI and the MCP server.
 
@@ -93,6 +93,7 @@ saves copies in the background. See [development.md](development.md#robustness-v
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Library crate count corrected to 24, the crates in the layer table |
 | 2026-11-11 | minor | Added the embroidery crates `stitch` (L2) and `embroidery` (L3) |
 | 2026-10-13 | minor | Pinned PngSuite HTTPS files verified by SHA-256 before publication; bounded downloads replace archive extraction (#1729). Scores and hours unchanged. |
 | 2026-10-13 | minor | Bounded synthetic control input (#1709): counts and queued events validated before mutation; control-channel bursts yield between frames. Scores and hours unchanged. |

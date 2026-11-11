@@ -1,6 +1,6 @@
 # Development
 
-> **Last updated:** 2026-11-11 · **Change:** Fuzzing covers DST and EXP stitch files; checking stitch files against another reader by hand.
+> **Last updated:** 2026-11-11 · **Change:** Fuzzing covers DST and EXP stitch files; checking stitch files against another reader by hand (positions compared in one orientation).
 > **Last updated:** 2026-11-06 · **Change:** Hindi catalog and zero/one plural rule; desktop Devanagari fallback and optional craft-fonts UI face; native review pending.
 > **Last updated:** 2026-11-01 · **Change:** Linux: Automatic Linux Display Server opens the window through XWayland when a pen is attached on a Wayland session, so the pen draws (#4967); `VECTORCRAFT_NATIVE_WAYLAND=1` keeps Wayland.
 > **Last updated:** 2026-10-31 · **Change:** files opened while the app runs open in its window on Windows and Linux (#4892); `--new-instance`.
@@ -427,8 +427,8 @@ CI and needs Python and network access to PyPI.
    `stitch.info` prints the stitch, jump, trim and colour-change counts the export writes.
 3. Read both files with `pyembroidery.read` and compare its counts
    (`count_stitch_commands(pyembroidery.STITCH)`, `count_color_changes()`) and the positions of its
-   `STITCH` entries with ours. pyembroidery reports positions in 0.1 mm with y down, as our stitch
-   plans do; the files themselves have y up.
+   `STITCH` entries with ours. Positions are in 0.1 mm; compare after converting both to the same
+   orientation (our stitch plans have y down, the files themselves y up).
 4. Our own reading: `vectorcraft-cli run --in /tmp/cal.dst --export /tmp/cal.vectorcraft` opens the
    file; the anchors of its paths are the needle points, in points relative to the file's origin
    (multiply by 254/72 for 0.1 mm).
@@ -535,6 +535,7 @@ Scores and hour estimates are unchanged.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Stitch file cross-check: compare positions after converting both to the same orientation. |
 | 2026-11-11 | minor | Fuzzing: DST and EXP stitch files. New section: checking stitch files against another reader (by hand, not in CI). |
 | 2026-11-06 | minor | Localisation: Hindi catalog, zero/one plurals, desktop and web font requirements; AI/MT draft, native review pending. |
 | 2026-10-31 | minor | Files opened while the app runs open in its window on Windows and Linux (#4892); `--new-instance` opts out. |

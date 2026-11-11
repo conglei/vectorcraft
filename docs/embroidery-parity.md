@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (E1 done and the DST and EXP part of E2: stitch plans, machine profiles, running stitches, lock stitches, DST and EXP files; no file stitched on a machine yet) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -101,7 +101,7 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 | Feature | Commercial behaviour | Tier | VectorCraft today | Gap |
 |---|---|---|---|---|
 | Stitch plan model | Ordered stitches in 0.1 mm units with jump, trim, stop and colour change functions, grouped by object and colour | B | **done**: `vectorcraft-stitch` plan in 0.1 mm units with stitch, jump, trim and stop steps in colour blocks, capped at 2,000,000 steps; grouping by object waits for stitch objects (E4) | E1 |
-| Machine profile and limits | Maximum stitch (12.1 mm ternary, 12.7 mm binary), maximum jump, minimum stitch, trim encoding, needle count | B | **done**: profiles `generic` and `commercial15`; long stitches and jumps split, travel that would read as a trim gets one, warnings for needle count and field size; every value an export option | E1 |
+| Machine profile and limits | Maximum stitch (12.1 mm ternary, 12.7 mm binary), maximum jump, minimum stitch, trim encoding, needle count | B | **done**: profiles `generic` and `commercial15`; long stitches and jumps split, travel that would read as a trim gets one (measured from where the lock stitches leave the needle; none at the start of a colour, which the colour change has cut), warnings for needle count and field size; maximum and minimum stitch and jumps per trim are export options, needles, field and maximum jump are not | E1 |
 | Running stitches | Run, triple (bean), backstitch, stem stitch; stitch length, minimum length, chord gap on curves | B | **partial**: run (stitch length, corners kept, path end hit exactly) and manual along stroked paths; no triple, backstitch or stem stitch | E3 |
 | Satin column | Two rails with direction lines; spacing fixed or by width; varying width | B | variable-width stroke outlines (`effects::stroke::width`) give rails for strokes; no rail pairing for filled shapes | E3 |
 | Tatami fill | Rows at an angle with staggered penetrations, holes respected, travel hidden under the fill | B | Scribble effect makes hole-aware zig-zag rows (`effects::stylize::scribble`); booleans and regions (`pathops`) | E3 |
@@ -172,11 +172,11 @@ build on, from the code. Tier: **B** basic, **M** middle, **P** professional.
 
 | Format | Use | Tier | VectorCraft today | Gap |
 |---|---|---|---|---|
-| DST | Tajima and most commercial machines; no colours, trims as jump runs | B | **done**: reader and writer, trims as a run of `jumpsPerTrim` jumps, start at the centre or the first stitch; not yet loaded on a machine | E2 |
+| DST | Tajima and most commercial machines; no colours, trims as jump runs | B | **done**: reader and writer, trims as a run of `jumpsPerTrim` jumps, a trim before the travel back to the start, start at the centre or the first stitch, header extents from stitches and travel (not the trim jumps); not yet loaded on a machine | E2 |
 | EXP | Melco and Bernina; stitches only | B | **done**: reader and writer; no colour companion file; not yet loaded on a machine | E2 |
 | TBF, U01, DSB | Tajima LAN, Barudan; carry needle or function data | M | nothing | E2 |
 | PES/PEC, JEF, VP3 | Brother, Janome, Husqvarna and Pfaff home machines | M | nothing | E2 |
-| Reading stitch files | Open any of the above as manual stitches | B | **partial**: DST and EXP open as stroked paths, one group per colour, and re-export through mode `manual`; fuzzed; the other formats are missing | E2 |
+| Reading stitch files | Open any of the above as manual stitches | B | **partial**: DST and EXP open as stroked paths, one group per colour, on a layer marked as a stitch file, so an export with default options keeps the needle points (mode `manual`, no added locks); fuzzed; consecutive blocks of one colour merge on re-export; the other formats are missing | E2 |
 | Recognising stitch files | Turn imported stitches back into editable objects | P | nothing | E14 |
 
 ### Photo, fur and decorative work
@@ -275,5 +275,6 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Review fixes, measured by tests: DST and EXP end with a trim before the travel back to the start; travel trims are decided after lock stitches; template and non-printing layers and clipping paths are not sewn (clipped art is sewn in full, with a warning); a document opened from a stitch file re-exports its needle points by default; `stitch.info` reports `records`; DST header extents leave out trim jumps. Rows updated: machine profile, DST, reading stitch files |
 | 2026-11-11 | minor | E1 done and the DST and EXP part of E2, measured by automated tests and a manual cross-check with an independent reader; no file stitched on a machine yet. Rows updated: stitch plan model, machine profile, running and manual stitches, small-stitch filter, lock stitches, DST, EXP, reading stitch files. E2 reduced to 30–55 h (estimated) |
 | 2026-11-11 | new | First gap analysis from a survey of public documentation. Nothing is implemented; all hours are estimated; commercial feature details are from search snippets and are unverified where marked |
