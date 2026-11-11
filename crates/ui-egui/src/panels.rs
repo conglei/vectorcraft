@@ -38,6 +38,7 @@ pub mod pathfinder;
 pub mod pattern_options;
 pub mod properties;
 pub mod separations;
+pub mod stitch_props;
 pub mod stroke;
 pub mod svg_interactivity;
 pub mod swatches;
@@ -180,6 +181,7 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         "colorThemes" => color_themes::show(app, ui),
         color_wheel::ID => color_wheel::show(app, ui),
         links::ID => links::show(app, ui),
+        stitch_props::ID => stitch_props::show(app, ui),
         asset_export::ID => asset_export::show(app, ui),
         css_properties::ID => css_properties::show(app, ui),
         three_d::ID => three_d::show(app, ui),
@@ -235,6 +237,7 @@ pub fn panel_menu_items(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) -> bool
         "colorThemes" => color_themes::menu(app, ui),
         "layers" => layers::menu(app, ui),
         links::ID => links::menu(app, ui),
+        stitch_props::ID => stitch_props::menu(app, ui),
         asset_export::ID => asset_export::menu(app, ui),
         css_properties::ID => css_properties::menu(app, ui),
         variables::ID => variables::menu(app, ui),
