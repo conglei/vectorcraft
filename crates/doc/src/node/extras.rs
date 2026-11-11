@@ -72,6 +72,9 @@ pub struct NodeExtras {
     /// Transform panel › Align to Pixel Grid: the path's or compound path's horizontal and vertical
     /// segments stay on the pixel grid when it is transformed.
     pub pixel_aligned: bool,
+    /// Embroidery › Stitch Properties: how the object (and, where they leave a field unset, what
+    /// it holds) is sewn ([`crate::stitch_props`]; `None`: automatic).
+    pub stitch: Option<Box<crate::StitchProps>>,
 }
 
 /// No extras: what [`Node::extras`] gives for a node without any.
@@ -99,6 +102,7 @@ pub(super) static NO_EXTRAS: NodeExtras = NodeExtras {
     symbol_overrides: Vec::new(),
     envelope_edit_margin: None,
     pixel_aligned: false,
+    stitch: None,
 };
 
 /// A node's [`NodeExtras`], if it has any ([`Node::extras`]). Extras that are all unset equal
