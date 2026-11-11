@@ -1,8 +1,9 @@
 //! The calibration design: a 100 mm test piece for a first stitch-out, drawn in code.
 //!
-//! It has a square to check size and registration, ticks along the top edge to read the scale,
-//! an F to check direction and mirroring, and a near and a far pair of squares to check
-//! registration between colours at two distances. The first stitch is the square's corner at the
+//! It has a square to check size, ticks along the top edge to read the scale, an F to check
+//! direction and mirroring, and a near (5 mm apart) and a far (30 mm apart) pair of squares in one
+//! colour, each pair trimmed apart, to check that trims happen where the file asks. Three colours
+//! check colour changes and needle assignment. The first stitch is the square's corner at the
 //! top-left, which is off-centre on purpose.
 
 use vectorcraft_geom::{PathData, Point, SubPath};
@@ -60,6 +61,47 @@ mod tests {
     use vectorcraft_geom::Rect;
 
     use super::*;
+
+    /// The anchors of each subpath of `part`, in millimetres, rounded to 0.001 mm.
+    fn anchors_mm(part: &CalibrationPart) -> Vec<Vec<(f64, f64)>> {
+        let r = |v: f64| (v / PT_PER_MM * 1000.0).round() / 1000.0;
+        part.path.subpaths.iter().map(|sp| sp.anchors.iter().map(|a| (r(a.p.x), r(a.p.y))).collect()).collect()
+    }
+
+    fn part(name: &str) -> CalibrationPart {
+        calibration().into_iter().find(|p| p.name == name).unwrap()
+    }
+
+    #[test]
+    fn the_f_reads_upright_from_the_top_left() {
+        let f = part("F");
+        assert_eq!(anchors_mm(&f), vec![vec![(5.0, 35.0), (5.0, 10.0), (20.0, 10.0), (5.0, 10.0), (5.0, 22.0), (15.0, 22.0)]]);
+        assert!(!f.path.subpaths[0].closed);
+        assert_eq!(f.rgb, RED);
+    }
+
+    #[test]
+    fn ticks_every_10_mm_with_long_ones_at_0_50_and_100() {
+        let ticks = anchors_mm(&part("ticks"));
+        assert_eq!(ticks.len(), 11);
+        for (i, t) in ticks.iter().enumerate() {
+            let x = i as f64 * 10.0;
+            let h = if i % 5 == 0 { 6.0 } else { 3.0 };
+            assert_eq!(t, &vec![(x, 0.0), (x, h)], "tick {i}");
+        }
+    }
+
+    #[test]
+    fn the_pairs_are_5_and_30_mm_apart_in_one_colour() {
+        let sq = |x: f64, y: f64| vec![(x, y), (x + 10.0, y), (x + 10.0, y + 10.0), (x, y + 10.0)];
+        let near = part("near pair");
+        let far = part("far pair");
+        assert_eq!(anchors_mm(&near), vec![sq(30.0, 40.0), sq(45.0, 40.0)]);
+        assert_eq!(anchors_mm(&far), vec![sq(30.0, 70.0), sq(70.0, 70.0)]);
+        assert!(near.path.subpaths.iter().chain(&far.path.subpaths).all(|sp| sp.closed));
+        assert_eq!((near.rgb, far.rgb), (BLUE, BLUE));
+        assert_eq!(anchors_mm(&part("square")), vec![sq(0.0, 0.0).into_iter().map(|(x, y)| (x * 10.0, y * 10.0)).collect::<Vec<_>>()]);
+    }
 
     #[test]
     fn the_design_is_100_mm_square_in_three_colours() {
