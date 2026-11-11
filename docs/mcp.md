@@ -239,6 +239,11 @@ For embroidery, `run_command stitch.info` gives the stitch counts and warnings a
 and `run_command stitch.preview` returns a PNG of the stitches that export would sew (`pngBase64`, `width`,
 `height`; with `path`, written there instead): lit thread on fabric, or `view: "density"` for a coverage map
 with `maxCoverage` and `denseCells`, and `showJumps`, `showNeedles` and `showFunctions` overlays.
+`run_command photo.prepare {file, path?, provider?, maxSide?, keepAlpha?, cleanUp?, likenessThreshold?}` prepares a
+photo for embroidery faithfully and returns `provider`, `width`, `height`, `likeness` (0–1), `notes`, `warnings`
+and `path` (where it was written) or `pngBase64`; `run_command photo.providers` lists the providers. `nomodel` works on this computer
+only; `gemini` sends the photo to Google's Gemini API and runs only when named (`provider: "gemini"`) or chosen
+by the `photoProvider` preference, with `GEMINI_API_KEY` set where the server runs.
 
 In the summary an object reports its paint as `fill`, `stroke` (labels) and `strokeWidth`. So does a compound path,
 whose paint is its own: its member paths report `compoundMember: true` instead of a paint they don't have. Every
