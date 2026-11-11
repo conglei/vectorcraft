@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn serialized_with_only_what_is_set() {
         let p = StitchProps { kind: StitchType::Tatami, fill_angle: Some(45.0), ..Default::default() };
-        assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::json!({"type": "tatami", "fillAngle": 45.0}));
+        assert_eq!(serde_json::to_value(p).unwrap(), serde_json::json!({"type": "tatami", "fillAngle": 45.0}));
         let back: StitchProps = serde_json::from_value(serde_json::json!({"type": "tatami", "fillAngle": 45.0, "later": 1})).unwrap();
         assert_eq!(back, p);
         assert!(serde_json::from_value::<StitchProps>(serde_json::json!({})).unwrap().is_empty());

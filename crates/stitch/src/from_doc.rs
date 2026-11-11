@@ -1,9 +1,13 @@
-//! Stitches from a document: stroked paths become running stitch.
+//! Stitches from a document: each path and compound path is sewn by its stitch properties
+//! ([`vectorcraft_doc::StitchProps`], set on it or inherited from what holds it), field by field
+//! over the document-wide [`FromDocOptions`]; an automatic object's fill becomes tatami and its
+//! stroke running stitch (or satin), as those options say. Stitches are made from the outlines
+//! each time, so an object moved, scaled or reshaped is sewn again at the same density.
 
 use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
 use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
@@ -72,6 +76,16 @@ impl Default for StrokeOptions {
 
 /// The satin widths a stroke weight is held to, in mm.
 pub const SATIN_WIDTH_MM: (f64, f64) = (0.5, 20.0);
+
+/// The width of a satin column sewn along an object without a stroke (stitch type satin on a
+/// filled path) when neither the object nor the options give one, in mm.
+pub const DEFAULT_SATIN_WIDTH_MM: f64 = 3.0;
+
+/// A length in mm in plan units. Stitch property lengths are checked to their ranges (at most
+/// 20 mm), so they fit.
+fn mm_units(mm: f64) -> i32 {
+    (mm * crate::UNITS_PER_MM).round() as i32
+}
 
 /// Options for [`from_document`].
 #[derive(Clone, Debug)]
@@ -201,6 +215,17 @@ struct Under {
     clipped: bool,
     /// A layer an opened stitch file made holds it.
     marked: bool,
+    /// The stitch properties it inherits from what holds it.
+    props: StitchProps,
+}
+
+/// How an outline is sewn.
+#[derive(Clone, Copy)]
+enum Outline {
+    /// Running stitch (or, by [`Mode::Manual`], anchor by anchor), at this stitch length in plan
+    /// units.
+    Run(Mode, i32),
+    Satin(SatinParams),
 }
 
 impl<'o> Walk<'o> {
@@ -239,6 +264,7 @@ impl<'o> Walk<'o> {
             listed: up.listed || self.only.as_ref().is_none_or(|ids| ids.contains(&n.id)),
             clipped: up.clipped,
             marked: up.marked || is_marked(n),
+            props: n.stitch_props().map_or(up.props, |p| p.inherit(&up.props)),
         };
         match &n.kind {
             NodeKind::Layer { children, .. } | NodeKind::Group { children, .. } => {
@@ -257,71 +283,146 @@ impl<'o> Walk<'o> {
         Ok(())
     }
 
+    /// Sew a path or compound path: by its stitch type ([`Under::props`], what it set and
+    /// inherited), or, automatic, as the document's options say. Art on an opened stitch file's
+    /// layer keeps its needle points: stitch properties are not used there.
     fn shape(&mut self, n: &Node, up: Under) -> Result<(), String> {
+        let props = if up.marked { StitchProps::default() } else { up.props };
         let stroke = n.appearance.stroke().filter(|s| s.visible && !s.paint.is_none());
-        let sew_fill = !up.marked && self.o.fill.kind == FillType::Tatami;
-        let fill = n.appearance.fill().filter(|f| sew_fill && f.visible && !f.paint.is_none());
-        if stroke.is_none() && fill.is_none() {
-            if !n.appearance.fill_paint().is_none() {
-                self.filled += 1;
-            }
-            return Ok(());
-        }
-        let mut subpaths: Vec<&SubPath> = vec![];
-        collect_subpaths(n, &mut subpaths);
-        // Only the first run of a path can follow the trim a file held.
-        let mut trim = up.marked && follows_trim(n);
+        let painted_fill = n.appearance.fill().filter(|f| f.visible && !f.paint.is_none());
         let max_mm = f64::from(self.o.max_stitch) / crate::UNITS_PER_MM;
-        if let Some(f) = fill {
-            let rgb = thread(&f.paint, &mut self.patterned_fill);
-            let rule = match &n.kind {
-                NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
-                _ => FillRule::default(),
-            };
-            let mut rings = vec![];
-            for sp in &subpaths {
-                rings.push(flatten(sp, MAX_STEPS.saturating_sub(self.steps))?.0);
+        let mut subpaths: Vec<&SubPath> = vec![];
+        let run_length = |w: &Walk| props.number(StitchParam::RunLength).map_or(w.o.stitch_length, mm_units);
+        match props.kind {
+            StitchType::None => Ok(()),
+            StitchType::Auto => {
+                let sew_fill = !up.marked && self.o.fill.kind == FillType::Tatami;
+                let fill = painted_fill.filter(|_| sew_fill);
+                if stroke.is_none() && fill.is_none() {
+                    if !n.appearance.fill_paint().is_none() {
+                        self.filled += 1;
+                    }
+                    return Ok(());
+                }
+                collect_subpaths(n, &mut subpaths);
+                if let Some(f) = fill {
+                    let rgb = thread(&f.paint, &mut self.patterned_fill);
+                    self.sew_fill(n, &subpaths, rgb, &self.fill_params(&props, max_mm), up)?;
+                }
+                let Some(stroke) = stroke else { return Ok(()) };
+                let rgb = thread(&stroke.paint, &mut self.patterned);
+                let outline = if self.o.stroke.kind == StrokeType::Satin && !up.marked {
+                    Outline::Satin(self.satin_params(&props, Some(stroke.width), max_mm))
+                } else {
+                    let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
+                    Outline::Run(mode, run_length(self))
+                };
+                // Only the first run of a path can follow the trim a file held.
+                self.sew_outline(&subpaths, rgb, outline, up, up.marked && follows_trim(n))
             }
-            let params = FillParams { max_stitch: max_mm, ..self.o.fill.params };
-            for run in tatami(&rings, rule, &params, MAX_STEPS.saturating_sub(self.steps))? {
-                self.count_run(&run, up);
-                // Fills are never on an opened stitch file's layer.
-                self.add_run(rgb, &run, Mode::Run, Join::Drawn)?;
+            StitchType::Tatami => {
+                // The fill colour, else the stroke's: the region the outline encloses.
+                let Some(rgb) = self.colour(painted_fill.map(|f| &f.paint), stroke.map(|s| &s.paint), true) else { return Ok(()) };
+                collect_subpaths(n, &mut subpaths);
+                self.sew_fill(n, &subpaths, rgb, &self.fill_params(&props, max_mm), up)
+            }
+            StitchType::Run | StitchType::Satin | StitchType::Manual => {
+                // The stroke colour, else the fill's: one outline, whatever the object paints.
+                let Some(rgb) = self.colour(painted_fill.map(|f| &f.paint), stroke.map(|s| &s.paint), false) else { return Ok(()) };
+                collect_subpaths(n, &mut subpaths);
+                let outline = match props.kind {
+                    StitchType::Satin => Outline::Satin(self.satin_params(&props, stroke.map(|s| s.width), max_mm)),
+                    StitchType::Manual => Outline::Run(Mode::Manual, run_length(self)),
+                    _ => Outline::Run(Mode::Run, run_length(self)),
+                };
+                self.sew_outline(&subpaths, rgb, outline, up, false)
             }
         }
-        let Some(stroke) = stroke else { return Ok(()) };
-        let rgb = thread(&stroke.paint, &mut self.patterned);
-        let mode = self.o.mode.unwrap_or(if up.marked { Mode::Manual } else { Mode::Run });
-        let satin_params = if self.o.stroke.kind == StrokeType::Satin && !up.marked {
-            let (lo, hi) = SATIN_WIDTH_MM;
-            let width = match self.o.stroke.width {
-                Some(w) => w,
-                None => {
-                    let w = stroke.width * MM_PER_PT;
-                    let held = if w.is_finite() { w.clamp(lo, hi) } else { lo };
-                    self.held_width |= held != w;
-                    held
-                }
-            };
-            Some(SatinParams { width, spacing: self.o.stroke.spacing, max_stitch: max_mm })
-        } else {
-            None
+    }
+
+    /// The thread colour of the fill (`fill`, when painted) or the stroke (`stroke`), the fill's
+    /// first when `fill_first`, else the stroke's; `None` when neither is painted. A gradient or
+    /// pattern is sewn in black and noted.
+    fn colour(&mut self, fill: Option<&Paint>, stroke: Option<&Paint>, fill_first: bool) -> Option<[u8; 3]> {
+        match (fill, stroke) {
+            (Some(f), _) if fill_first => Some(thread(f, &mut self.patterned_fill)),
+            (_, Some(s)) => Some(thread(s, &mut self.patterned)),
+            (Some(f), None) => Some(thread(f, &mut self.patterned_fill)),
+            (None, None) => None,
+        }
+    }
+
+    /// The tatami settings for an object with properties `props`: each number it sets, else the
+    /// document's.
+    fn fill_params(&self, props: &StitchProps, max_mm: f64) -> FillParams {
+        let d = self.o.fill.params;
+        let n = |p: StitchParam, default: f64| props.number(p).unwrap_or(default);
+        FillParams {
+            angle: n(StitchParam::FillAngle, d.angle),
+            spacing: n(StitchParam::FillSpacing, d.spacing),
+            stitch_length: n(StitchParam::FillStitchLength, d.stitch_length),
+            stagger: n(StitchParam::Stagger, d.stagger),
+            max_stitch: max_mm,
+        }
+    }
+
+    /// The satin settings for an object with properties `props` and stroke weight `weight_pt`
+    /// (`None`: no stroke): its width, else the document's, else the stroke weight held to
+    /// [`SATIN_WIDTH_MM`] (noted when held), else [`DEFAULT_SATIN_WIDTH_MM`].
+    fn satin_params(&mut self, props: &StitchProps, weight_pt: Option<f64>, max_mm: f64) -> SatinParams {
+        let (lo, hi) = SATIN_WIDTH_MM;
+        let width = match (props.number(StitchParam::SatinWidth).or(self.o.stroke.width), weight_pt) {
+            (Some(w), _) => w,
+            (None, Some(weight)) => {
+                let w = weight * MM_PER_PT;
+                let held = if w.is_finite() { w.clamp(lo, hi) } else { lo };
+                self.held_width |= held != w;
+                held
+            }
+            (None, None) => DEFAULT_SATIN_WIDTH_MM,
         };
+        let spacing = props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing);
+        SatinParams { width, spacing, max_stitch: max_mm }
+    }
+
+    /// Sew the region `subpaths` of `n` enclose as tatami, by `n`'s fill rule, in thread `rgb`.
+    fn sew_fill(&mut self, n: &Node, subpaths: &[&SubPath], rgb: [u8; 3], params: &FillParams, up: Under) -> Result<(), String> {
+        let rule = match &n.kind {
+            NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
+            _ => FillRule::default(),
+        };
+        let mut rings = vec![];
+        for sp in subpaths {
+            rings.push(flatten(sp, MAX_STEPS.saturating_sub(self.steps))?.0);
+        }
+        for run in tatami(&rings, rule, params, MAX_STEPS.saturating_sub(self.steps))? {
+            self.count_run(&run, up);
+            // Fills are never on an opened stitch file's layer.
+            self.add_run(rgb, &run, Mode::Run, Join::Drawn)?;
+        }
+        Ok(())
+    }
+
+    /// Sew each of `subpaths` as `outline`, in thread `rgb`; `trim`: its first run follows a trim
+    /// the opened file held.
+    fn sew_outline(&mut self, subpaths: &[&SubPath], rgb: [u8; 3], outline: Outline, up: Under, mut trim: bool) -> Result<(), String> {
         for sp in subpaths {
             let budget = MAX_STEPS.saturating_sub(self.steps);
-            let run = match (satin_params, mode) {
-                (Some(p), _) => satin(&flatten(sp, budget)?.0, sp.closed && sp.segment_count() > 0, &p, budget)?,
-                (None, Mode::Run) => run_of(sp, self.o.stitch_length, budget)?,
-                (None, Mode::Manual) => manual_of(sp, budget)?,
+            let (run, mode) = match outline {
+                Outline::Satin(p) => {
+                    // A satin column is sewn like running stitch: a first stitch where the needle
+                    // is would sew nothing.
+                    (satin(&flatten(sp, budget)?.0, sp.closed && sp.segment_count() > 0, &p, budget)?, Mode::Run)
+                }
+                Outline::Run(Mode::Run, length) => (run_of(sp, length, budget)?, Mode::Run),
+                Outline::Run(Mode::Manual, _) => (manual_of(sp, budget)?, Mode::Manual),
             };
             self.count_run(&run, up);
             let after = if up.marked { Join::Opened { trim } } else { Join::Drawn };
             if !run.is_empty() {
                 trim = false;
             }
-            // A satin column is sewn like running stitch: a first stitch where the needle is
-            // would sew nothing.
-            self.add_run(rgb, &run, if satin_params.is_some() { Mode::Run } else { mode }, after)?;
+            self.add_run(rgb, &run, mode, after)?;
         }
         Ok(())
     }

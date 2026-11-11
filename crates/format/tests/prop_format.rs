@@ -351,10 +351,10 @@ fn stitched_doc(on_path: &vectorcraft_doc::StitchProps, on_group: &vectorcraft_d
     let pid = d.alloc_id();
     let path = PathData::single(SubPath::polyline(&[Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0)], true));
     let mut p = Node::path(pid, path, Appearance::default());
-    p.set_stitch_props(on_path.clone());
+    p.set_stitch_props(*on_path);
     let gid = d.alloc_id();
     let mut g = Node::group(gid, vec![std::sync::Arc::new(p)]);
-    g.set_stitch_props(on_group.clone());
+    g.set_stitch_props(*on_group);
     d.insert(Some(layer), 0, g).unwrap();
     (d, pid, gid)
 }
@@ -367,7 +367,7 @@ proptest! {
     #[test]
     fn stitch_props_roundtrip(on_path in arb_stitch_props(), on_group in arb_stitch_props()) {
         let (d, pid, gid) = stitched_doc(&on_path, &on_group);
-        let want = |props: &vectorcraft_doc::StitchProps| (!props.is_empty()).then(|| props.clone());
+        let want = |props: &vectorcraft_doc::StitchProps| (!props.is_empty()).then_some(*props);
         for o in [SaveOptions::default(), SaveOptions { compress: true, ..SaveOptions::default() }, SaveOptions { version: 1, ..SaveOptions::default() }] {
             let back = load(&save_with(&d, &o).unwrap()).unwrap();
             prop_assert_eq!(back.node(pid).and_then(|n| n.stitch_props()).cloned(), want(&on_path));
