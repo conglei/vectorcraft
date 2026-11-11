@@ -20,6 +20,7 @@ mod pen;
 mod persp;
 mod place;
 mod protocol;
+mod stitch;
 mod svg;
 
 fn server() -> Server {
@@ -207,6 +208,8 @@ fn tool_schemas_are_valid() {
         "open_file",
         "save_file",
         "export",
+        "stitch_info",
+        "export_stitch",
         "undo",
         "redo",
     ] {

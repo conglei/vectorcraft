@@ -235,6 +235,21 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
             let cmd = if a.get("selection").and_then(Value::as_bool) == Some(true) { "document.exportSelection" } else { "document.export" };
             j(exec(b, cmd, Value::Object(params))?)
         }
+        "stitch_info" => j(exec(b, "stitch.info", Value::Object(a.clone()))?),
+        "export_stitch" => {
+            let mut params = a.clone();
+            // Without a format, the path's extension names it: exp, else dst.
+            if params.get("format").is_none_or(Value::is_null) {
+                let ext = a.get("path").and_then(Value::as_str).and_then(|p| std::path::Path::new(p).extension()).and_then(|e| e.to_str());
+                let format = if ext.is_some_and(|e| e.eq_ignore_ascii_case("exp")) { "exp" } else { "dst" };
+                params.insert("format".into(), json!(format));
+            }
+            if let Some(path) = a.get("path").and_then(Value::as_str) {
+                let path = absolute_path(b, path)?;
+                params.insert("path".into(), json!(path));
+            }
+            j(exec(b, "document.export", Value::Object(params))?)
+        }
         "add_text" => j(add_text(b, a)?),
         "apply_effect" => {
             let Some(effect) = a.get("effect").and_then(Value::as_str) else {

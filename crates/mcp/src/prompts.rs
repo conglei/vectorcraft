@@ -365,6 +365,54 @@ Method:
 Live effects are kept on export (geometry baked; shadows, glows and blur become SVG filters),
 and text stays text unless you pass outlineText.",
     },
+    PromptDef {
+        name: "stitch-out",
+        title: "Stitch out a design",
+        description: "Draw or open a design, check what its stitch file would hold with stitch_info, and export a DST or EXP file.",
+        arguments: &[
+            PromptArg {
+                name: "design",
+                description: "What to draw, or the path of a file to open",
+                required: true,
+                default: "",
+                values: Values::Fixed(NONE),
+            },
+            PromptArg {
+                name: "directory",
+                description: "The folder the stitch file goes in",
+                required: false,
+                default: "the current directory",
+                values: Values::Fixed(NONE),
+            },
+            PromptArg {
+                name: "format",
+                description: "The stitch file format",
+                required: false,
+                default: "dst",
+                values: Values::Fixed(&["dst", "exp"]),
+            },
+        ],
+        text: "\
+Make an embroidery stitch file in VectorCraft for this design: {design}. Write it as {format}
+into {directory}.
+
+Method:
+1. If the design is a file, open_file it. Otherwise draw it with draw_path and draw_shape.
+   Embroidery stitches stroked paths: every stroke becomes a running stitch in its stroke colour,
+   one thread per colour, and a fill alone is not stitched. Draw the design as strokes, at most a
+   few colours, in millimetre-scale shapes (1 mm is 2.8346 pt).
+2. stitch_info with format {format}. It answers what the file would hold: stitches, jumps,
+   trims, colour changes, the size in mm, a row per thread and warnings. A document with no
+   stroked paths is an error, so fix that first. Check the size against the hoop you have and
+   read every warning; change what they point to (a longer stitchLength, fewer colours, a
+   smaller design) and run stitch_info again.
+3. run_command stitch.calibration adds a 100 mm test piece for a first stitch-out on a new
+   machine: it is one undo step, and edit.undo takes it away again.
+4. export_stitch with format {format} and a path in {directory}, passing the same options you
+   gave stitch_info. Report its warnings and the path of the file.
+
+The file is written from the document as it is: nothing in it changes the document.",
+    },
 ];
 
 /// The message body as a client should receive it.
