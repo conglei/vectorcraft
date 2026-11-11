@@ -1,0 +1,22 @@
+[package]
+name = "vectorcraft-imagemodel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VectorCraft hosted image models (Gemini) as photo preparation providers; the apps install them into a session"
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-imageprep = { workspace = true }
+# base64 for the request and the returned image.
+vectorcraft-format = { workspace = true }
+serde_json = { workspace = true }
+# HTTPS (MIT OR Apache-2.0), with the features craft-update already builds it with, so this adds no
+# crate to Cargo.lock: rustls on ring, certificates checked by the operating system.
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
+
+[dev-dependencies]
+# A PNG whose header claims more pixels than are taken.
+image = { workspace = true }

@@ -33,6 +33,7 @@ vectorcraft-brush = { path = "crates/brush" }
 vectorcraft-trace = { path = "crates/trace" }
 vectorcraft-stitch = { path = "crates/stitch" }
 vectorcraft-imageprep = { path = "crates/imageprep" }
+vectorcraft-imagemodel = { path = "crates/imagemodel" }
 # Without its default `bundled-fonts`: a crate that wants the fonts asks for them (the apps and
 # vectorcraft-testkit through the engine's `bundled-fonts`), so a library crate never forces them on
 # an embedder that supplies its fonts at run time.
