@@ -89,7 +89,7 @@ pub fn read(bytes: &[u8], _o: &ReadOptions) -> Result<Input, String> {
                     0x04 | 0x06 => b.jump(dx, dy),
                     0x10 => break,
                     0x80 => b.trim(),
-                    c if c & 0x01 != 0 => b.color_change(dx, dy),
+                    c if c & 0x01 != 0 => b.color_change(dx, dy)?,
                     _ => {
                         warnings.push("an unknown code ended the file early".to_string());
                         break;
@@ -211,6 +211,12 @@ mod tests {
         assert!(r.out.is_empty());
         r.stitch(127, -127).unwrap();
         assert_eq!((r.out, r.count), (vec![0x7F, 0x81], 1));
+    }
+
+    #[test]
+    fn a_file_of_too_many_colour_changes_is_refused_while_reading() {
+        let bytes = COLOR_CHANGE.repeat(crate::MAX_BLOCKS);
+        assert_eq!(read(&bytes, &ReadOptions::default()).unwrap_err(), "the file has too many colour changes");
     }
 
     #[test]

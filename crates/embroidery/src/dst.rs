@@ -121,7 +121,7 @@ pub fn read(bytes: &[u8], o: &ReadOptions) -> Result<Input, String> {
         b.count()?;
         let (dx, dy) = record::decode([b0, b1, b2]);
         match b2 & 0xC0 {
-            0xC0 => b.color_change(dx, dy),
+            0xC0 => b.color_change(dx, dy)?,
             0x80 => b.jump(dx, dy),
             0x40 => {
                 // A sequin record: no step of its own, but its move still counts, so the
@@ -298,6 +298,42 @@ mod tests {
         assert!(write(&tiny(), &WriteOptions::default()).unwrap().warnings.is_empty());
         assert_eq!(header::overflow(10_000_000, 0), vec!["the stitch count is too large for the file header".to_string()]);
         assert!(header::overflow(9_999_999, 999).is_empty());
+    }
+
+    /// A header from a written file, followed by `body`.
+    fn with_body(body: &[[u8; 3]]) -> Vec<u8> {
+        let mut b = write(&tiny(), &WriteOptions::default()).unwrap().bytes;
+        b.truncate(512);
+        b.extend(body.iter().flatten());
+        b
+    }
+
+    #[test]
+    fn a_colour_change_with_a_move_applies_the_move() {
+        let cc = record::encode(5, 0, 0xC0).unwrap();
+        let b = with_body(&[record::encode(0, 0, STITCH).unwrap(), cc, record::encode(1, 0, STITCH).unwrap(), END]);
+        let i = read(&b, &ReadOptions::default()).unwrap();
+        assert_eq!(i.plan.blocks.len(), 2);
+        assert_eq!(i.plan.blocks[1].steps, vec![Step::Jump(Pt { x: 5, y: 0 }), Step::Stitch(Pt { x: 6, y: 0 })]);
+        assert!(i.warnings.is_empty(), "{:?}", i.warnings);
+    }
+
+    #[test]
+    fn any_third_byte_with_the_end_bits_ends_the_file() {
+        // 0xFB carries every bit of 0xF3 and one more.
+        let b = with_body(&[record::encode(0, 0, STITCH).unwrap(), [0, 0, 0xFB], record::encode(1, 0, STITCH).unwrap()]);
+        let i = read(&b, &ReadOptions::default()).unwrap();
+        assert_eq!(i.plan.blocks[0].steps, vec![Step::Stitch(Pt { x: 0, y: 0 })]);
+        assert!(i.warnings.is_empty(), "{:?}", i.warnings);
+    }
+
+    #[test]
+    fn a_file_of_too_many_colour_changes_is_refused_while_reading() {
+        let mut body = vec![COLOR_CHANGE; crate::MAX_BLOCKS];
+        body.push(END);
+        assert_eq!(read(&with_body(&body), &ReadOptions::default()).unwrap_err(), "the file has too many colour changes");
+        body.remove(0);
+        assert_eq!(read(&with_body(&body), &ReadOptions::default()).unwrap().plan.blocks.len(), crate::MAX_BLOCKS);
     }
 
     #[test]

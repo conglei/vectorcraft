@@ -16,6 +16,8 @@ use vectorcraft_stitch::{Block, MAX_STEPS, Pt, Step, StitchPlan, Thread};
 
 /// The largest file a reader accepts.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+/// The most thread blocks (colour changes plus one) a reader builds.
+pub const MAX_BLOCKS: usize = 10_000;
 
 /// Where the file's origin is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -280,13 +282,18 @@ impl Builder {
         }
     }
 
-    /// Starts the next block, then applies the record's move, if any, as a jump.
-    fn color_change(&mut self, dx: i32, dy: i32) {
+    /// Starts the next block, then applies the record's move, if any, as a jump. A file with
+    /// more than [`MAX_BLOCKS`] blocks is refused before they are built.
+    fn color_change(&mut self, dx: i32, dy: i32) -> Result<(), String> {
         self.flush();
         let i = self.blocks.len();
+        if i >= MAX_BLOCKS {
+            return Err("the file has too many colour changes".to_string());
+        }
         let thread = self.threads.get(i).cloned().unwrap_or_else(|| default_thread(i));
         self.blocks.push(Block { thread, steps: Vec::new() });
         self.travel(dx, dy);
+        Ok(())
     }
 
     fn finish(mut self, name: String) -> StitchPlan {
