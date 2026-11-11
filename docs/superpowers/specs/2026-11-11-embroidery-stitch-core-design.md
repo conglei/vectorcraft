@@ -13,9 +13,9 @@ not say, is in [Machine facts](#machine-facts).
 
 ## What the owner decided
 
-- Embroidery ships as a sibling app that reuses VectorCraft's vector editing. This spec adds no app:
-  it adds library crates and engine commands that both apps will use. See
-  [Open decisions](#open-decisions) for where the sibling app lives.
+- Embroidery ships as a sibling app, StitchCraft, inside this workspace, reusing VectorCraft's
+  vector editing. This spec adds no app: it adds library crates and engine commands that both apps
+  will use.
 - Commercial multi-needle machines first, so DST and EXP before the home formats.
 - Real stitch-outs are part of acceptance.
 
@@ -85,15 +85,16 @@ in this order:
 
 1. **Small stitches.** A stitch closer than `min_stitch` to the last kept needle point is dropped,
    except the last stitch of a run.
-2. **Lock stitches** (option `locks`, on by default). At the start of each run (plan start, after a
-   trim, after a colour change) and at its end, three stitches of 0.6 mm back and forth along the
-   run's first or last segment. The length and count are estimates to tune at the stitch-out.
-3. **Long stitches.** A stitch longer than `max_stitch` becomes jumps to within range and then a
+2. **Long stitches.** A stitch longer than `max_stitch` becomes jumps to within range and then a
    stitch, so the needle never comes down at a point the design did not ask for.
-4. **Long jumps.** A jump longer than `max_jump` is split into equal parts.
-5. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
+3. **Travel that would read as a trim.** A machine set to N jumps per trim cuts the thread when it
    sees N jump records in a row. A travel that needs N or more jump records therefore gets an
-   explicit `Trim` before it, and a lock stitch after it, so the file says what the machine will do.
+   explicit `Trim` before it, so the file says what the machine will do.
+4. **Lock stitches** (option `locks`, on by default). A run is the stitches between two of: plan
+   start, trim, colour change, plan end. At the start of each run of two or more stitches, three
+   stitches of 0.6 mm back and forth along the run's first segment; at its end, the same along its
+   last segment. The length and count are estimates to tune at the stitch-out.
+5. **Long jumps.** A jump longer than `max_jump` is split into equal parts.
 6. **Checks, as warnings.** More distinct threads than `needles`; extents larger than `field_mm`;
    no stitches in a block.
 
@@ -222,7 +223,7 @@ Everything is reachable from the CLI, MCP and both apps, because it goes through
 - **`document.export {format: "dst" | "exp", …}`** with options: `machine` (`commercial15` default,
   or `generic`), `mode` (`run` | `manual`), `stitchLength`, `minStitch`, `maxStitch`, `locks`,
   `jumpsPerTrim`, `trimBeforeColorChange`, `start`, `returnToStart`, `name`, `selectedOnly`. An
-  unknown key is refused. The reply carries the warnings and the statistics.
+  unknown key is refused. The reply carries the warnings; `stitch.info` gives the statistics.
 - **`document.open`** of a `.dst` or `.exp` file, with an optional `stitch: {jumpsPerTrim}` object.
 - **`stitch.info`** (query): the statistics and warnings an export with the same options would
   give, without writing a file.
@@ -290,12 +291,10 @@ to its start point.
 
 ## Open decisions
 
-1. **Where the sibling app lives.** Recommended: a second app in this workspace
-   (`apps/<name>`), sharing every crate including `ui-egui`, so nothing is duplicated and one CI
-   run covers both. A separate repository would need these crates published as a dependency first.
-   This spec works either way.
-2. **The sibling app's name.**
-3. **`ST:` and the end record.** The references disagree on whether the count includes the end
+1. **Decided (owner, 2026-11-11): the sibling app is StitchCraft and lives in this workspace**
+   (`apps/stitchcraft`), sharing every crate including `ui-egui`. Its shell and UI are a later
+   spec; this one adds no app.
+2. **`ST:` and the end record.** The references disagree on whether the count includes the end
    record and expanded trim jumps. This spec counts every record written. Corrected after the
    stitch-out if the panel disagrees.
 
