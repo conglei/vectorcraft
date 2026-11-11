@@ -623,3 +623,36 @@ fn the_calibration_design_is_in_the_embroidery_menu() {
     let spec = crate::command_specs().iter().find(|c| c.id == "stitch.calibration").unwrap();
     assert_eq!(spec.menu, ["Embroidery"]);
 }
+
+/// A DSB file of stitches, a trim, a jump and more stitches, then (`before_change`) a trim, a jump
+/// and a needle change before the last stitches. Records are `[control, |dy|, |dx|]`.
+fn dsb_with_trims(before_change: bool) -> Vec<u8> {
+    let mut b = vec![b' '; 512];
+    b[..4].copy_from_slice(b"LA:T");
+    b.extend([0x00, 0, 0, 0x00, 0, 30, 0x00, 30, 0, 0xE7, 0, 0, 0x01, 0, 100, 0x00, 0, 30, 0x00, 30, 0]);
+    if before_change {
+        b.extend([0xE7, 0, 0, 0x01, 0, 50, 0xE9, 0, 0, 0x00, 0, 30]);
+    }
+    b.extend([0xF8, 0, 0]);
+    b
+}
+
+#[test]
+fn a_dsb_trim_survives_read_open_and_stitch_info_unless_the_colour_change_cuts_it() {
+    let trims = |file: &[u8]| {
+        let mut s = Session::new();
+        let data = vectorcraft_format::base64_encode(file);
+        s.execute("document.open", &json!({"name": "t.dsb", "dataBase64": data})).unwrap();
+        let options = json!({"format": "dsb", "mode": "manual", "locks": false, "travelTrims": false, "returnToStart": false});
+        s.execute("stitch.info", &options).unwrap()["trims"].as_u64().unwrap()
+    };
+    // A trim in the middle of a block is kept.
+    assert_eq!(trims(&dsb_with_trims(false)), 1);
+    // The reader keeps both trims, but one sits at the end of a colour block with no run after it
+    // in that block: the document marks a trim on the run that follows it, and the colour change
+    // cuts the thread anyway, so only the mid-block trim is left.
+    let two = dsb_with_trims(true);
+    let plan = vectorcraft_embroidery::dsb::read(&two, &Default::default()).unwrap().plan;
+    assert_eq!(trim_count(&plan), 2);
+    assert_eq!(trims(&two), 1);
+}

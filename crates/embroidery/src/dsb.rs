@@ -257,6 +257,17 @@ mod tests {
     }
 
     #[test]
+    fn a_trim_record_reaches_the_plan_as_a_trim_wherever_it_sits() {
+        let mut b = vec![b' '; 512];
+        // stitch, stitch, trim, jump, stitch, trim, needle change, stitch, end
+        b.extend([0x00, 0, 0, 0x00, 0, 10, 0xE7, 0, 0, 0x01, 0, 100, 0x00, 0, 10, 0xE7, 0, 0, 0xE9, 0, 0, 0x00, 0, 10, 0xF8, 0, 0]);
+        let plan = read(&b, &ReadOptions::default()).unwrap().plan;
+        assert_eq!(plan.blocks.len(), 2);
+        assert_eq!(plan.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count(), 2, "{:?}", plan.blocks[0].steps);
+        assert!(plan.blocks[1].steps.iter().all(|s| *s != Step::Trim));
+    }
+
+    #[test]
     fn too_many_colour_changes_are_refused_while_reading() {
         let mut b = vec![b' '; 512];
         for _ in 0..crate::MAX_BLOCKS {
