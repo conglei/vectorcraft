@@ -393,7 +393,8 @@ fn travelling_file(format: &str, jumps: u8) -> Vec<u8> {
         name: "T".into(),
         blocks: vec![Block { thread: thread([200, 0, 0]), steps: a }, Block { thread: thread([0, 0, 200]), steps: b }],
     };
-    let o = WriteOptions { jumps_per_trim: jumps, ..Default::default() };
+    // A file that does not return to its start, as most files from other software.
+    let o = WriteOptions { jumps_per_trim: jumps, return_to_start: false, ..Default::default() };
     // Long jumps split into records; no locks and no travel trims added to the source.
     let po = vectorcraft_stitch::PrepareOptions { locks: false, travel_trims: false };
     let max = if format == "dst" { 121 } else { 127 };
@@ -425,6 +426,10 @@ fn an_opened_stitch_file_keeps_its_trims_and_gets_no_travel_trims() {
         let back = read_plan_with(format, &again, jumps);
         assert_eq!(trim_count(&back), trim_count(&source), "{format}: {back:?}");
         assert_eq!(needle_points(&back), needle_points(&source), "{format}");
+        // Without `returnToStart` the file does not return either, so no trim is added before it.
+        let given = json!({"format": format, "jumpsPerTrim": jumps, "returnToStart": true});
+        let returning = read_plan_with(format, &b64(&s.execute("document.export", &given).unwrap()), jumps);
+        assert!(trim_count(&returning) > trim_count(&source), "{format}");
         // `stitch.info` counts the plan's trims, not the ones the writer adds at the ends.
         let info = s.execute("stitch.info", &options).unwrap();
         assert_eq!(info["trims"].as_u64(), Some(1), "{format}: {info}");
