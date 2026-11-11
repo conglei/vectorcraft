@@ -333,7 +333,9 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
 /// without writing the file (the writer's own warnings are left out). As [`written`] otherwise.
 pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
     let o = options(cmd, p, format)?;
-    planned(cmd, doc, &o, selection)
+    // Whether everything came from an opened file only decides the writer's return to the start.
+    let (plan, warnings, _opened) = planned(cmd, doc, &o, selection)?;
+    Ok((plan, warnings))
 }
 
 /// `doc` as a DST or EXP file. `selection`: only those objects; an export's `selectedOnly` has
