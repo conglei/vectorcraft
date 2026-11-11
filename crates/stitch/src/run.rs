@@ -2,11 +2,15 @@
 
 use crate::{MAX_STEPS, Pt, UNITS_PER_MM};
 
+/// How far past a whole number of stitches a stretch may run, in stitches, and still get that
+/// number: absorbs float noise, far below a needle's precision.
+const STEP_SLACK: f64 = 1e-6;
+
 /// Running stitch along `points_mm`, a polyline in millimetres with a corner flag per vertex
 /// (`corners`; a missing flag is not a corner). The first vertex is the first needle point. Each
 /// stretch between consecutive corners (both ends count as corners) is divided into
-/// `ceil(length / stitch_length)` equal steps placed by arc length, so every corner and the last
-/// vertex are hit exactly. With `closed`, the first vertex is the final target. `stitch_length`
+/// `ceil(length / stitch_length)` equal steps (float noise aside) placed by arc length, so every
+/// corner and the last vertex are hit exactly. With `closed`, the first vertex is the final target. `stitch_length`
 /// is in plan units (0.1 mm); below 1 it is taken as 1. Zero-length input gives no points, and
 /// vertices that aren't finite or lie beyond a plan point's range are left out. At most
 /// [`MAX_STEPS`] + 1 points are made, so a caller can tell the limit was passed.
@@ -54,8 +58,10 @@ pub fn run_stitches(points_mm: &[(f64, f64)], corners: &[bool], closed: bool, st
         if room == 0 {
             break;
         }
+        // Lengths that went through document points come back a hair long (47.5 mm as
+        // 47.50000000000001): an exact multiple of the stitch length is not split for that.
         // Finite and capped at `room`, so the cast is exact.
-        let steps = (length / step_mm).ceil().clamp(1.0, room as f64) as usize;
+        let steps = (length / step_mm - STEP_SLACK).ceil().clamp(1.0, room as f64) as usize;
         let mut walked = 0.0;
         let mut seg = 0;
         for k in 1..=steps {
@@ -129,6 +135,18 @@ mod tests {
         assert!(run_stitches(&[], &[], false, 25).is_empty());
         assert!(run_stitches(&[(1.0, 1.0), (1.0, 1.0)], &[true, true], true, 25).is_empty());
         assert!(run_stitches(&[(f64::NAN, 0.0)], &[true], false, 0).is_empty());
+    }
+
+    #[test]
+    fn an_exact_multiple_of_the_stitch_length_is_not_split_by_float_noise() {
+        // Millimetres that went through document points come back a hair long.
+        let noisy = |mm: f64| mm * crate::PT_PER_MM * crate::plan::MM_PER_PT;
+        assert!(noisy(47.5) > 47.5);
+        let p = run_stitches(&[(0.0, 0.0), (noisy(47.5), 0.0)], &[true, true], false, 25);
+        assert_eq!(p.len(), 20, "19 stitches of 2.5 mm: {p:?}");
+        // A reopened 2.5 mm stitch stays one stitch.
+        let p = run_stitches(&[(noisy(15.7), 0.0), (noisy(18.2), 0.0)], &[true, true], false, 25);
+        assert_eq!(p, vec![Pt { x: 157, y: 0 }, Pt { x: 182, y: 0 }]);
     }
 
     #[test]
