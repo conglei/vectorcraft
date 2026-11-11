@@ -118,6 +118,8 @@ pub(crate) mod simplify_slider;
 pub mod slices;
 pub(crate) mod smooth_slider;
 pub mod spot_colors;
+pub mod stitch_info;
+pub mod stitch_options;
 pub mod svg_filter;
 pub(crate) mod svg_options;
 pub mod swatch_conflict;
@@ -391,6 +393,8 @@ registry! {
     SliceOptions: [slices::OPTIONS] => slices::OPTIONS_SPEC,
     DivideSlices: [slices::DIVIDE] => slices::DIVIDE_SPEC,
     EpsOptions: [eps_options::KIND] => eps_options::SPEC,
+    StitchInfo: [stitch_info::KIND] => stitch_info::SPEC,
+    StitchOptions: [stitch_options::KIND] => stitch_options::SPEC,
     Recovery: [crate::recovery::KIND] => recovery::SPEC,
     PluginStopped: [safe_mode::STOPPED] => safe_mode::STOPPED_SPEC,
     SafeMode: [safe_mode::KIND] => safe_mode::SPEC,
@@ -860,6 +864,9 @@ mod tests_screens;
 
 #[cfg(test)]
 mod tests_eps;
+
+#[cfg(test)]
+mod tests_stitch;
 
 #[cfg(test)]
 mod tests_metafile;

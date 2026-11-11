@@ -196,7 +196,7 @@ fn a_disabled_list_that_cannot_be_saved_says_so() {
 fn the_safe_mode_label_leaves_the_menus_their_room() {
     let _f = fresh();
     safe_mode::set_active(Some(safe_mode::Source::Flag));
-    let menu_names = ["File", "Edit", "Object", "Type", "Select", "Effect", "View", "Window", "Help"];
+    let menu_names = ["File", "Edit", "Object", "Type", "Select", "Effect", "Embroidery", "View", "Window", "Help"];
     for width in [560.0, 720.0, 1280.0] {
         let ctx = egui::Context::default();
         theme::install_fonts(&ctx);

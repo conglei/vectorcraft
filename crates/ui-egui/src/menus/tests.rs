@@ -82,7 +82,7 @@ fn the_bar_starts_at_file() {
     }
     let mut shown = vec![];
     out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
-    let titles = ["File", "Edit", "Object", "Type", "Select", "Effect", "View", "Window", "Help"];
+    let titles = ["File", "Edit", "Object", "Type", "Select", "Effect", "Embroidery", "View", "Window", "Help"];
     for t in titles {
         assert!(shown.iter().any(|s| s == t), "{t} missing from {shown:?}");
     }
