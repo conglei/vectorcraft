@@ -238,10 +238,17 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
         "stitch_info" => j(exec(b, "stitch.info", Value::Object(a.clone()))?),
         "export_stitch" => {
             let mut params = a.clone();
-            // Without a format, the path's extension names it: exp, else dst.
+            // Without a format, the path's extension names it: dsb or exp, else dst.
             if params.get("format").is_none_or(Value::is_null) {
                 let ext = a.get("path").and_then(Value::as_str).and_then(|p| std::path::Path::new(p).extension()).and_then(|e| e.to_str());
-                let format = if ext.is_some_and(|e| e.eq_ignore_ascii_case("exp")) { "exp" } else { "dst" };
+                let named = |name: &str| ext.is_some_and(|e| e.eq_ignore_ascii_case(name));
+                let format = if named("exp") {
+                    "exp"
+                } else if named("dsb") {
+                    "dsb"
+                } else {
+                    "dst"
+                };
                 params.insert("format".into(), json!(format));
             }
             if let Some(path) = a.get("path").and_then(Value::as_str) {

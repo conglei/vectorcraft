@@ -1,10 +1,10 @@
-//! Embroidery stitch files (DST and EXP): the export options `document.export` and `stitch.info`
+//! Embroidery stitch files (DST, DSB and EXP): the export options `document.export` and `stitch.info`
 //! read, the stitch plan an export writes, and a stitch file opened as a document (`document.open`
 //! with its `stitch` options).
 
 use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
-use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dst, exp};
+use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dsb, dst, exp};
 use vectorcraft_stitch::{
     FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
     from_document, prepare, profile, to_document,
@@ -23,7 +23,7 @@ const MIXED_LOCKS: &str =
 /// The most colour changes an opened file may have: each becomes a group in the document.
 const MAX_BLOCKS: usize = 10_000;
 
-/// The stitch options `document.formats` lists for DST and EXP. Lengths are in mm.
+/// The stitch options `document.formats` lists for DST, DSB and EXP. Lengths are in mm.
 pub(crate) const OPTIONS: &[FormatOption] = &[
     FormatOption {
         name: "machine",
@@ -48,7 +48,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "maxStitch",
         ty: "number",
         default: "12.1",
-        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP, its default too); longer ones are split into equal pieces: jumps and a final stitch",
+        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP and DSB, their default too); longer ones are split into equal pieces: jumps and a final stitch",
     },
     FormatOption {
         name: "locks",
@@ -182,12 +182,13 @@ struct Options {
     name: Option<String>,
 }
 
-/// The largest move per axis a format holds, in plan units: DST 121, EXP 127.
+/// The largest move per axis a format holds, in plan units: DST 121, EXP and DSB 127 (DSB records
+/// hold 255, but the machines read 12.7 mm as the longest stitch).
 fn max_move(cmd: &str, format: &str) -> Result<i32> {
     match format {
         "dst" => Ok(121),
-        "exp" => Ok(127),
-        other => Err(bad(cmd, format!("format `{other}`: a stitch file is dst or exp"))),
+        "exp" | "dsb" => Ok(127),
+        other => Err(bad(cmd, format!("format `{other}`: a stitch file is dst, dsb or exp"))),
     }
 }
 
@@ -226,7 +227,7 @@ fn jumps_per_trim(cmd: &str, p: &Value, key: &str) -> Result<u8> {
     }
 }
 
-/// The stitch options in `p` for `format` (`dst` or `exp`). `mode` and `locks` stay `None` when
+/// The stitch options in `p` for `format` (`dst`, `dsb` or `exp`). `mode` and `locks` stay `None` when
 /// not given: [`planned`] decides them per layer (see [`FromDocOptions::mode`]).
 fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let limit = max_move(cmd, format)?;
@@ -262,8 +263,8 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let name = text_param(p, "name", cmd)?.map(str::to_string);
     let mut profile = profile(machine).ok_or_else(|| bad(cmd, format!("machine `{machine}`: generic, commercial15 or bai_mirror")))?;
     profile.max_stitch = units(max_stitch).min(limit);
-    // EXP's longer moves (127 units) serve its jumps too.
-    profile.max_jump = if format == "exp" { limit } else { profile.max_jump.min(limit) };
+    // EXP's and DSB's longer moves (127 units) serve their jumps too.
+    profile.max_jump = if matches!(format, "exp" | "dsb") { limit } else { profile.max_jump.min(limit) };
     profile.min_stitch = units(min_stitch);
     profile.jumps_per_trim = jumps_per_trim;
     Ok(Options {
@@ -290,7 +291,7 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     })
 }
 
-/// Check the stitch options in `p` for `format` (`dst` or `exp`) without planning a file (dialogs
+/// Check the stitch options in `p` for `format` (`dst`, `dsb` or `exp`) without planning a file (dialogs
 /// keep themselves open on an error).
 pub fn check(p: &Value, format: &str) -> std::result::Result<(), String> {
     options(C, p, format).map(|_| ()).map_err(|e| e.to_string())
@@ -317,7 +318,7 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
     Ok((prepared.plan, warnings, made.unmarked_runs == 0))
 }
 
-/// What an export of `doc` as `format` (`dst` or `exp`) with options `p` writes: the stitch plan
+/// What an export of `doc` as `format` (`dst`, `dsb` or `exp`) with options `p` writes: the stitch plan
 /// (the stroked paths of `doc`, only `selection` and what it holds when given, prepared for the
 /// machine), the file, and the warnings of both. Errors name `cmd`.
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
@@ -331,6 +332,7 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
     let write = WriteOptions { return_to_start: o.return_to_start.unwrap_or(!opened), ..o.write.clone() };
     let mut out = match format {
         "exp" => exp::write(&plan, &write),
+        "dsb" => dsb::write(&plan, &write),
         _ => dst::write(&plan, &write),
     }
     .map_err(|e| bad(cmd, e))?;
@@ -348,7 +350,7 @@ pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection
     Ok((plan, warnings))
 }
 
-/// `doc` as a DST or EXP file. `selection`: only those objects; an export's `selectedOnly` has
+/// `doc` as a DST, DSB or EXP file. `selection`: only those objects; an export's `selectedOnly` has
 /// already left the rest out of `doc`, so it passes `None`.
 pub(super) fn encode(doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<Encoded> {
     let (_, out) = written(C, doc, p, format, selection)?;
@@ -365,13 +367,14 @@ pub(super) fn read_options(cmd: &str, p: Option<&Value>) -> Result<ReadOptions> 
     Ok(ReadOptions { jumps_per_trim: jumps_per_trim(cmd, p, "jumpsPerTrim")? })
 }
 
-/// A DST or EXP file as a document: one layer of stroked paths, a group per thread colour, and the
+/// A DST, DSB or EXP file as a document: one layer of stroked paths, a group per thread colour, and the
 /// reader's warnings. `p`: the `stitch` options.
 pub(super) fn import(bytes: &[u8], format: &str, p: Option<&Value>) -> Result<(Document, Vec<String>)> {
     let o = read_options("document.open", p)?;
     let input = match format {
         "dst" => dst::read(bytes, &o),
         "exp" => exp::read(bytes, &o),
+        "dsb" => dsb::read(bytes, &o),
         other => return Err(err(format!("{other} is not a stitch file format"))),
     }
     .map_err(err)?;

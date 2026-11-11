@@ -61,7 +61,7 @@ fn with_draw_options(mut props: Value) -> Value {
 /// and `export_stitch` take them, plus `format` (`default` says what it is when not given).
 fn stitch_props(format: &str) -> Value {
     json!({
-        "format": {"type": "string", "enum": ["dst", "exp"], "description": format},
+        "format": {"type": "string", "enum": ["dst", "dsb", "exp"], "description": format},
         "machine": {"type": "string", "enum": ["commercial15", "generic"], "description": "commercial15 (default; 15 needles, a 500 x 350 mm field) or generic (no needle or field limits)"},
         "mode": {"type": "string", "enum": ["run", "manual"], "description": "run: running stitch along each stroked path; manual: one needle point per anchor. Not given: art on the layer an opened stitch file made is manual (its needle points export unchanged), all other art is run"},
         "stitchLength": {"type": "number", "minimum": 0.5, "maximum": 12, "description": "Running stitch length in mm (default 2.5)"},
@@ -413,7 +413,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export the active document with the engine's document.export (the same bytes in the app and headless), in any format of the `format` enum: vectors (svg/svgz with the artboard as viewBox, eps, dxf, emf, wmf), pdf and ai (one page per artboard: all, or `artboard` / `range`; ai is the PDF-compatible .ai file that Save writes, which carries the document when every artboard is written in order), rasters (one rendered artboard: png, jpg, webp, gif, png8 as an indexed .png, tiff, bmp, tga, psd with its layers), txt (the stories, back to front), embroidery stitch files (dst, exp: the stroked paths as running stitch; the options of stitch.info), vectorcraft or template (a native copy or template; the document keeps its path). run_command document.formats lists each format's options. For SVG/SVGZ, top-level `outlineText: true` writes text as paths; DXF takes it too (its type is outlined anyway unless `preserve: editability`). PDF instead uses `options.advanced.outlineText: true`, default false (live text). `selection: true` exports only the selected objects, cropped to their bounds. Template layers are left out; live effects are kept (geometry baked, SVG filters for shadows/glows/blur). Without `path` the bytes come back as dataBase64.",
+            "Export the active document with the engine's document.export (the same bytes in the app and headless), in any format of the `format` enum: vectors (svg/svgz with the artboard as viewBox, eps, dxf, emf, wmf), pdf and ai (one page per artboard: all, or `artboard` / `range`; ai is the PDF-compatible .ai file that Save writes, which carries the document when every artboard is written in order), rasters (one rendered artboard: png, jpg, webp, gif, png8 as an indexed .png, tiff, bmp, tga, psd with its layers), txt (the stories, back to front), embroidery stitch files (dst, dsb, exp: the stroked paths as running stitch; the options of stitch.info), vectorcraft or template (a native copy or template; the document keeps its path). run_command document.formats lists each format's options. For SVG/SVGZ, top-level `outlineText: true` writes text as paths; DXF takes it too (its type is outlined anyway unless `preserve: editability`). PDF instead uses `options.advanced.outlineText: true`, default false (live text). `selection: true` exports only the selected objects, cropped to their bounds. Template layers are left out; live effects are kept (geometry baked, SVG filters for shadows/glows/blur). Without `path` the bytes come back as dataBase64.",
             obj(
                 json!({
                     "format": {"type": "string", "enum": FORMATS.iter().filter(|f| f.write).map(|f| f.id).collect::<Vec<_>>(), "description": "Default: from the path's extension"},
@@ -442,7 +442,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Write the active document's stroked paths as an embroidery stitch file (running stitch, one thread per stroke colour) with the options of stitch_info. It runs document.export, so run_command document.formats lists the options too. Without `path` the bytes come back as dataBase64; the reply carries `warnings`. Export only after stitch_info shows sensible counts and no warnings you cannot accept.",
             obj(
                 {
-                    let mut props = stitch_props("dst or exp. Default: from the path's extension, else dst");
+                    let mut props = stitch_props("dst, dsb or exp. Default: from the path's extension, else dst");
                     if let Some(p) = props.as_object_mut() {
                         p.insert("path".into(), string("Destination file (omit to get dataBase64)"));
                     }

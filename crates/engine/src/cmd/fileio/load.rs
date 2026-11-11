@@ -93,9 +93,10 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<&'static Format> {
     if vectorcraft_cad::is_dxf(bytes) {
         return format("dxf");
     }
-    // EXP files have no signature: they are read by their extension.
+    // EXP and DSB files have no signature: they are read by their extension. A DSB file has the
+    // DST header too, so a `.dsb` name wins over the content.
     if vectorcraft_embroidery::dst::is_dst(bytes) {
-        return format("dst");
+        return by_name.filter(|f| f.id == "dsb").or_else(|| format("dst"));
     }
     if let Some(kind) = vectorcraft_metafile::sniff(bytes) {
         return format(kind.id());
@@ -470,7 +471,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
             let (doc, warnings) = super::dxfimport::import(bytes, &opts.dxf)?;
             (doc, warnings, false)
         }
-        "dst" | "exp" => {
+        "dst" | "dsb" | "exp" => {
             let (doc, warnings) = super::stitchfile::import(bytes, format.id, opts.stitch.as_ref())?;
             (doc, warnings, false)
         }

@@ -368,7 +368,7 @@ and text stays text unless you pass outlineText.",
     PromptDef {
         name: "stitch-out",
         title: "Stitch out a design",
-        description: "Draw or open a design, check what its stitch file would hold with stitch_info, and export a DST or EXP file.",
+        description: "Draw or open a design, check what its stitch file would hold with stitch_info, and export a DST, DSB or EXP file.",
         arguments: &[
             PromptArg {
                 name: "design",
@@ -389,7 +389,7 @@ and text stays text unless you pass outlineText.",
                 description: "The stitch file format",
                 required: false,
                 default: "dst",
-                values: Values::Fixed(&["dst", "exp"]),
+                values: Values::Fixed(&["dst", "dsb", "exp"]),
             },
         ],
         text: "\
