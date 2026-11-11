@@ -108,12 +108,16 @@ fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPl
     })
 }
 
-/// Pass 3: a travel (consecutive jumps) that needs `jumps_per_trim` or more records gets a
-/// `Trim` before it, unless one is already there or nothing has been sewn yet.
+/// Pass 4: a travel (consecutive jumps) that needs `jumps_per_trim` or more records gets a
+/// `Trim` before it, unless one is already there, nothing has been sewn yet, or it starts a
+/// block (the colour change already cut the thread). It runs after the lock stitches, so travel is
+/// measured from where the needle really is.
 fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
     let mut stitched = false;
     let mut prev_trim = false;
     map_blocks(plan, |steps, pos| {
+        // A block boundary counts as a trim.
+        prev_trim = true;
         let mut out = Vec::with_capacity(steps.len());
         let mut i = 0;
         while let Some(s) = steps.get(i) {
@@ -163,44 +167,42 @@ fn toward(from: Pt, to: Pt, len: i32) -> Pt {
     Pt { x: from.x.saturating_add((dx * k).round() as i32), y: from.y.saturating_add((dy * k).round() as i32) }
 }
 
-/// Pass 4: three back-and-forth stitches at each end of every run of two or more stitches.
-fn add_locks(plan: &StitchPlan) -> Result<StitchPlan, String> {
-    map_blocks(plan, |steps, pos| {
-        let mut out = Vec::with_capacity(steps.len());
-        let mut i = 0;
-        while let Some(s) = steps.get(i) {
-            let Step::Stitch(_) = s else {
-                if let Some(pt) = position(s) {
-                    *pos = Some(pt);
-                }
-                out.push(*s);
-                i += 1;
-                continue;
-            };
-            let end = steps.iter().skip(i).take_while(|s| matches!(s, Step::Stitch(_))).count() + i;
-            let pts: Vec<Pt> = steps.get(i..end).unwrap_or_default().iter().filter_map(position).collect();
-            let lock = pts.len() >= 2;
-            for (n, pt) in pts.iter().enumerate() {
-                out.push(Step::Stitch(*pt));
-                if n == 0
-                    && lock
-                    && let Some(next) = pts.get(1)
-                {
-                    let q = toward(*pt, *next, LOCK_LENGTH);
-                    out.extend([Step::Stitch(q), Step::Stitch(*pt), Step::Stitch(q)]);
-                }
+/// Pass 3: three back-and-forth stitches at each end of every run of two or more stitches.
+fn add_locks(plan: &StitchPlan) -> StitchPlan {
+    let blocks = plan.blocks.iter().map(|b| Block { thread: b.thread.clone(), steps: locked(&b.steps) }).collect();
+    StitchPlan { name: plan.name.clone(), blocks }
+}
+
+/// `steps` with lock stitches at both ends of each run of two or more stitches.
+fn locked(steps: &[Step]) -> Vec<Step> {
+    let mut out = Vec::with_capacity(steps.len());
+    let mut i = 0;
+    while let Some(s) = steps.get(i) {
+        let Step::Stitch(_) = s else {
+            out.push(*s);
+            i += 1;
+            continue;
+        };
+        let end = steps.iter().skip(i).take_while(|s| matches!(s, Step::Stitch(_))).count() + i;
+        let pts: Vec<Pt> = steps.get(i..end).unwrap_or_default().iter().filter_map(position).collect();
+        let lock = pts.len() >= 2;
+        for (n, pt) in pts.iter().enumerate() {
+            out.push(Step::Stitch(*pt));
+            if n == 0
+                && lock
+                && let Some(next) = pts.get(1)
+            {
+                let q = toward(*pt, *next, LOCK_LENGTH);
+                out.extend([Step::Stitch(q), Step::Stitch(*pt), Step::Stitch(q)]);
             }
-            if lock && let [.., prev, last] = pts.as_slice() {
-                let q = toward(*last, *prev, LOCK_LENGTH);
-                out.extend([Step::Stitch(q), Step::Stitch(*last), Step::Stitch(q)]);
-            }
-            if let Some(last) = pts.last() {
-                *pos = Some(*last);
-            }
-            i = end;
         }
-        Ok(out)
-    })
+        if lock && let [.., prev, last] = pts.as_slice() {
+            let q = toward(*last, *prev, LOCK_LENGTH);
+            out.extend([Step::Stitch(q), Step::Stitch(*last), Step::Stitch(q)]);
+        }
+        i = end;
+    }
+    out
 }
 
 /// Pass 5: split jumps longer than `max_jump` into equal parts.
@@ -259,14 +261,15 @@ fn check(plan: &StitchPlan, p: &MachineProfile) -> Vec<String> {
 }
 
 /// Makes `plan` safe for `profile`: small stitches dropped, long stitches and jumps split,
-/// long travel trimmed, locks added, and what remains wrong reported as warnings.
+/// locks added, long travel trimmed (measured after the locks), and what remains wrong reported as warnings.
 pub fn prepare(plan: &StitchPlan, profile: &MachineProfile, o: &PrepareOptions) -> Result<Prepared, String> {
     plan.check()?;
     let plan = drop_small_stitches(plan, profile);
     let plan = split_long_stitches(&plan, profile)?;
     plan.check()?;
+    let plan = if o.locks { add_locks(&plan) } else { plan };
+    plan.check()?;
     let plan = trim_long_travel(&plan, profile)?;
-    let plan = if o.locks { add_locks(&plan)? } else { plan };
     plan.check()?;
     let plan = split_long_jumps(&plan, profile)?;
     let warnings = check(&plan, profile);
@@ -310,6 +313,25 @@ mod tests {
     }
 
     #[test]
+    fn travel_is_measured_from_where_the_lock_stitches_leave_the_needle() {
+        // Before locks, 30 -> 272 is 242 units: two records. The end lock leaves the needle at 24,
+        // and 24 -> 272 is 248 units: three records, which the machine reads as a trim.
+        let p = prepare(&plan(vec![S(0, 0), S(30, 0), J(272, 0), S(272, 0), S(300, 0)]), &GENERIC, &PrepareOptions { locks: true }).unwrap().plan;
+        let steps = &p.blocks[0].steps;
+        let trim = steps.iter().position(|s| *s == Step::Trim).expect("a trim before the travel");
+        assert_eq!(steps.get(trim - 1), Some(&S(24, 0)), "{steps:?}");
+        assert_eq!(steps[trim + 1..trim + 4], [J(107, 0), J(189, 0), J(272, 0)], "{steps:?}");
+    }
+
+    #[test]
+    fn travel_at_the_start_of_a_colour_is_not_trimmed_again() {
+        let mut p = plan(vec![S(0, 0), S(30, 0)]);
+        p.blocks.push(Block { thread: Thread { rgb: [1, 2, 3], ..Default::default() }, steps: vec![J(400, 0), S(400, 0), S(430, 0)] });
+        let out = prepare(&p, &GENERIC, &PrepareOptions { locks: false }).unwrap().plan;
+        assert_eq!(out.blocks[1].steps, vec![J(123, 0), J(215, 0), J(308, 0), J(400, 0), S(400, 0), S(430, 0)]);
+    }
+
+    #[test]
     fn runs_are_locked_at_both_ends() {
         let p = prepare(&plan(vec![S(0, 0), S(30, 0), S(60, 0)]), &GENERIC, &PrepareOptions { locks: true }).unwrap().plan;
         assert_eq!(p.blocks[0].steps, vec![S(0, 0), S(6, 0), S(0, 0), S(6, 0), S(30, 0), S(60, 0), S(54, 0), S(60, 0), S(54, 0)]);
@@ -341,17 +363,14 @@ mod tests {
     }
 
     fn step() -> impl Strategy<Value = Step> {
-        let c = -5000i32..=5000;
+        // Small coordinates too, so travel often lands near a record boundary.
+        let c = prop_oneof![-5000i32..=5000, -300i32..=300];
         prop_oneof![
             4 => (c.clone(), c.clone()).prop_map(|(x, y)| Step::Stitch(Pt { x, y })),
             2 => (c.clone(), c).prop_map(|(x, y)| Step::Jump(Pt { x, y })),
             1 => Just(Step::Trim),
             1 => Just(Step::Stop),
         ]
-    }
-
-    fn cheb(a: Pt, b: Pt) -> i64 {
-        (i64::from(a.x) - i64::from(b.x)).abs().max((i64::from(a.y) - i64::from(b.y)).abs())
     }
 
     proptest! {
@@ -365,35 +384,48 @@ mod tests {
                 blocks: blocks.into_iter().map(|steps| Block { thread: Thread::default(), steps }).collect(),
             };
             let out = prepare(&input, &GENERIC, &PrepareOptions { locks }).unwrap().plan;
+            let (max, n) = (GENERIC.max_jump, i64::from(GENERIC.jumps_per_trim));
+            // The true needle position, whether anything has been sewn, and whether the thread
+            // was just cut (by a trim or a colour change).
             let mut pos: Option<Pt> = None;
             let mut stitched = false;
-            // A trim at the end of one block still announces travel at the start of the next.
-            let mut prev_trim = false;
             for b in &out.blocks {
-                // Length of the current run of jump steps, and whether a trim (or the start
-                // of the plan's sewing) precedes it.
-                let mut jumps = 0usize;
+                let mut cut = true;
+                // Jump records in the current run of jumps, and whether a cut precedes the run.
+                let mut run = 0i64;
                 let mut announced = true;
                 for s in &b.steps {
-                    if let Step::Stitch(p) | Step::Jump(p) = *s {
-                        if let Some(q) = pos {
-                            prop_assert!(cheb(q, p) <= 121, "step {s:?} is {} from {q:?}", cheb(q, p));
+                    match *s {
+                        Step::Stitch(p) => {
+                            if let Some(q) = pos {
+                                prop_assert!(cheb(q, p) <= i64::from(GENERIC.max_stitch), "stitch {s:?} is {} from {q:?}", cheb(q, p));
+                            }
+                            pos = Some(p);
+                            stitched = true;
+                            run = 0;
+                            cut = false;
                         }
-                        pos = Some(p);
-                    }
-                    if let Step::Jump(_) = s {
-                        if jumps == 0 {
-                            announced = prev_trim || !stitched;
+                        Step::Jump(p) => {
+                            if run == 0 {
+                                announced = cut || !stitched;
+                            }
+                            // Records the writer needs: ceil(larger axis distance / max_jump), at least one.
+                            let r = pos.map_or(1, |q| ((cheb(q, p) + i64::from(max) - 1) / i64::from(max)).max(1));
+                            prop_assert_eq!(r, 1, "jump {:?} from {:?} needs {} records", s, pos, r);
+                            run += r;
+                            prop_assert!(run < n || announced, "{} jump records without a trim: {:?}", run, b.steps);
+                            pos = Some(p);
+                            cut = false;
                         }
-                        jumps += 1;
-                        prop_assert!(jumps < 3 || announced, "three jump records without a trim: {:?}", b.steps);
-                    } else {
-                        jumps = 0;
+                        Step::Trim => {
+                            run = 0;
+                            cut = true;
+                        }
+                        Step::Stop => {
+                            run = 0;
+                            cut = false;
+                        }
                     }
-                    if let Step::Stitch(_) = s {
-                        stitched = true;
-                    }
-                    prev_trim = matches!(s, Step::Trim);
                 }
             }
         }
