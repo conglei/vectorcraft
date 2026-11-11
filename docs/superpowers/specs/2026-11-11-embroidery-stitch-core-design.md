@@ -123,6 +123,17 @@ Until stitch objects exist (E4), stitches come from a document by one fixed rule
 
 Document units are points; 1 pt is 25.4/72 mm.
 
+Decided during implementation:
+
+- **No trim at a colour boundary.** A new block starts with a jump to its first point, not a trim
+  and a jump: the machine cuts at a colour change anyway, and the export option
+  `trimBeforeColorChange` adds a trim there when a machine needs one.
+- **Guides and hidden strokes are skipped.** Guides do not print, so they are not sewn. Hidden
+  objects, and objects whose stroke is hidden, are skipped too (a hidden stroke on a filled object
+  counts as a filled object without a stroke).
+- **Art too far from the origin is an error.** A point that does not fit the plan's `i32` units of
+  0.1 mm stops the plan with an error rather than being clamped.
+
 ## A document from a plan
 
 Opening a stitch file gives a new document in millimetres.
@@ -207,8 +218,8 @@ Nothing marks the end of the file and none is written. No colours are stored; co
 files are a later task. A jump runs all the way to the target and the stitch after it is `00 00`.
 
 **Reader**, lenient because the two reference implementations disagree: `80 02 dx dy` is a stitch;
-`80 04` and `80 06` are jumps; any other control byte with bit 0 set is a stop; `80 10` ends the
-file; a single trailing `1A` is ignored; an unknown control byte ends reading with a warning. The
+`80 04` and `80 06` are jumps; `80 80 07 00`, the trim the writer emits, is a trim (any `80 80`
+record reads as one); any other control byte with bit 0 set is a stop; `80 10` ends the file; a single trailing `1A` is ignored; an unknown control byte ends reading with a warning. The
 same size limits as DST apply.
 
 EXP has no signature, so only the `.exp` extension selects it.

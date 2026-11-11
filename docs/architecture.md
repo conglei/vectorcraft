@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (shared PDF reader and writer; app output policy and editable-import adapter retained; verified PngSuite downloads, #1729; synthetic control-input budgets, #1709; desktop printing uses craft-print) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (the embroidery crates `stitch` and `embroidery`) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft is built today. The design rationale lives in the local, gitignored `plan/architecture.md`;
 this file describes what is committed. Day-to-day rules (clean-room, never crash, quality gates) are in
@@ -21,14 +21,19 @@ nothing below L6 depends on a UI toolkit (egui, eframe, winit, rfd). Table: `xta
 |---|---|---|
 | L0 | `geom`, `color`; `affinity` (standalone, no workspace deps) | curves and transforms (on `kurbo`), colour models, ICC and conversions; the Affinity reader |
 | L1 | `doc` | the document model: artboards, layers, objects, appearance, text, symbols; pure data + serde, structural sharing |
-| L2 | `pathops`, `brush`, `trace`, `text`, `effects`, `plugins`, `three-d` | booleans/Shape Builder/offset/outline; brushes; Image Trace; fonts, shaping (HarfRust, skrifa), bidi and layout; live effects and the pixel-filter pipeline; sandboxed WebAssembly plug-ins (wasmi); 3D surfaces of revolution, projection and shading (`three-d`, on `geom` only) |
-| L3 | `render`, `svg`, `pdf`, `format`, `eps`, `cad`, `metafile` | document to pixels (`vello_cpu`, multithreaded); SVG, PDF, native JSON, EPS/PostScript (with its own interpreter), DXF, EMF/WMF readers and writers |
+| L2 | `pathops`, `brush`, `trace`, `text`, `effects`, `plugins`, `three-d`, `stitch` | booleans/Shape Builder/offset/outline; brushes; Image Trace; fonts, shaping (HarfRust, skrifa), bidi and layout; live effects and the pixel-filter pipeline; sandboxed WebAssembly plug-ins (wasmi); 3D surfaces of revolution, projection and shading (`three-d`, on `geom` only); embroidery stitch plans (`stitch`) |
+| L3 | `render`, `svg`, `pdf`, `format`, `eps`, `cad`, `metafile`, `embroidery` | document to pixels (`vello_cpu`, multithreaded); SVG, PDF, native JSON, EPS/PostScript (with its own interpreter), DXF, EMF/WMF readers and writers; DST and EXP embroidery machine files (`embroidery`) |
 | L4 | `tools` | tool state machines: pointer events in, commands and overlays out (Pen, Direct Selection, smart guides…) |
 | L5 | `engine` | sessions, history (unlimited undo by structural sharing), selection, the command registry (~710 commands), file I/O, the panic guard |
 | L6 | `ui-egui`, `mcp` | the egui front end (menus, panels, dialogs, canvas, i18n); the MCP server (JSON-RPC over stdio) |
 | L7 | `apps/vectorcraft`, `apps/vectorcraft-cli`, `apps/vectorcraft-web`, `xtask` | desktop app (eframe, wgpu), CLI (`run`, `convert`, `info`, `bench`, `perf`, `mcp`), browser runner (WebGPU, WebGL2 fallback), build tooling |
 
 `testkit` holds test helpers (fixtures, generators, render comparison) and is only a dev-dependency.
+
+The two embroidery crates (see [embroidery-parity.md](embroidery-parity.md)):
+
+- `stitch` (L2): the stitch plan in 0.1 mm units, machine profiles, preparing a plan for a machine, statistics, running stitch along a path, a plan from a document and a document from a plan, and the calibration design.
+- `embroidery` (L3, on `stitch` only): DST and EXP readers and writers, with no document types; the engine's `stitch.*` commands and `document.open`/`document.export` reach them.
 
 ## Everything is a command
 
@@ -88,6 +93,7 @@ saves copies in the background. See [development.md](development.md#robustness-v
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Added the embroidery crates `stitch` (L2) and `embroidery` (L3) |
 | 2026-10-13 | minor | Pinned PngSuite HTTPS files verified by SHA-256 before publication; bounded downloads replace archive extraction (#1729). Scores and hours unchanged. |
 | 2026-10-13 | minor | Bounded synthetic control input (#1709): counts and queued events validated before mutation; control-channel bursts yield between frames. Scores and hours unchanged. |
 | 2026-10-13 | minor | PDF.R1: editable PDF import uses the shared pinned reader; layer and overprint scans preserve state across content windows and reject known incomplete input. Synthetic streaming, decoder-limit and dependency-source regressions added; scores and hours unchanged. |
