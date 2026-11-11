@@ -91,7 +91,8 @@ changes). Plug-ins may call all four.
 
 Window › Stitch Properties, also in the Embroidery menu. For the selection: a Stitch Type dropdown
 ("Mixed" when the objects differ), what an export sews ("Sewn as"), the fields of what is sewn
-(blank when the objects differ), and Reset to Automatic. It reads `stitch.props`, passing the
+(blank when the objects differ; underlay and compensation are not shown until they are sewn), and
+Reset to Automatic. It reads `stitch.props`, passing the
 Stitch File Options used last as the defaults, and acts through the commands. The Stitch File
 Options dialog says that its Filled Paths and Stroked Paths are the document defaults.
 

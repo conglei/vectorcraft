@@ -74,7 +74,7 @@ fn type_label(objects: &[Value]) -> &'static str {
 }
 
 /// The numbers shown for what the objects sew: the fill's for tatami, the satin's, the running
-/// stitch length; underlay and compensation (kept, not yet sewn) for satin and tatami.
+/// stitch length.
 fn shown_params(objects: &[Value]) -> Vec<StitchParam> {
     let mut sews: Vec<StitchType> = vec![];
     for o in objects {
@@ -94,7 +94,11 @@ fn shown_params(objects: &[Value]) -> Vec<StitchParam> {
             }
         }
     }
-    StitchParam::ALL.into_iter().filter(|p| p.used_by().iter().any(|t| *t != StitchType::Auto && sews.contains(t))).collect()
+    // Compensation is stored but not used yet: commands set it, the panel leaves it out.
+    StitchParam::ALL
+        .into_iter()
+        .filter(|p| *p != StitchParam::Compensation && p.used_by().iter().any(|t| *t != StitchType::Auto && sews.contains(t)))
+        .collect()
 }
 
 /// The field label of number `p`.
@@ -130,7 +134,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     let labels: Vec<&str> = StitchType::ALL.iter().map(|t| t.label()).collect();
     widgets::label_row(ui, tl!("Stitch Type:"), LABEL_W, |ui| {
-        if let Some(t) = widgets::dropdown(ui, "stitch-props-type", type_label(&objects), &labels, 200.0).and_then(|i| StitchType::ALL.get(i)) {
+        if let Some(t) = widgets::dropdown(ui, "stitch-props-type", type_label(&objects), &labels, (ui.available_width() - 8.0).clamp(80.0, 200.0))
+            .and_then(|i| StitchType::ALL.get(i))
+        {
             app.run("stitch.setType", json!({ "type": t.id() })).ok();
         }
     });
