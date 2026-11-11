@@ -3,7 +3,7 @@
 mod header;
 mod record;
 
-use crate::{Builder, Input, MAX_FILE_BYTES, Output, ReadOptions, Sink, WriteOptions, walk};
+use crate::{Builder, Input, MAX_FILE_BYTES, Output, ReadOptions, Sink, TOO_LONG, WriteOptions, walk};
 use header::Extents;
 use record::{COLOR_CHANGE, END, JUMP, MAX_MOVE, STITCH};
 use vectorcraft_stitch::StitchPlan;
@@ -25,31 +25,35 @@ struct Records {
 }
 
 impl Records {
-    fn push(&mut self, dx: i32, dy: i32, flags: u8) {
-        // `walk` only hands over moves within MAX_MOVE, and a trim's are +-4 at most.
-        let Some(r) = record::encode(dx, dy, flags) else { return };
+    /// Adds a record. `extend`: the position it reaches counts toward the header's extents (a
+    /// stitch or real travel, not the small jumps of a trim).
+    fn push(&mut self, dx: i32, dy: i32, flags: u8, extend: bool) -> Result<(), String> {
+        let r = record::encode(dx, dy, flags).ok_or(TOO_LONG)?;
         self.out.push(r);
         self.at = (self.at.0 + i64::from(dx), self.at.1 + i64::from(dy));
-        let e = &mut self.ext;
-        e.max_x = e.max_x.max(self.at.0);
-        e.min_x = e.min_x.max(-self.at.0);
-        e.max_y = e.max_y.max(self.at.1);
-        e.min_y = e.min_y.max(-self.at.1);
+        if extend {
+            let e = &mut self.ext;
+            e.max_x = e.max_x.max(self.at.0);
+            e.min_x = e.min_x.max(-self.at.0);
+            e.max_y = e.max_y.max(self.at.1);
+            e.min_y = e.min_y.max(-self.at.1);
+        }
+        Ok(())
     }
 }
 
 impl Sink for Records {
-    fn stitch(&mut self, dx: i32, dy: i32) {
-        self.push(dx, dy, STITCH);
+    fn stitch(&mut self, dx: i32, dy: i32) -> Result<(), String> {
+        self.push(dx, dy, STITCH, true)
     }
 
-    fn jump(&mut self, dx: i32, dy: i32) {
-        self.push(dx, dy, JUMP);
+    fn jump(&mut self, dx: i32, dy: i32) -> Result<(), String> {
+        self.push(dx, dy, JUMP, true)
     }
 
     /// Small jumps that sum to zero, alternating 2 units right and left of the trim position
     /// and ending on it.
-    fn trim(&mut self) {
+    fn trim(&mut self) -> Result<(), String> {
         let n = i32::from(self.jumps_per_trim);
         let mut offset = 0;
         for k in 0..n {
@@ -60,14 +64,16 @@ impl Sink for Records {
             } else {
                 -2
             };
-            self.push(next - offset, 0, JUMP);
+            self.push(next - offset, 0, JUMP, false)?;
             offset = next;
         }
+        Ok(())
     }
 
-    fn color_change(&mut self) {
+    fn color_change(&mut self) -> Result<(), String> {
         self.out.push(COLOR_CHANGE);
         self.color_changes += 1;
+        Ok(())
     }
 }
 
@@ -84,7 +90,7 @@ pub fn write(plan: &StitchPlan, o: &WriteOptions) -> Result<Output, String> {
     let mut bytes = Vec::with_capacity(header::LEN + 3 * r.out.len());
     bytes.extend_from_slice(&head);
     bytes.extend(r.out.iter().flatten());
-    Ok(Output { bytes, warnings: Vec::new() })
+    Ok(Output { bytes, records: r.out.len(), warnings: header::overflow(r.out.len(), r.color_changes) })
 }
 
 /// The stitch plan in a DST file, y down, with warnings for what could not be read.
@@ -249,6 +255,7 @@ mod tests {
         assert!(recs[4..8].iter().all(|r| r[2] == 0x83));
         assert_eq!(recs[n - 1], END);
         assert_eq!(&b[20..30], b"ST:      9");
+        assert_eq!(write(&tiny(), &WriteOptions::default()).unwrap().records, 9);
         // A plan that already ends with a trim gets no second one.
         let mut p = tiny();
         p.blocks[0].steps.push(Step::Trim);
@@ -257,6 +264,40 @@ mod tests {
         // Without the return, the file ends on the last stitch.
         let b = write(&tiny(), &WriteOptions { return_to_start: false, ..Default::default() }).unwrap().bytes;
         assert_eq!((b.len() - 512) / 3, 5);
+    }
+
+    #[test]
+    fn header_extents_leave_out_the_trim_jumps() {
+        let mut p = tiny();
+        p.blocks[0].steps.push(Step::Trim);
+        let o = WriteOptions { start: Start::FirstStitch, return_to_start: false, ..Default::default() };
+        let b = write(&p, &o).unwrap().bytes;
+        // The trim's jumps reach x = 12, but the design is 10 units wide.
+        assert_eq!(&b[38..47], b"+X:   10\r");
+        assert_eq!(&b[47..56], b"-X:    0\r");
+    }
+
+    #[test]
+    fn a_move_out_of_range_is_an_error_not_a_lost_record() {
+        let mut r = Records { out: Vec::new(), jumps_per_trim: 3, at: (0, 0), ext: Extents::default(), color_changes: 0 };
+        assert_eq!(r.stitch(122, 0).unwrap_err(), "a stitch is longer than the format allows: prepare the plan first");
+        assert_eq!(r.jump(0, -122).unwrap_err(), "a stitch is longer than the format allows: prepare the plan first");
+        assert!(r.out.is_empty());
+        assert_eq!(r.at, (0, 0));
+    }
+
+    #[test]
+    fn counts_too_large_for_the_header_are_reported() {
+        let mut p = tiny();
+        for _ in 0..1000 {
+            p.blocks.push(Block { thread: Thread::default(), steps: vec![Step::Stitch(Pt { x: 0, y: 0 })] });
+        }
+        let out = write(&p, &WriteOptions::default()).unwrap();
+        assert_eq!(&out.bytes[31..37], b"CO:999");
+        assert_eq!(out.warnings, vec!["the colour change count is too large for the file header".to_string()]);
+        assert!(write(&tiny(), &WriteOptions::default()).unwrap().warnings.is_empty());
+        assert_eq!(header::overflow(10_000_000, 0), vec!["the stitch count is too large for the file header".to_string()]);
+        assert!(header::overflow(9_999_999, 999).is_empty());
     }
 
     #[test]

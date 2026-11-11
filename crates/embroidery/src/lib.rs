@@ -63,6 +63,9 @@ impl Default for ReadOptions {
 #[derive(Debug)]
 pub struct Output {
     pub bytes: Vec<u8>,
+    /// The number of records in the file (for DST, the header's `ST` value: the end record
+    /// included).
+    pub records: usize,
     pub warnings: Vec<String>,
 }
 
@@ -76,13 +79,13 @@ pub struct Input {
 const TOO_LONG: &str = "a stitch is longer than the format allows: prepare the plan first";
 const TOO_MANY: &str = "the design has more than 2000000 stitches";
 
-/// What a format writes for each kind of record. Moves are in file orientation (y up) and
-/// within the format's limit.
+/// What a format writes for each kind of record. Moves are in file orientation (y up); a move
+/// beyond the format's limit is an error, never a dropped or shortened record.
 trait Sink {
-    fn stitch(&mut self, dx: i32, dy: i32);
-    fn jump(&mut self, dx: i32, dy: i32);
-    fn trim(&mut self);
-    fn color_change(&mut self);
+    fn stitch(&mut self, dx: i32, dy: i32) -> Result<(), String>;
+    fn jump(&mut self, dx: i32, dy: i32) -> Result<(), String>;
+    fn trim(&mut self) -> Result<(), String>;
+    fn color_change(&mut self) -> Result<(), String>;
 }
 
 /// The origin of the file, in plan units: see [`Start`]. `None` when the plan has no stitch.
@@ -134,7 +137,7 @@ fn travel(sink: &mut impl Sink, a: Pt, b: Pt, max: i32) -> Result<(), String> {
             y: i32::try_from(i64::from(a.y) + dy * k / parts).map_err(|_| TOO_LONG.to_string())?,
         };
         let (jx, jy) = delta(at, next, max).ok_or(TOO_LONG)?;
-        sink.jump(jx, jy);
+        sink.jump(jx, jy)?;
         at = next;
     }
     Ok(())
@@ -150,15 +153,15 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
     // Whether stitches were written since the last trim or colour change: the thread is still
     // attached to the work.
     let mut attached = false;
-    let color_change = |sink: &mut dyn Sink| {
+    let color_change = |sink: &mut dyn Sink| -> Result<(), String> {
         if o.trim_before_color_change {
-            sink.trim();
+            sink.trim()?;
         }
-        sink.color_change();
+        sink.color_change()
     };
     for (i, block) in plan.blocks.iter().enumerate() {
         if i > 0 {
-            color_change(sink);
+            color_change(sink)?;
             attached = false;
         }
         for step in &block.steps {
@@ -171,30 +174,30 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
                         started = true;
                     }
                     let (dx, dy) = delta(at, p, max).ok_or(TOO_LONG)?;
-                    sink.stitch(dx, dy);
+                    sink.stitch(dx, dy)?;
                     at = p;
                     attached = true;
                 }
                 Step::Jump(p) => {
                     if started {
                         let (dx, dy) = delta(at, p, max).ok_or(TOO_LONG)?;
-                        sink.jump(dx, dy);
+                        sink.jump(dx, dy)?;
                         at = p;
                     }
                 }
                 Step::Trim => {
-                    sink.trim();
+                    sink.trim()?;
                     attached = false;
                 }
                 // A stop pauses the machine; the thread stays attached.
-                Step::Stop => color_change(sink),
+                Step::Stop => color_change(sink)?,
             }
         }
     }
     if o.return_to_start && at != start {
         // Cut first, so the travel back does not drag the thread across the work.
         if attached {
-            sink.trim();
+            sink.trim()?;
         }
         travel(sink, at, start, max)?;
     }

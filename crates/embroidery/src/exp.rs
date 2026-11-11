@@ -1,6 +1,6 @@
 //! EXP machine files: no header, two-byte stitches and four-byte control records.
 
-use crate::{Builder, Input, MAX_FILE_BYTES, Output, ReadOptions, Sink, WriteOptions, walk};
+use crate::{Builder, Input, MAX_FILE_BYTES, Output, ReadOptions, Sink, TOO_LONG, WriteOptions, walk};
 use vectorcraft_stitch::StitchPlan;
 
 /// The largest move per axis.
@@ -11,36 +11,59 @@ const JUMP: u8 = 0x04;
 const COLOR_CHANGE: [u8; 4] = [CONTROL, 0x01, 0x00, 0x00];
 const TRIM: [u8; 4] = [CONTROL, 0x80, 0x07, 0x00];
 
-/// A signed move as one byte. Moves reach `Sink` within +-127.
-fn byte(v: i32) -> u8 {
-    let [b] = i8::try_from(v).unwrap_or(0).to_le_bytes();
-    b
+/// A signed move as one byte; a move beyond +-127 is an error.
+fn byte(v: i32) -> Result<u8, String> {
+    if v.abs() > MAX_MOVE {
+        return Err(TOO_LONG.to_string());
+    }
+    let [b] = i8::try_from(v).map_err(|_| TOO_LONG.to_string())?.to_le_bytes();
+    Ok(b)
 }
 
-impl Sink for Vec<u8> {
-    fn stitch(&mut self, dx: i32, dy: i32) {
-        self.extend([byte(dx), byte(dy)]);
+/// Records as they are written, and how many.
+#[derive(Default)]
+struct Records {
+    out: Vec<u8>,
+    count: usize,
+}
+
+impl Records {
+    fn push(&mut self, r: &[u8]) {
+        self.out.extend_from_slice(r);
+        self.count += 1;
+    }
+}
+
+impl Sink for Records {
+    fn stitch(&mut self, dx: i32, dy: i32) -> Result<(), String> {
+        let (x, y) = (byte(dx)?, byte(dy)?);
+        self.push(&[x, y]);
+        Ok(())
     }
 
-    fn jump(&mut self, dx: i32, dy: i32) {
-        self.extend([CONTROL, JUMP, byte(dx), byte(dy)]);
+    fn jump(&mut self, dx: i32, dy: i32) -> Result<(), String> {
+        let (x, y) = (byte(dx)?, byte(dy)?);
+        self.push(&[CONTROL, JUMP, x, y]);
+        Ok(())
     }
 
-    fn trim(&mut self) {
-        self.extend(TRIM);
+    fn trim(&mut self) -> Result<(), String> {
+        self.push(&TRIM);
+        Ok(())
     }
 
-    fn color_change(&mut self) {
-        self.extend(COLOR_CHANGE);
+    fn color_change(&mut self) -> Result<(), String> {
+        self.push(&COLOR_CHANGE);
+        Ok(())
     }
 }
 
 /// The EXP file for `plan`, which must already fit the format (see [`crate::WriteOptions`];
 /// `jumps_per_trim` does not apply: a trim has its own code).
 pub fn write(plan: &StitchPlan, o: &WriteOptions) -> Result<Output, String> {
-    let mut bytes = Vec::new();
-    walk(plan, o, MAX_MOVE, &mut bytes)?;
-    Ok(Output { bytes, warnings: Vec::new() })
+    let mut r = Records::default();
+    walk(plan, o, MAX_MOVE, &mut r)?;
+    Ok(Output { bytes: r.out, records: r.count, warnings: Vec::new() })
 }
 
 /// The stitch plan in an EXP file, y down, with warnings for what could not be read. Every
@@ -112,7 +135,9 @@ mod tests {
     #[test]
     fn a_tiny_design_has_exact_bytes() {
         let o = WriteOptions { start: Start::FirstStitch, return_to_start: false, ..Default::default() };
-        assert_eq!(write(&tiny(), &o).unwrap().bytes, [0x00, 0x00, 0x0A, 0x00, 0x00, 0xF6]);
+        let out = write(&tiny(), &o).unwrap();
+        assert_eq!(out.bytes, [0x00, 0x00, 0x0A, 0x00, 0x00, 0xF6]);
+        assert_eq!(out.records, 3);
     }
 
     #[test]
@@ -176,6 +201,16 @@ mod tests {
             vec!["the file ends in the middle of a stitch".to_string()]
         );
         assert_eq!(read(&[0x00, 0x00, 0x1A], &ReadOptions::default()).unwrap().warnings, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_move_out_of_range_is_an_error_not_a_zero() {
+        let mut r = Records::default();
+        assert_eq!(r.stitch(128, 0).unwrap_err(), "a stitch is longer than the format allows: prepare the plan first");
+        assert_eq!(r.jump(0, -128).unwrap_err(), "a stitch is longer than the format allows: prepare the plan first");
+        assert!(r.out.is_empty());
+        r.stitch(127, -127).unwrap();
+        assert_eq!((r.out, r.count), (vec![0x7F, 0x81], 1));
     }
 
     #[test]

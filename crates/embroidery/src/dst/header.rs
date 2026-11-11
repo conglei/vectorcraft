@@ -34,6 +34,18 @@ fn signed(v: i64) -> String {
     format!("{sign}{:>5}", fit(v.abs(), 5))
 }
 
+/// Warnings for counts too large for their header fields, which then show their largest value.
+pub(crate) fn overflow(records: usize, color_changes: usize) -> Vec<String> {
+    let mut w = Vec::new();
+    if records > 9_999_999 {
+        w.push("the stitch count is too large for the file header".to_string());
+    }
+    if color_changes > 999 {
+        w.push("the colour change count is too large for the file header".to_string());
+    }
+    w
+}
+
 /// The header for a file of `records` records (including the end record) with
 /// `color_changes` colour changes, the given extents and end point (relative to the origin,
 /// y up).
