@@ -6,6 +6,14 @@ use super::{Entry, Item, Tokens, Value, VectorcraftApp, widgets};
 /// Render the menu bar.
 /// The in-window menu bar. Returns where its titles end (x): the bar itself takes the full width.
 pub fn menu_bar(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> f32 {
+    menu_bar_beside(app, ui, 0.0)
+}
+
+/// [`menu_bar`] that leaves `reserve` points free at the right end of the bar for something else
+/// (the Safe Mode label): when the titles at their usual spacing would reach into that room, they
+/// are drawn closer together, in steps, until they fit (or at the closest spacing, if even that
+/// does not). The widths are measured, so it holds for any number of menus.
+pub fn menu_bar_beside(app: &mut VectorcraftApp, ui: &mut egui::Ui, reserve: f32) -> f32 {
     let t = Tokens::get(ui.ctx());
     let ctx = ui.ctx().clone();
     // The press that opens a menu takes the keyboard from a focused text field: the field and its
@@ -33,6 +41,20 @@ pub fn menu_bar(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> f32 {
     let (end, open) = egui::MenuBar::new()
         .ui(ui, |ui| {
             let mut titles = Vec::with_capacity(tree.len());
+            if reserve > 0.0 {
+                let text_w: f32 = tree
+                    .iter()
+                    .map(|(title, _)| ui.painter().layout_no_wrap(tl!(title).to_string(), egui::FontId::proportional(13.0), t.text).size().x)
+                    .sum();
+                let room = ui.max_rect().right() - ui.cursor().min.x - reserve;
+                let (pad, gap) = (ui.spacing().button_padding.x, ui.spacing().item_spacing.x);
+                let n = tree.len() as f32;
+                let needs = |pad: f32, gap: f32| text_w + n * 2.0 * pad + (n - 1.0).max(0.0) * gap;
+                let steps = [(pad, gap), (pad.min(4.0), gap.min(2.0)), (pad.min(2.0), 0.0), (1.0, 0.0)];
+                let (pad, gap) = steps.into_iter().find(|(p, g)| needs(*p, *g) <= room).unwrap_or(steps[3]);
+                ui.spacing_mut().button_padding.x = pad;
+                ui.spacing_mut().item_spacing.x = gap;
+            }
             for (title, items) in tree.iter() {
                 let text = egui::RichText::new(tl!(title)).size(13.0).color(t.text);
                 let resp = ui.add(egui::Button::new(text));

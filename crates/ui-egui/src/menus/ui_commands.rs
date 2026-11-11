@@ -1430,6 +1430,18 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{path?, useArtboards?, range?, …document.exportEps options} open EPS Options (dialog `epsOptions`: fields = these options over the ones used last); OK checks them, remembers them and writes path (else asks). Export As… → EPS opens it too",
     ),
     (
+        "ui.stitchInfo",
+        "Stitch Info…",
+        "",
+        "{format?: dst (default) | exp, …stitch.info options} open Stitch Info (dialog `stitchInfo`: field `format`; read-only, it shows what stitch.info returns for the format: stitches, jumps, trims, colour changes, records, size in mm, a row per thread and the warnings, or the command's error), over the options the last stitch export used; off without a document",
+    ),
+    (
+        "ui.stitchOptionsDialog",
+        "Stitch File Options Dialog",
+        "",
+        "{format?: dst (default) | exp, path?, …document.export stitch options} open Stitch File Options (dialog `stitchOptions`: fields = these options over the ones used last; `mode` and `locks` null leave them to the engine); OK checks them, remembers them and writes path (else asks). Export As… → DST or EXP opens it too",
+    ),
+    (
         "file.saveForWeb",
         "Save for Web (Legacy)…",
         "Cmd+Alt+Shift+S",

@@ -57,6 +57,26 @@ fn with_draw_options(mut props: Value) -> Value {
     props
 }
 
+/// The stitch options of `stitch.info` and of a DST or EXP export (lengths in mm), as `stitch_info`
+/// and `export_stitch` take them, plus `format` (`default` says what it is when not given).
+fn stitch_props(format: &str) -> Value {
+    json!({
+        "format": {"type": "string", "enum": ["dst", "exp"], "description": format},
+        "machine": {"type": "string", "enum": ["commercial15", "generic"], "description": "commercial15 (default; 15 needles, a 500 x 350 mm field) or generic (no needle or field limits)"},
+        "mode": {"type": "string", "enum": ["run", "manual"], "description": "run: running stitch along each stroked path; manual: one needle point per anchor. Not given: art on the layer an opened stitch file made is manual (its needle points export unchanged), all other art is run"},
+        "stitchLength": {"type": "number", "minimum": 0.5, "maximum": 12, "description": "Running stitch length in mm (default 2.5)"},
+        "minStitch": {"type": "number", "minimum": 0, "maximum": 2, "description": "Stitches shorter than this (mm) are dropped (default 0.3)"},
+        "maxStitch": {"type": "number", "minimum": 1, "maximum": 12.7, "description": "The longest stitch in mm: 1-12.1 for DST (default 12.1), 1-12.7 for EXP (default 12.7); longer ones are split by jumps"},
+        "locks": {"type": "boolean", "description": "Lock stitches at the start and end of each run. Not given: off when everything stitched is on an opened stitch file's layer, on otherwise"},
+        "jumpsPerTrim": {"type": "integer", "minimum": 2, "maximum": 8, "description": "Jumps in a row the machine reads as a trim (default 3)"},
+        "trimBeforeColorChange": {"type": "boolean", "description": "A trim before each colour change (default false)"},
+        "start": {"type": "string", "enum": ["center", "firstStitch"], "description": "The file's origin (default center)"},
+        "returnToStart": {"type": "boolean", "description": "End the file with travel back to its origin (default true)"},
+        "name": string("The design name in the file (default: the document's title)"),
+        "selectedOnly": {"type": "boolean", "description": "Stitch only the selected objects (default false)"},
+    })
+}
+
 fn mods_schema() -> Value {
     json!({
         "type": "object",
@@ -80,7 +100,7 @@ fn save_extensions() -> Vec<&'static str> {
 }
 
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
-    let writes_file = matches!(name, "screenshot" | "save_file" | "export");
+    let writes_file = matches!(name, "screenshot" | "save_file" | "export" | "export_stitch");
     let read_only = read_only && !writes_file;
     json!({
         "name": name,
@@ -405,6 +425,29 @@ pub fn tool_definitions() -> Vec<Value> {
                     "outlineText": {"type": "boolean", "description": "SVG/SVGZ: true writes text as outlines (viewable without the fonts). DXF takes it too (type outlined anyway unless preserve: editability). PDF uses options.advanced.outlineText instead (default false: live text)"},
                     "options": {"type": "object", "description": "More format options, passed through (see run_command document.formats), e.g. {\"quality\": 80} for jpg or {\"advanced\": {\"outlineText\": true}} for PDF text as outlines (default false: live text)"},
                 }),
+                &[],
+            ),
+            false,
+        ),
+        tool(
+            "stitch_info",
+            "Stitch info",
+            "What a DST or EXP export of the active document would write, without writing a file: the stitches, jumps, trims, colour changes, records in the file, the size in mm, one entry per thread (rgb, stitches, lengthMm, in sewing order) and warnings. It runs the stitch.info command, so the options are the export's; a document with no stroked paths is an error. Check it before export_stitch.",
+            obj(stitch_props("dst (default) or exp"), &[]),
+            true,
+        ),
+        tool(
+            "export_stitch",
+            "Export a stitch file",
+            "Write the active document's stroked paths as an embroidery stitch file (running stitch, one thread per stroke colour) with the options of stitch_info. It runs document.export, so run_command document.formats lists the options too. Without `path` the bytes come back as dataBase64; the reply carries `warnings`. Export only after stitch_info shows sensible counts and no warnings you cannot accept.",
+            obj(
+                {
+                    let mut props = stitch_props("dst or exp. Default: from the path's extension, else dst");
+                    if let Some(p) = props.as_object_mut() {
+                        p.insert("path".into(), string("Destination file (omit to get dataBase64)"));
+                    }
+                    props
+                },
                 &[],
             ),
             false,

@@ -578,3 +578,24 @@ fn bai_mirror_warns_for_a_format_its_panel_does_not_read() {
     let other = s.execute("stitch.info", &json!({"machine": "commercial15", "format": "exp"})).unwrap();
     assert!(!other["warnings"].to_string().contains("panel"), "{other}");
 }
+
+#[test]
+fn stitch_options_are_checked_without_exporting() {
+    assert!(check_stitch_options(&json!({}), "dst").is_ok());
+    assert!(check_stitch_options(&json!({"stitchLength": 3, "jumpsPerTrim": 5, "machine": "generic"}), "exp").is_ok());
+    // The longest stitch is DST's 12.1 mm, EXP's 12.7.
+    assert!(check_stitch_options(&json!({"maxStitch": 12.7}), "exp").is_ok());
+    for (p, name) in
+        [(json!({"maxStitch": 12.7}), "maxStitch"), (json!({"stitchLength": 13}), "stitchLength"), (json!({"jumpsPerTrim": 9}), "jumpsPerTrim")]
+    {
+        let e = check_stitch_options(&p, "dst").unwrap_err();
+        assert!(e.contains(name), "{e}");
+    }
+    assert!(check_stitch_options(&json!({}), "svg").is_err());
+}
+
+#[test]
+fn the_calibration_design_is_in_the_embroidery_menu() {
+    let spec = crate::command_specs().iter().find(|c| c.id == "stitch.calibration").unwrap();
+    assert_eq!(spec.menu, ["Embroidery"]);
+}

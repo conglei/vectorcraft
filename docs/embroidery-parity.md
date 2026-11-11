@@ -1,6 +1,6 @@
 # Embroidery parity
 
-> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; long stitches split into jumps and a final stitch, so a 30 mm stitch no longer reads as a trim; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
+> **Last reviewed:** 2026-11-11 · **Last updated:** 2026-11-11 · **Change:** minor (the Embroidery menu, Stitch Info, Stitch File Options and the `stitch_info` and `export_stitch` MCP tools; execution tracking: one Linear issue per gap, with blocking relations, in the StitchCraft team; `bai_mirror` machine profile with speed and panel formats; first stitch types: tatami fill and satin column, chosen by the `fill` and `stroke` export options; opened stitch files keep their trims and get no added travel trims, `travelTrims` export option; review fixes: a trim before the return to the start, template, non-printing and clipping art not sewn, opened stitch files re-export unchanged, `stitch.info` counts file records) · **Target:** the entry and middle levels of commercial embroidery digitizing software, on commercial multi-needle machines
 
 What commercial embroidery software does, against what VectorCraft has today. This is a planning
 checklist for the embroidery subsystem, now being built: photo or artwork in, a stitch plan and a machine file
@@ -22,7 +22,7 @@ basic tier's hours (estimated).** VectorCraft has a stitch plan model, machine p
 manual stitches along stroked paths, tatami fills of filled paths, satin columns along strokes, a small-stitch filter, fixed lock stitches, and DST and EXP
 readers and writers, reached through `document.export`, `document.open`, `stitch.info` and
 `stitch.calibration`, and a PNG preview of the export's stitches (`stitch.preview`: lit thread or a
-density map, with optional jump, needle point and function marks). Fuzz tests feed garbage and mutated DST and EXP files to both readers. Files
+density map, with optional jump, needle point and function marks). The commands are reachable from the Embroidery menu (Stitch Info, Calibration Design, Export Stitch File, whose options dialog sets the machine, stitch lengths, locks, trims and origin) and, for agents, from the `stitch_info` and `export_stitch` MCP tools. Fuzz tests feed garbage and mutated DST and EXP files to both readers. Files
 written by VectorCraft and read by an independent implementation (pyembroidery, by hand, see
 [development.md](development.md#checking-stitch-files-against-another-reader)) give the same needle
 points, and the reverse. **No file has been stitched on a machine yet**: the jumps-per-trim default,
@@ -305,6 +305,7 @@ Public documentation only. Pages marked (s) were seen as search snippets, not re
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | An Embroidery menu with Stitch Info (stitches, jumps, trims, colour changes, size and a row per thread), Calibration Design and Export Stitch File, with a Stitch File Options dialog after Export As picks a DST or EXP file; `stitch_info` and `export_stitch` MCP tools and a `stitch-out` prompt. Measured by headless dialog and MCP tests; no row's score moves |
 | 2026-11-11 | minor | Long stitches, measured by tests and a cross-check with an independent reader: a stitch longer than the maximum is `k − 1` jumps and a final stitch in `k` equal pieces, not `k` jumps and a stitch of zero length, so a 30 mm stitch (two jumps) no longer reads as a trim and gets no trim; travel ending in a stitch sews its last part with that stitch; the DST reader opens equal jumps ending in an equal stitch as a long stitch, not a trim. Rows updated: machine profile, DST |
 | 2026-11-11 | minor | Named machine profile `bai_mirror` (machine option value): the `commercial15` limits plus `max_spm` (1,200) and `formats` (DST, DSB) on profiles; an export in another format warns. Row updated: machine profile. Machine facts section added |
 | 2026-11-11 | minor | First pass of E3, measured by tests, not stitched on a machine: filled paths sew as tatami fills and stroked paths as running stitch or satin columns, by the export options `fill` and `stroke`. Rows updated: satin column, tatami fill, auto split. E3 reduced to 55–90 h (estimated) |

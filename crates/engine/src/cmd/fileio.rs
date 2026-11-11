@@ -56,6 +56,8 @@ mod pxrread;
 mod save;
 mod screens;
 pub(crate) mod stitchfile;
+/// The stitch options of a DST or EXP export, checked without exporting.
+pub use stitchfile::check as check_stitch_options;
 mod svg;
 mod text;
 mod tgaread;

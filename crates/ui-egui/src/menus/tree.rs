@@ -507,6 +507,17 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
             v
         }),
         ("Effect", effect_menu()),
+        // Embroidery sits after Effect, before View: like Effect it works on the document's art
+        // (its stroked paths become stitches), and View, Window and Help stay the bar's last three.
+        (
+            "Embroidery",
+            vec![
+                c("Stitch Info…", "ui.stitchInfo"),
+                c("Calibration Design", "stitch.calibration"),
+                Sep,
+                cp("Export Stitch File…", "file.exportAs", json!({"format": "dst"})),
+            ],
+        ),
         ("View", {
             let mut v = vec![
                 c("Outline", "view.outline"),

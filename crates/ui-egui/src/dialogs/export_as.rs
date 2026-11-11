@@ -2,7 +2,7 @@
 //! artboard, after a central file of the whole document for EPS with two or more when art shows,
 //! or one page each in a PDF); without artboards the export covers the visible art. OK
 //! picks the file, then the format's options dialog follows (PNG/JPEG/WebP/PNG-8/GIF Options, SVG
-//! Options, Text Export Options, DXF Options, EPS Options, and Save PDF for artboards as pages),
+//! Options, Text Export Options, DXF Options, EPS Options, Stitch File Options for DST and EXP, and Save PDF for artboards as pages),
 //! else the file is written. DWG is listed, greyed out, with what to use instead. The formats of
 //! installed exporter plug-ins come after the built-in ones: they write the whole document, and one
 //! with parameters asks for them before writing (`plugin::open_export`).
@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 use serde_json::{Value, json};
 use vectorcraft_engine::cmd::fileio::{self, ArtboardPick, Format};
 
-use super::{DialogSpec, dxf_options, eps_options, form, plugin, png_options, save_pdf, svg_options, text_export};
+use super::{DialogSpec, dxf_options, eps_options, form, plugin, png_options, save_pdf, stitch_options, svg_options, text_export};
 use crate::state::Dialog;
 use crate::theme::Tokens;
 use crate::{VectorcraftApp, io, widgets};
@@ -193,6 +193,10 @@ fn options_or_write(
             }
             if f.id == "eps" {
                 eps_options::open(app, &params);
+                return Ok(Value::Null);
+            }
+            if matches!(f.id, "dst" | "exp") {
+                stitch_options::open(app, &params);
                 return Ok(Value::Null);
             }
             io::export(app, Some(f.id), Some(path), &params)

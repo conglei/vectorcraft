@@ -192,7 +192,7 @@ dropped; the call reports uncertainty like any reply that never arrived whole.
 
 ### Prompts
 
-`prompts/list` offers five workflows; `prompts/get` returns one templated user message with its
+`prompts/list` offers six workflows; `prompts/get` returns one templated user message with its
 arguments filled in. A missing required argument is `-32602`.
 
 | Prompt | Arguments (required first) |
@@ -202,6 +202,7 @@ arguments filled in. A missing required argument is `-32602`.
 | `recolor` | `palette`, `method` |
 | `trace-and-style` | `path`, `preset`, `effect` |
 | `export-set` | `formats`, `directory`, `scale` |
+| `stitch-out` | `design`, `directory`, `format` |
 
 ```sh
 echo '{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"poster","arguments":{"brief":"a jazz festival"}}}' \
@@ -478,6 +479,8 @@ opens the picker through `run_command` with the remote backend.
 | `transform` | `{ids?, dx?, dy?, rotate?, scale?, scaleX?, scaleY?, reflect?, shear?, origin?, copy?}` | Runs move, rotate, scale, reflect, shear in that order. With `copy`, the first step duplicates. |
 | `create_graph` | `{type?, x, y, width, height, csv? \| series?, categories?, rows?}` | The nine Illustrator graph types: column, stacked column, bar, stacked bar, line, area, scatter, pie and radar. An empty CSV cell or a `null` in `rows` is a blank value; a number in straight quotes is a label. Edit later with `graph.setData` / `graph.setType` via `run_command`. `graph.column {design, columnType: vertical\|uniform\|repeating\|sliding, each, fractions: chop\|scale}` draws the columns or bars of the series picked with Group Selection (or `seriesIndexes`, or all of them) with a graph design saved by `graph.design`; with no `design` it returns the series' current design and options. Type in the design that holds a `%` followed by two digits shows each column's value, with at least the first digit's places before the decimal point and the second digit's places after it. |
 | `text_wrap` | `{ids?, offset?, invert?, release?}` | Area type below the objects (same layer) flows around them. |
+| `stitch_info` | `{format?, machine?, mode?, stitchLength?, minStitch?, maxStitch?, locks?, jumpsPerTrim?, trimBeforeColorChange?, start?, returnToStart?, name?, selectedOnly?}` | The `stitch.info` command: what a DST or EXP export with the same options would write, without writing a file (see [Embroidery](#embroidery)). |
+| `export_stitch` | `{path?, format?, …the stitch_info options}` | A DST or EXP stitch file, by `document.export`; `format` defaults to the path's extension (`.exp` is EXP), else DST. Without `path` the bytes come back as `dataBase64`. See [Embroidery](#embroidery). |
 | `undo` / `redo` | `{}` | Many calls that change nothing record no undo step, for example `object.align` with nothing to move, `object.move` by 0 without `copy` and `object.showAll` with nothing hidden. `undo` (`edit.undo`) after such a call undoes the step before it. `inspect_document` lists the undo steps as `history`. `run_command` with `edit.clearHistory` removes every undo and redo step of the active document and returns `{cleared}`, the number of steps removed; the document stays as it is, and the command records no undo step. `run_command` with `edit.newDocumentFromState` and `{index?, created?}` makes a new document holding the art as it was at that state and makes it the active document, and returns `{index, title}`. `index` is a row of the History panel, with 0 the oldest state kept, and an omitted `index` uses the current state. An `index` that names no state is an error and changes nothing. `created` is File Info's created date in Unix seconds or null, and defaults to now. The new document takes the next `Untitled-N` name, is marked unsaved, has nothing selected and has no steps to undo or redo. It is out of symbol, opacity-mask and pattern editing, and the art drawn in a pattern's tile is stored in the pattern, as `object.pattern.done` stores it. The source document and its steps stay as they are, except that typing or a drag in progress is first kept as a step. While the Type tool edits type, `undo` and `redo` put its caret, with no characters selected, at the end of the text the step changed: after the text it puts back or retypes, or where the text it takes out was. A step that changes no characters, such as a formatting change, leaves the caret and the selection where they are. |
 
 For example, create editable Japanese area type with the engine's vertical writing mode:
@@ -5443,6 +5446,33 @@ Screens doesn't write EPS.
 ```json
 {"name":"run_command","arguments":{"command":"document.exportEps","params":{"path":"/tmp/logo.eps","level":2,"previewFormat":"tiffBw","flattenerPreset":"high"}}}
 {"name":"export","arguments":{"path":"/tmp/art.eps","options":{"useArtboards":true,"cmykPostScript":false}}}
+```
+
+## Embroidery
+
+VectorCraft stitches the document's stroked paths as running stitch, one thread per stroke colour, and
+writes DST and EXP machine files. The Embroidery menu of the app reaches the same commands: Stitch Info…,
+Calibration Design and Export Stitch File… (Export As on DST, then Stitch File Options).
+
+| Tool or command | What it does |
+|---|---|
+| `stitch_info` | The `stitch.info` command. Returns `{stitches, jumps, trims, colorChanges, records, widthMm, heightMm, threads: [{rgb, stitches, lengthMm}], warnings}` for the file an export with the same options would write; a document with no stroked paths is an error. |
+| `export_stitch` | Writes the file: `document.export` with `format` `dst` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
+| `run_command stitch.calibration` | Adds a 100 mm test piece for a first stitch-out, as one group of paths in three thread colours; one undo step. `{x?, y?}` puts its top-left corner. |
+| `run_command stitch.preview` | Draws the stitch plan over the art. Added by another change: use it when `list_commands` with `filter: "stitch"` lists it. |
+
+Both tools take the options of `document.formats` for `dst` and `exp` (lengths in mm): `machine`
+(`commercial15` default, or `generic`), `mode` (`run` or `manual`; not given, art on the layer an opened
+stitch file made keeps its needle points), `stitchLength` (0.5–12, default 2.5), `minStitch` (0–2, default 0.3),
+`maxStitch` (1–12.1 for DST, 1–12.7 for EXP, which is also its default), `locks`, `jumpsPerTrim` (2–8,
+default 3), `trimBeforeColorChange`, `start` (`center` or `firstStitch`), `returnToStart`, `name` and
+`selectedOnly`. The `stitch-out` prompt walks through drawing or opening a design, checking `stitch_info` and
+exporting.
+
+```json
+{"name":"run_command","arguments":{"command":"stitch.calibration","params":{"x":20,"y":20}}}
+{"name":"stitch_info","arguments":{"format":"dst","stitchLength":2.5}}
+{"name":"export_stitch","arguments":{"path":"/tmp/out/design.dst","stitchLength":2.5,"name":"DESIGN"}}
 ```
 
 ## Print
