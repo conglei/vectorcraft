@@ -234,6 +234,11 @@ that shows fewer children than it has reports their total as `childCount`, so tr
 nothing truncated the reply is the plain summary. Both must be non-negative integers and need `summary: true`
 (the full object JSON is never truncated); anything else is an error.
 
+For embroidery, `run_command stitch.info` gives the stitch counts and warnings a DST or EXP export would have,
+and `run_command stitch.preview` returns a PNG of the stitches that export would sew (`pngBase64`, `width`,
+`height`; with `path`, written there instead): lit thread on fabric, or `view: "density"` for a coverage map
+with `maxCoverage` and `denseCells`, and `showJumps`, `showNeedles` and `showFunctions` overlays.
+
 In the summary an object reports its paint as `fill`, `stroke` (labels) and `strokeWidth`. So does a compound path,
 whose paint is its own: its member paths report `compoundMember: true` instead of a paint they don't have. Every
 node (layers and groups too) reports its opacity when it is below 1, in both scales: `opacity` is the 0–1 fraction
