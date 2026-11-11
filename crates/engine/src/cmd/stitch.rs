@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(
             "stitch.calibration",
             "Stitch Calibration Design",
-            [],
+            ["Embroidery"],
             None,
             "{x?: 0, y?: 0 (the design's top-left corner, document units)} adds a 100 mm test piece for a first stitch-out, as one group of paths stroked in three thread colours: a square, scale ticks along its top edge, an F that shows direction and mirroring, and a near and a far pair of squares, each pair trimmed apart, that show whether trims happen where the file asks; it stitches off-centre from the square's top-left corner; one undo step → {id} of the group",
             has_doc,

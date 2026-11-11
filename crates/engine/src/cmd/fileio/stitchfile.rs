@@ -290,6 +290,12 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     })
 }
 
+/// Check the stitch options in `p` for `format` (`dst` or `exp`) without planning a file (dialogs
+/// keep themselves open on an error).
+pub fn check(p: &Value, format: &str) -> std::result::Result<(), String> {
+    options(C, p, format).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// The plan for `doc` with options `o`, named, prepared for the machine, and its warnings. When
 /// `locks` was not given, runs get lock stitches unless every run came from an opened stitch file
 /// (which has its own), with a warning when the plan mixes the two. `travelTrims` follows the same
