@@ -5,8 +5,13 @@
 //! stitch export used. A command error (nothing stitchable, a bad option) shows as the dialog's
 //! message.
 //!
+//! It also shows the estimates (run time, top and bobbin thread), a needle per thread, the hoop
+//! (a dropdown that runs `stitch.hoop.set`) and a Design Check section listing what `stitch.check`
+//! finds.
+//!
 //! Fields: `format` (`dst` | `dsb` | `exp`), and the dialog's own `__params` (the `stitch.info` options),
-//! `__for` (the format the result is for), `__result` (what `stitch.info` returned) and `__error`.
+//! `__for` (the format the result is for), `__result` (what `stitch.info` returned), `__check` (what
+//! `stitch.check` returned), `__hoops` (`stitch.hoops.list`) and `__error`.
 
 use serde_json::{Value, json};
 
@@ -64,6 +69,12 @@ fn refresh(app: &mut VectorcraftApp, d: &mut Dialog) {
             d.fields.insert("__error".into(), json!(e.to_string()));
         }
     }
+    // The checker and the hoop list are extras: when they fail, their sections are left out.
+    let check = app.session.execute("stitch.check", &params).unwrap_or(Value::Null);
+    d.fields.insert("__check".into(), check);
+    let machine = json!({"machine": params.get("machine").cloned().unwrap_or(json!("commercial15"))});
+    let hoops = app.session.execute("stitch.hoops.list", &machine).unwrap_or(Value::Null);
+    d.fields.insert("__hoops".into(), hoops);
     d.fields.insert("__for".into(), json!(format));
 }
 
@@ -113,6 +124,9 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             (tl!("Color Changes"), count(&info, "colorChanges")),
             (tl!("Records in the File"), count(&info, "records")),
             (tl!("Size"), size),
+            (tl!("Run Time"), run_time(&info)),
+            (tl!("Top Thread"), metres(&info, "topMm")),
+            (tl!("Bobbin (estimate)"), metres(&info, "bobbinMm")),
         ];
         for (label, value) in rows {
             ui.label(egui::RichText::new(label).color(t.text_dim).size(12.5));
@@ -126,8 +140,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         widgets::subheader(ui, tl!("Threads"));
         ui.add_space(4.0);
         egui::ScrollArea::vertical().id_salt("stitch-threads").max_height(LIST_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("stitch-threads-grid").num_columns(4).spacing([18.0, 4.0]).show(ui, |ui| {
-                for h in [tl!("Color"), "", tl!("Stitches"), tl!("Length")] {
+            egui::Grid::new("stitch-threads-grid").num_columns(5).spacing([18.0, 4.0]).show(ui, |ui| {
+                for h in [tl!("Color"), "", tl!("Needle"), tl!("Stitches"), tl!("Length")] {
                     ui.label(egui::RichText::new(h).color(t.text_dim).size(11.5));
                 }
                 ui.end_row();
@@ -137,6 +151,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                     ui.painter().rect_filled(rect, 2.0, color(hex));
                     ui.painter().rect_stroke(rect, 2.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     ui.label(egui::RichText::new(hex).color(t.text).size(12.5).monospace());
+                    ui.label(egui::RichText::new(count(th, "needle")).color(t.text).size(12.5));
                     ui.label(egui::RichText::new(count(th, "stitches")).color(t.text).size(12.5));
                     let length = mm(th, "lengthMm");
                     let length = crate::i18n::fmt(tl!("{length} mm"), &[("length", length.as_str())]);
@@ -146,6 +161,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             });
         });
     }
+    hoop_row(app, ui, d);
+    design_check(ui, d, &t);
     let warnings = info.get("warnings").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
     if !warnings.is_empty() {
         ui.add_space(10.0);
@@ -156,4 +173,73 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         }
     }
     false
+}
+
+/// `v[key]` mm as metres with one decimal.
+fn metres(v: &Value, key: &str) -> String {
+    v.get(key).and_then(Value::as_f64).map_or_else(|| "-".into(), |n| format!("{:.1} m", n / 1000.0))
+}
+
+/// The estimated run time at the speed `stitch.info` used.
+fn run_time(v: &Value) -> String {
+    let (Some(secs), Some(spm)) = (v.get("runTimeS").and_then(Value::as_f64), v.get("spm").and_then(Value::as_f64)) else { return "-".into() };
+    // Finite (JSON numbers are) and capped, so the cast is exact.
+    let s = secs.clamp(0.0, 1e9) as u64;
+    let time = if s >= 3600 { format!("{} h {:02} min", s / 3600, (s % 3600) / 60) } else { format!("{} min {:02} s", s / 60, s % 60) };
+    format!("{time} ({spm:.0} spm)")
+}
+
+/// The hoop: a dropdown of the machine's hoops (Automatic: none chosen, the smallest that fits).
+fn hoop_row(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let Some(list) = d.fields.get("__hoops").and_then(|h| h.get("hoops")).and_then(Value::as_array).cloned() else { return };
+    let chosen = d.fields.get("__hoops").and_then(|h| h.get("chosen")).cloned().unwrap_or(Value::Null);
+    let mut labels: Vec<String> = vec![tl!("Automatic (smallest that fits)").to_string()];
+    labels.extend(list.iter().map(|h| h.get("name").and_then(Value::as_str).unwrap_or("").to_string()));
+    let current = match chosen.get("id").and_then(Value::as_str) {
+        Some(id) => list.iter().position(|h| h.get("id").and_then(Value::as_str) == Some(id)).map_or(0, |i| i + 1),
+        None if chosen.is_object() => {
+            labels.push(chosen.get("name").and_then(Value::as_str).unwrap_or("").to_string());
+            labels.len() - 1
+        }
+        None => 0,
+    };
+    let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+    ui.add_space(10.0);
+    let mut picked = None;
+    widgets::label_row(ui, tl!("Hoop:"), 70.0, |ui| {
+        picked = widgets::dropdown(ui, "stitch-info-hoop", names.get(current).copied().unwrap_or(""), &names, 260.0);
+    });
+    let Some(i) = picked.filter(|i| *i != current) else { return };
+    let params = match i.checked_sub(1).and_then(|k| list.get(k)) {
+        Some(h) => json!({"id": h.get("id").cloned().unwrap_or(Value::Null)}),
+        None if i == 0 => json!({"clear": true}),
+        // The custom hoop itself: nothing to change.
+        None => return,
+    };
+    if let Err(e) = app.run("stitch.hoop.set", params) {
+        app.status(e);
+    }
+    refresh(app, d);
+}
+
+/// Design Check: what `stitch.check` found, errors first.
+fn design_check(ui: &mut egui::Ui, d: &Dialog, t: &Tokens) {
+    let Some(findings) = d.fields.get("__check").and_then(|c| c.get("findings")).and_then(Value::as_array) else { return };
+    ui.add_space(10.0);
+    widgets::subheader(ui, tl!("Design Check"));
+    ui.add_space(2.0);
+    egui::ScrollArea::vertical().id_salt("stitch-check").max_height(LIST_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
+        for f in findings {
+            let (mark, colour) = match f.get("level").and_then(Value::as_str) {
+                Some("error") => ("●", t.error),
+                Some("warning") => ("▲", t.warning),
+                _ => ("○", t.text_dim),
+            };
+            let message = f.get("message").and_then(Value::as_str).unwrap_or("");
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(mark).color(colour).size(11.0));
+                ui.add(egui::Label::new(egui::RichText::new(crate::i18n::msg(message)).color(t.text).size(12.0)).wrap());
+            });
+        }
+    });
 }

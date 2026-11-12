@@ -3,7 +3,9 @@
 //! that export would sew. The stitch properties of objects are in [`objects`].
 
 mod objects;
+mod production;
 mod sequence;
+mod worksheet;
 
 use std::sync::Arc;
 
@@ -34,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Info",
             [],
             None,
-            "{format?: dst (default) | dsb | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | bai_mirror (a commercial single-head 15-needle machine, 350 x 500 mm; the same limits, and a warning for a format its panel does not read: DST and DSB) | generic (no needle or field limits), mode?: run (running stitch along each stroked path) | manual (one needle point per anchor) (given: for all art; not given: art on the layer an opened stitch file made is manual, so its needle points export unchanged, and all other art is run), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP and DSB 12.7, their default too: longer stitches are split into equal pieces, jumps and a final stitch), locks?: (lock stitches at the start and end of each run; not given: off when everything stitched is on an opened stitch file's layer, on otherwise, with a warning when that file's runs get them too), travelTrims?: (a trim before travel long enough that the machine would read it as one; true: for all art, false: for none, the trims the plan has stay either way; not given: off when everything stitched is on an opened stitch file's layer, which keeps its own trims, on otherwise), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch (the design start, stitch.designStartEnd.set, replaces it when set), returnToStart?: true (the file ends with travel back to its origin; not given: off when everything stitched is on an opened stitch file's layer, on otherwise), name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone), fill?: {type?: tatami (default; rows of running stitch, holes kept by the fill rule, sewn before the outline) | none, angle?: 0 (degrees, counter-clockwise, -360–360), spacing?: 0.4 (mm between rows, 0.2–5), stitchLength?: 3 (mm, 1–8), stagger?: 0.25 (row offset as a fraction of the stitch length, 0–1)}, stroke?: {type?: run (default) | satin (a satin column centred on the path, square ends, stitches over maxStitch split), spacing?: 0.4 (satin, mm peak to peak, 0.2–5), width?: (satin, mm, 0.5–20; default the stroke weight, held to 0.5–20)} (fill and satin are not used on the layer an opened stitch file made)} what document.export {format: dst|dsb|exp} with the same options would write → {stitches, jumps, trims, colorChanges, records (the records in the file, for DST its header's stitch count: travel, trims and the end record included), widthMm, heightMm, travelMm (the distance jumped between runs, to 0.1 mm; the writer's return to the origin aside), threads: [{rgb: \"#rrggbb\", stitches, lengthMm, brand?, code?, name?, deltaE? (with a thread chart active, stitch.threads.use: the chart's nearest thread to this colour and how far off it is, CIE76)}] (one per thread colour, in sewing order), warnings}; a document with no stroked or filled paths is an error",
+            "{format?: dst (default) | dsb | exp, machine?: commercial15 (default; 15 needles, a 500 x 350 mm field) | bai_mirror (a commercial single-head 15-needle machine, 350 x 500 mm; the same limits, and a warning for a format its panel does not read: DST and DSB) | generic (no needle or field limits), mode?: run (running stitch along each stroked path) | manual (one needle point per anchor) (given: for all art; not given: art on the layer an opened stitch file made is manual, so its needle points export unchanged, and all other art is run), stitchLength?: 2.5 (mm, 0.5–12), minStitch?: 0.3 (mm, 0–2: shorter stitches are dropped), maxStitch?: 12.1 (mm, 1–12.1; EXP and DSB 12.7, their default too: longer stitches are split into equal pieces, jumps and a final stitch), locks?: (lock stitches at the start and end of each run; not given: off when everything stitched is on an opened stitch file's layer, on otherwise, with a warning when that file's runs get them too), travelTrims?: (a trim before travel long enough that the machine would read it as one; true: for all art, false: for none, the trims the plan has stay either way; not given: off when everything stitched is on an opened stitch file's layer, which keeps its own trims, on otherwise), jumpsPerTrim?: 3 (2–8: jumps in a row the machine reads as a trim), trimBeforeColorChange?: false, start?: center (default) | firstStitch (the design start, stitch.designStartEnd.set, replaces it when set), returnToStart?: true (the file ends with travel back to its origin; not given: off when everything stitched is on an opened stitch file's layer, on otherwise), name?: (the design name; default the document's title), selectedOnly?: false (the selected objects alone), fill?: {type?: tatami (default; rows of running stitch, holes kept by the fill rule, sewn before the outline) | none, angle?: 0 (degrees, counter-clockwise, -360–360), spacing?: 0.4 (mm between rows, 0.2–5), stitchLength?: 3 (mm, 1–8), stagger?: 0.25 (row offset as a fraction of the stitch length, 0–1)}, stroke?: {type?: run (default) | satin (a satin column centred on the path, square ends, stitches over maxStitch split), spacing?: 0.4 (satin, mm peak to peak, 0.2–5), width?: (satin, mm, 0.5–20; default the stroke weight, held to 0.5–20)} (fill and satin are not used on the layer an opened stitch file made)} what document.export {format: dst|dsb|exp} with the same options would write → {stitches, jumps, trims, colorChanges, records (the records in the file, for DST its header's stitch count: travel, trims and the end record included), widthMm, heightMm, travelMm (the distance jumped between runs, to 0.1 mm; the writer's return to the origin aside), threads: [{rgb: \"#rrggbb\", stitches, lengthMm, needle (the needle stitch.needles gives it on the machine; null: past its needles), brand?, code?, name?, deltaE? (with a thread chart active, stitch.threads.use: the chart's nearest thread to this colour and how far off it is, CIE76)}] (one per thread colour, in sewing order), topMm (the stitched length of all threads), bobbinMm (an estimate: half the top thread, as thread use splits about 2/3 top and 1/3 bobbin), spm, runTimeS (an estimate: stitches and jumps at spm, plus colorChangeS per colour change and trimS per trim), warnings (the export's, then the design check's warnings and errors, stitch.check)}; spm?: (stitches per minute, 100–3000; default the machine's top speed, 1200 on bai_mirror, else 800), colorChangeS?: 5 (seconds per colour change, 0–600), trimS?: 3 (seconds per trim, 0–600), marginMm?, thresholds? (the design check's, stitch.check); a document with no stroked or filled paths is an error",
             has_doc,
             info
         ),
@@ -58,6 +60,8 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
     ];
     v.extend(objects::specs());
+    v.extend(production::specs());
+    v.extend(worksheet::specs());
     v.extend(sequence::specs());
     v
 }
@@ -114,6 +118,18 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
             v
         })
         .collect();
+    let prof = production::machine(p, C)?;
+    let est = production::estimates(&plan, &st, &prof, p, C)?;
+    let mut threads = threads;
+    for (t, n) in threads.iter_mut().zip(&est.needles) {
+        t["needle"] = json!(n);
+    }
+    let mut warnings = out.warnings;
+    for f in production::findings(s, p, C)? {
+        if f.level != vectorcraft_stitch::Level::Info && !warnings.contains(&f.message) {
+            warnings.push(f.message);
+        }
+    }
     Ok(json!({
         "stitches": st.stitches,
         "jumps": st.jumps,
@@ -124,7 +140,11 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         "heightMm": st.height_mm,
         "travelMm": (st.travel_mm * 10.0).round() / 10.0,
         "threads": threads,
-        "warnings": out.warnings,
+        "topMm": (est.top_mm * 10.0).round() / 10.0,
+        "bobbinMm": (est.bobbin_mm * 10.0).round() / 10.0,
+        "spm": est.spm,
+        "runTimeS": est.run_time_s.round(),
+        "warnings": warnings,
     }))
 }
 

@@ -77,6 +77,26 @@ fn stitch_props(format: &str) -> Value {
     })
 }
 
+/// The options of `stitch_worksheet` and `export_production`: the stitch options without `format`
+/// (and `name`, which `export_production` takes as the file name), plus the estimate and hoop ones.
+fn production_props() -> Value {
+    let mut props = stitch_props("");
+    if let Some(p) = props.as_object_mut() {
+        p.remove("format");
+        p.insert(
+            "machine".into(),
+            json!({"type": "string", "enum": ["commercial15", "bai_mirror", "generic"], "description": "commercial15 (default; 15 needles, 500 x 350 mm), bai_mirror (the owner's 15-needle machine: 1,200 stitches per minute, reads DST and DSB) or generic"}),
+        );
+        p.insert("spm".into(), json!({"type": "number", "minimum": 100, "maximum": 3000, "description": "Stitches per minute for the run time (default: the machine's top speed, else 800)"}));
+        p.insert("hoop".into(), string("A hoop id of run_command stitch.hoops.list (default: the document's hoop, else the smallest that fits)"));
+        p.insert(
+            "marginMm".into(),
+            json!({"type": "number", "minimum": 0, "maximum": 100, "description": "The hoop fit's clearance in mm (default 10)"}),
+        );
+    }
+    props
+}
+
 fn mods_schema() -> Value {
     json!({
         "type": "object",
@@ -100,7 +120,8 @@ fn save_extensions() -> Vec<&'static str> {
 }
 
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
-    let writes_file = matches!(name, "screenshot" | "save_file" | "export" | "export_stitch" | "photo_to_stitches");
+    let writes_file =
+        matches!(name, "screenshot" | "save_file" | "export" | "export_stitch" | "export_production" | "stitch_worksheet" | "photo_to_stitches");
     let read_only = read_only && !writes_file;
     json!({
         "name": name,
@@ -453,6 +474,41 @@ pub fn tool_definitions() -> Vec<Value> {
             false,
         ),
         tool(
+            "stitch_worksheet",
+            "Production worksheet",
+            "Write a one-page A4 PDF production worksheet for the active document's embroidery: the design picture, size, stitch count, colour changes, trims, hoop, machine, speed and estimated run time, top and bobbin thread, the design check's count, and the stop table (thread colour, code and name, needle, stitches, length per colour block). It runs the stitch.worksheet command; check the design first with run_command stitch.check.",
+            obj(
+                {
+                    let mut props = production_props();
+                    if let Some(p) = props.as_object_mut() {
+                        p.insert("path".into(), string("The PDF file to write"));
+                    }
+                    props
+                },
+                &["path"],
+            ),
+            false,
+        ),
+        tool(
+            "export_production",
+            "Export for production",
+            "Write everything the machine operator needs into one folder: the machine files (default: the formats the machine's panel reads, DST and DSB on bai_mirror, else DST) and <name>-worksheet.pdf. It runs stitch.exportProduction and returns the files written with their sizes, the design check's findings (errors, warnings, info) and the files' warnings. Files of the same names in the folder are replaced.",
+            obj(
+                {
+                    let mut props = production_props();
+                    if let Some(p) = props.as_object_mut() {
+                        p.insert("dir".into(), string("The folder to write into (made if missing)"));
+                        p.insert("name".into(), string("The files' base name: letters, digits, spaces, - _ and . (default: the design name)"));
+                        p.insert("formats".into(), json!({"type": "array", "items": {"type": "string", "enum": ["dst", "dsb", "exp"]}, "description": "The machine files to write (default: the machine's panel formats, else dst)"}));
+                        p.insert("worksheet".into(), json!({"type": "boolean", "description": "Also write the worksheet PDF (default true)"}));
+                    }
+                    props
+                },
+                &["dir"],
+            ),
+            false,
+        ),
+        tool(
             "photo_to_stitches",
             "Photo to stitches",
             "Turn a photo (a pet's fur, say) into an embroidery design in a new document: thread colours from a chart, colour regions, a direction field from the photo, and fills whose rows follow it (or straight tatami rows at each region's mean direction), sewn colour by colour. It runs the photo.toStitches command; with `path` it then writes the stitch file with document.export (format from the extension: dsb or exp, else dst). Returns the stitch, jump, trim and colour-change counts, the thread colours with their coverage, the regions and warnings. Works on this computer unless provider is gemini (or the photoProvider preference chooses it), which sends the photo to Google's Gemini API. See run_command photo.palette, photo.regions and photo.directionField for the stages alone.",
@@ -466,8 +522,13 @@ pub fn tool_definitions() -> Vec<Value> {
                     "maxSide": num("Pixels the photo is worked at, 64–2048 (default 600)"),
                     "widthMm": num("Design width in mm, 10–1000 (default 100)"),
                     "heightMm": num("Design height in mm, 10–1000 (with widthMm: fits within both)"),
-                    "fill": {"type": "string", "enum": ["field", "tatami"], "description": "field (default): rows follow the photo's direction field; tatami: straight rows at each region's mean direction, regions left editable"},
-                    "spacing": num("mm between rows, 0.2–5 (default 0.4)"),
+                    "fill": {"type": "string", "enum": ["field", "tatami", "rows", "meander"], "description": "field (default): rows follow the photo's direction field; tatami: straight rows at each region's mean direction, regions left editable; rows: one thread, rows zigzagging wider and in shorter stitches where darker; meander: one thread, one open path that never crosses itself, finer where darker"},
+                    "spacing": num("mm between rows, 0.2–5 (default 0.4; rows and meander 1: the rows' pitch or the meander's finest cell)"),
+                    "color": string("rows and meander: the thread colour as #rrggbb, matched to the chart (default the chart's darkest)"),
+                    "mergeGapMm": num("mm 0–3 (default 0.5): gaps of another thread this narrow between areas of one thread are closed"),
+                    "minRegionMm2": num("mm², 0–10000 (default 2): smaller sewn areas are absorbed into the neighbour with the longest shared border"),
+                    "travelMm": num("mm 0–12 (default 3): gaps within a colour up to this are travel (stitched inside the colour, else one jump), not a trim"),
+                    "features": {"type": "boolean", "description": "field: sew small high-contrast features (eyes, a nose) last, over the fills (default true)"},
                     "minLength": num("Shortest stitch, mm 0.5–12 (default 2)"),
                     "maxLength": num("Longest stitch, mm 0.5–12 (default 4): lengths are random between the two"),
                     "feather": num("mm 0–10 (default 0): row ends pulled in by a random amount up to this, a ragged fur edge"),

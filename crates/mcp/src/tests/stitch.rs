@@ -114,6 +114,31 @@ fn export_stitch_writes_the_file_the_export_command_writes() {
 }
 
 #[test]
+fn the_production_tools_write_the_worksheet_and_the_folder() {
+    let tools = tool_definitions();
+    for name in ["stitch_worksheet", "export_production"] {
+        let tool = tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("missing tool {name}"));
+        assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name} writes files");
+        let props = tool["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("machine") && props.contains_key("spm") && !props.contains_key("format"), "{name}");
+    }
+    let mut h = red_rectangle();
+    let sheet = tmp("sheet.pdf");
+    let r = text(&call_tool(&mut h, "stitch_worksheet", &json!({"path": sheet, "machine": "bai_mirror"})));
+    assert_eq!(r["stops"], 1, "{r}");
+    assert!(std::fs::read(&sheet).unwrap().starts_with(b"%PDF"));
+    let dir = tmp("production");
+    let _ = std::fs::remove_dir_all(&dir);
+    let r = text(&call_tool(&mut h, "export_production", &json!({"dir": dir, "machine": "bai_mirror", "name": "rect"})));
+    let files: Vec<&str> = r["files"].as_array().unwrap().iter().map(|f| f["format"].as_str().unwrap()).collect();
+    assert_eq!(files, ["dst", "dsb", "pdf"], "{r}");
+    assert!(std::path::Path::new(&dir).join("rect.dsb").is_file());
+    assert!(r["findings"].as_array().is_some_and(|f| !f.is_empty()));
+    assert!(call_tool(&mut h, "export_production", &json!({"dir": dir, "name": "../x"})).is_error);
+    assert!(call_tool(&mut h, "stitch_worksheet", &json!({})).is_error);
+}
+
+#[test]
 fn the_stitch_out_prompt_names_the_tools() {
     let v = crate::prompts::get("stitch-out", &json!({"design": "a star", "directory": "/tmp/out", "format": "exp"})).unwrap();
     let text = v["messages"][0]["content"]["text"].as_str().unwrap_or_default();

@@ -84,6 +84,7 @@ pub mod perspective_grid;
 pub mod perspective_options;
 pub mod perspective_plane;
 pub mod perspective_presets;
+pub mod photo_stitch;
 pub mod place;
 pub mod placement_options;
 pub mod plugin;
@@ -120,6 +121,7 @@ pub(crate) mod smooth_slider;
 pub mod spot_colors;
 pub mod stitch_info;
 pub mod stitch_options;
+pub mod stitch_production;
 pub mod svg_filter;
 pub(crate) mod svg_options;
 pub mod swatch_conflict;
@@ -393,8 +395,11 @@ registry! {
     SliceOptions: [slices::OPTIONS] => slices::OPTIONS_SPEC,
     DivideSlices: [slices::DIVIDE] => slices::DIVIDE_SPEC,
     EpsOptions: [eps_options::KIND] => eps_options::SPEC,
+    PhotoStitch: [photo_stitch::KIND] => photo_stitch::SPEC,
     StitchInfo: [stitch_info::KIND] => stitch_info::SPEC,
     StitchOptions: [stitch_options::KIND] => stitch_options::SPEC,
+    StitchWorksheet: [stitch_production::WORKSHEET] => stitch_production::WORKSHEET_SPEC,
+    StitchProduction: [stitch_production::PRODUCTION] => stitch_production::PRODUCTION_SPEC,
     Recovery: [crate::recovery::KIND] => recovery::SPEC,
     PluginStopped: [safe_mode::STOPPED] => safe_mode::STOPPED_SPEC,
     SafeMode: [safe_mode::KIND] => safe_mode::SPEC,

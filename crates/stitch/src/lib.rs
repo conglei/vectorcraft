@@ -6,9 +6,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod calibration;
+mod check;
 mod fill;
 mod fill_field;
 mod from_doc;
+pub mod hoop;
 mod plan;
 mod prepare;
 mod preview;
@@ -25,12 +27,14 @@ mod to_doc;
 mod tests_props;
 
 pub use calibration::{CalibrationPart, calibration};
+pub use check::{CELL_RANGE, CheckLimits, DENSITY_RANGE, Finding, LONG_RANGE, Level, MAX_TRIMS_LIMIT, SHORT_RANGE, check_plan};
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
 pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
     DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions, StrokeType,
     from_document, outline_fraction, outline_point, sequence,
 };
+pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM};
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use preview::{
