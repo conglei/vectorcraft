@@ -181,6 +181,9 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
             ("Stitch Info…", Some("ui.stitchInfo")),
             ("Stitch Preview", Some("window.panel")),
             ("Stitch Properties", Some("window.panel")),
+            ("Stitch Sequence", Some("window.panel")),
+            ("Sort Sequence by Colour", Some("stitch.sequence.sortByColor")),
+            ("Closest Join", Some("stitch.join.closest")),
             ("Calibration Design", Some("stitch.calibration")),
             ("Export Stitch File…", Some("file.exportAs"))
         ]
