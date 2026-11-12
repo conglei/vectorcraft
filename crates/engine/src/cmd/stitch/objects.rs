@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Clear Stitch Properties",
             [],
             None,
-            "{ids?|id? (default: the selection)} remove the stitch type and parameters of paths, compound paths and groups: they are automatic again and inherit everything; one undo step → {changed: [id…] (those that had any)}",
+            "{ids?|id? (default: the selection)} remove the stitch type and parameters (and the entry and exit points) of paths, compound paths and groups: they are automatic again and inherit everything; one undo step → {changed: [id…] (those that had any)}",
             has_doc,
             clear
         ),
