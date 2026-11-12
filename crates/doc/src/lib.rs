@@ -114,7 +114,7 @@ pub use rastersettings::{RasterColorModel, RasterEffectsSettings};
 pub use selection::{AnchorRef, SegmentRef, Selection, SymbolPart};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
-pub use stitch_design::StitchDesign;
+pub use stitch_design::{HoopChoice, StitchDesign};
 pub use stitch_props::{StitchParam, StitchProps, StitchType};
 pub use style_libs::StyleLibrary;
 pub use text::FontHeightReference;
