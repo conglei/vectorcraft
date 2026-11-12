@@ -30,7 +30,7 @@ mod panes;
 mod raster;
 mod selection_marks;
 mod stitches;
-pub(crate) use stitches::state as stitch_view_state;
+pub(crate) use stitches::{rect as stitch_view_rect, state as stitch_view_state};
 mod task_bar;
 mod tool_overlays;
 mod view;

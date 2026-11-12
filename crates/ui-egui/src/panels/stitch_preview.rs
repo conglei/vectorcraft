@@ -19,7 +19,7 @@ use egui::{Color32, Rect, Sense, TextureHandle, Ui, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use vectorcraft_doc::Document;
-use vectorcraft_engine::stitch_preview::{BlockInfo, BuiltPlan, Frame, FrameOptions, PlanSummary, build_plan};
+use vectorcraft_engine::stitch_preview::{BlockInfo, BuiltPlan, Frame, FrameOptions, Mark, PlanSummary, build_plan};
 
 use crate::theme::Tokens;
 use crate::{VectorcraftApp, widgets};
@@ -75,11 +75,33 @@ pub struct Settings {
     pub speed: u32,
     /// In the canvas's stitch view (View › Stitches), the art shows faintly under the thread.
     pub underlay: bool,
+    /// Where a playback stops by itself (the player bar's Pause At).
+    pub pause_at: PauseAt,
+    /// In the stitch view, the canvas moves to keep the needle in sight during a playback.
+    pub follow: bool,
+}
+
+/// The machine functions a playback stops at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PauseAt {
+    pub color_changes: bool,
+    pub trims: bool,
+    pub stops: bool,
+}
+
+impl PauseAt {
+    /// The first place to stop after `from` stitches and at or before `to`, short of the end.
+    fn within(self, s: &PlanSummary, from: usize, to: usize) -> Option<usize> {
+        let colours = s.blocks.iter().skip(1).filter(|_| self.color_changes).map(|b| b.first);
+        let functions = s.marks.iter().filter(|m| if m.1 == Mark::Trim { self.trims } else { self.stops }).map(|m| m.0);
+        colours.chain(functions).filter(|at| *at > from && *at <= to && *at < s.stitches).min()
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { view: View::Realistic, needles: false, jumps: false, speed: 100, underlay: false }
+        Settings { view: View::Realistic, needles: false, jumps: false, speed: 100, underlay: false, pause_at: PauseAt::default(), follow: true }
     }
 }
 
@@ -238,6 +260,87 @@ pub(crate) fn for_canvas(app: &VectorcraftApp, ctx: &egui::Context) -> OnCanvas 
     with_rt(|rt| OnCanvas { plan: rt.plan.as_ref().map(|p| p.plan.clone().map(|plan| (p.generation, plan))), position: rt.shown() })
 }
 
+/// The playback speeds as a menu; a choice sets `set.speed`.
+pub(crate) fn speed_menu(ui: &mut Ui, set: &mut Settings, id: &str) {
+    let speeds: Vec<String> = SPEEDS.iter().map(|s| format!("{s}/s")).collect();
+    let labels: Vec<&str> = speeds.iter().map(String::as_str).collect();
+    let cur = SPEEDS.iter().position(|s| *s == set.speed).unwrap_or(1);
+    if let Some(i) = widgets::dropdown(ui, id, labels.get(cur).copied().unwrap_or(""), &labels, 70.0)
+        && let Some(s) = SPEEDS.get(i)
+    {
+        set.speed = *s;
+    }
+}
+
+/// What a player shows and moves: the plan's stitches, colour blocks and functions, and where the
+/// playback stands.
+pub(crate) struct Player {
+    pub total: usize,
+    /// The stitches shown (`None`: all of them).
+    pub position: Option<usize>,
+    pub playing: bool,
+    pub blocks: Vec<BlockInfo>,
+    pub marks: Vec<(usize, Mark)>,
+    /// Where the needle stands, in millimetres of the document, while fewer than all stitches show.
+    pub needle_mm: Option<(f64, f64)>,
+}
+
+/// The playback of the plan on show; `None` while there is no plan.
+pub(crate) fn player() -> Option<Player> {
+    with_rt(|rt| {
+        let plan = rt.plan.as_ref()?.plan.as_ref().ok()?;
+        let position = rt.shown();
+        Some(Player {
+            total: plan.summary.stitches,
+            position,
+            playing: rt.playing,
+            blocks: plan.summary.blocks.clone(),
+            marks: plan.summary.marks.clone(),
+            needle_mm: position.and_then(|n| plan.needle_mm(n)),
+        })
+    })
+}
+
+/// Show the first `to` stitches (`None`, or the total and more: all of them) and stop playing.
+pub(crate) fn seek(to: Option<usize>) {
+    with_rt(|rt| {
+        let total = rt.total();
+        rt.playing = false;
+        rt.position = to.filter(|n| *n < total);
+        rt.played = to.map_or(total, |n| n.min(total)) as f64;
+    });
+}
+
+/// Play from where the playback stands (from the start when it is at the end), or pause.
+pub(crate) fn toggle_play() {
+    with_rt(|rt| {
+        if rt.playing {
+            rt.playing = false;
+        } else if rt.total() > 0 {
+            let from = rt.shown().unwrap_or(0);
+            (rt.playing, rt.played) = (true, from as f64);
+            rt.position = Some(from);
+        }
+    });
+}
+
+/// Move the playback by `by` stitches, within the plan, and stop playing.
+pub(crate) fn nudge(by: i64) {
+    let (at, total) = with_rt(|rt| (rt.shown().unwrap_or(rt.total()), rt.total()));
+    let to = i64::try_from(at).unwrap_or(i64::MAX).saturating_add(by).clamp(0, i64::try_from(total).unwrap_or(i64::MAX));
+    seek(usize::try_from(to).ok());
+}
+
+/// Move the playback to where the next colour block starts (`forward`; past the last: the end),
+/// or back to where this one starts, or the one before when it stands there.
+pub(crate) fn step_block(forward: bool) {
+    let Some(p) = player() else { return };
+    let at = p.position.unwrap_or(p.total);
+    let starts = p.blocks.iter().filter(|b| b.stitches > 0).map(|b| b.first);
+    let to = if forward { starts.filter(|s| *s > at).min() } else { Some(starts.filter(|s| *s < at).max().unwrap_or(0)) };
+    seek(to);
+}
+
 /// Advance the state to now: collect finished work, start what is wanted, play. `panel`: the
 /// panel is drawing, so its picture of the whole design is wanted too.
 fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings, panel: bool) {
@@ -284,8 +387,18 @@ fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings, panel: bool
         let total = rt.total();
         if rt.playing && total > 0 {
             let dt = (now - rt.last_tick).clamp(0.0, 0.25);
+            // Non-negative and at most the total, so the casts are exact.
+            let from = rt.played.max(0.0).floor() as usize;
             rt.played += dt * f64::from(set.speed);
-            if rt.played >= total as f64 {
+            let to = (rt.played.max(0.0).floor() as usize).min(total);
+            let pause = match rt.plan.as_ref().map(|p| &p.plan) {
+                Some(Ok(plan)) => set.pause_at.within(&plan.summary, from, to),
+                _ => None,
+            };
+            if let Some(at) = pause {
+                (rt.playing, rt.position, rt.played) = (false, Some(at), at as f64);
+                ctx.request_repaint();
+            } else if rt.played >= total as f64 {
                 (rt.playing, rt.position) = (false, None);
             } else {
                 // Within 0..total, so the cast is exact.
@@ -435,7 +548,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     update(app, ui.ctx(), &set, true);
     let mut position = with_rt(|rt| rt.position);
     let (total, playing) = with_rt(|rt| (rt.total(), rt.playing));
-    let mut toggle_play = false;
+    let mut play_clicked = false;
     let mut canvas_view = None;
 
     ui.horizontal_wrapped(|ui| {
@@ -487,40 +600,28 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let note = error.clone().or(note);
     picture(ui, &t, height, updating && error.is_none(), note.as_deref());
 
-    // Playback.
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        let (label, tip) = if playing { (tl!("Pause"), tl!("Pause the playback")) } else { (tl!("Play"), tl!("Play the stitches in sewing order")) };
-        if ui.add_enabled_ui(total > 0, |ui| widgets::flat_button(ui, label, 52.0).on_hover_text(tip)).inner.clicked() {
-            toggle_play = true;
-        }
-        let mut at = position.map_or(total, |p| p.min(total));
-        ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(60.0);
-        let slider = ui.add_enabled(total > 0, egui::Slider::new(&mut at, 0..=total).show_value(false).trailing_fill(true));
-        if slider.changed() {
-            position = if at >= total { None } else { Some(at) };
-            with_rt(|rt| (rt.position, rt.played) = (position, at as f64));
-        }
-        let speeds: Vec<String> = SPEEDS.iter().map(|s| format!("{s}/s")).collect();
-        let labels: Vec<&str> = speeds.iter().map(String::as_str).collect();
-        let cur = SPEEDS.iter().position(|s| *s == set.speed).unwrap_or(1);
-        if let Some(i) = widgets::dropdown(ui, "stitch-preview-speed", labels[cur], &labels, 70.0)
-            && let Some(s) = SPEEDS.get(i)
-        {
-            set.speed = *s;
-        }
-    });
-    if toggle_play {
-        with_rt(|rt| {
-            if rt.playing {
-                rt.playing = false;
-            } else {
-                // From the start when it is at the end.
-                let from = rt.shown().unwrap_or(0);
-                (rt.playing, rt.played) = (true, from as f64);
-                rt.position = Some(from);
+    // Playback: here while the canvas shows the art; in the stitch view the player bar under the
+    // canvas has it.
+    if !app.stitch_view() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let (label, tip) =
+                if playing { (tl!("Pause"), tl!("Pause the playback")) } else { (tl!("Play"), tl!("Play the stitches in sewing order")) };
+            if ui.add_enabled_ui(total > 0, |ui| widgets::flat_button(ui, label, 52.0).on_hover_text(tip)).inner.clicked() {
+                play_clicked = true;
             }
+            let mut at = position.map_or(total, |p| p.min(total));
+            ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(60.0);
+            let slider = ui.add_enabled(total > 0, egui::Slider::new(&mut at, 0..=total).show_value(false).trailing_fill(true));
+            if slider.changed() {
+                position = if at >= total { None } else { Some(at) };
+                with_rt(|rt| (rt.position, rt.played) = (position, at as f64));
+            }
+            speed_menu(ui, &mut set, "stitch-preview-speed");
         });
+        if play_clicked {
+            toggle_play();
+        }
     }
     ui.add_space(4.0);
 
@@ -564,6 +665,19 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
             .filter(|s| (1..=100_000).contains(s))
             .and_then(|s| u32::try_from(s).ok())
             .ok_or("speed must be a whole number of stitches per second, 1–100000")?;
+    }
+    if let Some(v) = p.get("follow") {
+        set.follow = v.as_bool().ok_or("follow must be true or false")?;
+    }
+    if let Some(v) = p.get("pauseAt") {
+        let o = v.as_object().ok_or("pauseAt must be {colorChanges?, trims?, stops?}")?;
+        for (key, field) in
+            [("colorChanges", &mut set.pause_at.color_changes), ("trims", &mut set.pause_at.trims), ("stops", &mut set.pause_at.stops)]
+        {
+            if let Some(v) = o.get(key) {
+                *field = v.as_bool().ok_or_else(|| format!("pauseAt.{key} must be true or false"))?;
+            }
+        }
     }
     let position = match p.get("position") {
         None => None,
@@ -629,6 +743,8 @@ pub(crate) fn state(app: &VectorcraftApp) -> Value {
             "speed": set.speed,
             "underlay": set.underlay,
             "onCanvas": app.stitch_view(),
+            "follow": set.follow,
+            "pauseAt": {"colorChanges": set.pause_at.color_changes, "trims": set.pause_at.trims, "stops": set.pause_at.stops},
             "position": rt.shown(),
             "playing": rt.playing,
             "stitches": rt.total(),
