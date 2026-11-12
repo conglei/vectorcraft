@@ -79,15 +79,7 @@ fn shown_params(objects: &[Value]) -> Vec<StitchParam> {
     let mut sews: Vec<StitchType> = vec![];
     for o in objects {
         let types: Vec<StitchType> = o["sews"].as_array().into_iter().flatten().filter_map(Value::as_str).filter_map(StitchType::parse).collect();
-        // A group shows what its type sews (automatic: everything the options may choose).
-        let types = if o["kind"] == "group" || o["kind"] == "layer" {
-            match o["type"].as_str().and_then(StitchType::parse).unwrap_or_default() {
-                StitchType::Auto => vec![StitchType::Tatami, StitchType::Run, StitchType::Satin],
-                t => vec![t],
-            }
-        } else {
-            types
-        };
+        // A group or layer shows the numbers of what the objects in it sew (`sews` lists that).
         for t in types {
             if !sews.contains(&t) {
                 sews.push(t);
@@ -257,6 +249,28 @@ mod tests {
         let t = frame(&mut app);
         assert!(t.iter().any(|s| s == "Not sewn"), "{t:?}");
         assert!(!t.iter().any(|s| s.ends_with("Spacing:")), "{t:?}");
+    }
+
+    /// A group shows what the objects in it sew, with their fields; an opened stitch file's group
+    /// shows that its runs are sewn point by point, and no fill fields (STI-33).
+    #[test]
+    fn a_group_shows_what_its_objects_sew() {
+        let (mut app, a, b) = app_with_rects();
+        app.run("select.set", json!({"ids": [a, b]})).unwrap();
+        app.run("object.group", json!({})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Tatami fill, Running stitch"), "{t:?}");
+        assert!(!t.iter().any(|s| s == "Not sewn"), "{t:?}");
+        assert!(t.iter().any(|s| s == "Row Spacing:") && !t.iter().any(|s| s == "Satin Width:"), "no satin in it: {t:?}");
+        // The same design as a stitch file, opened: a click selects a group of runs.
+        let file = app.run("document.export", json!({"format": "dst"})).unwrap();
+        app.run("document.open", json!({"name": "a.dst", "dataBase64": file["dataBase64"]})).unwrap();
+        app.run("select.all", json!({})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Manual (one point per anchor)"), "{t:?}");
+        assert!(!t.iter().any(|s| s == "Not sewn"), "{t:?}");
+        assert!(t.iter().any(|s| s.starts_with("On an opened stitch file")), "{t:?}");
+        assert!(!t.iter().any(|s| s == "Row Spacing:" || s == "Fill Angle:"), "nothing to fill: {t:?}");
     }
 
     #[test]
