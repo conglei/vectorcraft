@@ -73,6 +73,7 @@ impl Document {
             puppet,
             new_art,
             dimensions,
+            stitch,
             retired_artboard_id: _,
             opened_artboard: _,
             index: _,
@@ -137,6 +138,7 @@ impl Document {
             && *slices_clip_to_artboard == other.slices_clip_to_artboard
             && *print_setup == other.print_setup
             && *assets == other.assets
+            && *stitch == other.stitch
             && *svg_scripts == other.svg_scripts
             && *svg_filters == other.svg_filters
             && match (puppet, &other.puppet) {
@@ -254,6 +256,7 @@ impl Document {
             puppet: None,
             new_art: Default::default(),
             dimensions: false,
+            stitch: Default::default(),
             retired_artboard_id: Default::default(),
             opened_artboard: None,
             index: Default::default(),

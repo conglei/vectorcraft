@@ -159,6 +159,17 @@ mod tests {
     }
 
     #[test]
+    fn a_named_start_point_is_the_origin() {
+        let o = WriteOptions { start: Start::Point(Pt { x: -20, y: 0 }), return_to_start: false, ..Default::default() };
+        let b = write(&tiny(), &o).unwrap().bytes;
+        let head = String::from_utf8_lossy(&b[..125]).into_owned();
+        assert!(head.contains("+X:   30"), "{head}");
+        // The first record travels from the origin to the first stitch.
+        let back = read(&b, &ReadOptions::default()).unwrap().plan;
+        assert_eq!(back.points().find(|p| *p != Pt::default()), Some(Pt { x: 20, y: 0 }));
+    }
+
+    #[test]
     fn a_tiny_design_has_exact_bytes() {
         let o = WriteOptions { start: Start::FirstStitch, return_to_start: false, ..Default::default() };
         let b = write(&tiny(), &o).unwrap().bytes;

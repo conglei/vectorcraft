@@ -192,6 +192,28 @@ pub struct StitchProps {
     /// Pull compensation in mm: kept and saved, not yet used.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub compensation: Option<f64>,
+    /// Embroidery › Sequence: where sewing enters the object, as a fraction 0–1 of the way along
+    /// its outline (its subpaths one after another, by arc length), so the point moves with the
+    /// object when it is moved, scaled or reshaped. Only the object's own: never inherited.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub entry: Option<f64>,
+    /// Where sewing leaves the object, as for [`StitchProps::entry`].
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub exit: Option<f64>,
+    /// The entry point Embroidery › Closest Join chose, as for [`StitchProps::entry`]: used when
+    /// [`StitchProps::entry`] is unset, and chosen again by the next closest join (which keeps
+    /// the points the user set).
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub join_entry: Option<f64>,
+    /// The exit point Closest Join chose, as for [`StitchProps::join_entry`].
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub join_exit: Option<f64>,
+}
+
+/// A fraction along an outline, if it is finite and within 0–1 (a value out of range, from a
+/// file, counts as unset).
+fn fraction(v: Option<f64>) -> Option<f64> {
+    v.filter(|t| t.is_finite() && (0.0..=1.0).contains(t))
 }
 
 fn is_auto(t: &StitchType) -> bool {
@@ -221,6 +243,36 @@ fn lenient_type<'de, D: serde::Deserializer<'de>>(d: D) -> Result<StitchType, D:
 }
 
 impl StitchProps {
+    /// The entry point set here ([`StitchProps::entry`]), if it is in range.
+    pub fn entry_at(&self) -> Option<f64> {
+        fraction(self.entry)
+    }
+
+    /// The exit point set here ([`StitchProps::exit`]), if it is in range.
+    pub fn exit_at(&self) -> Option<f64> {
+        fraction(self.exit)
+    }
+
+    /// The entry point Closest Join chose ([`StitchProps::join_entry`]), if it is in range.
+    pub fn join_entry_at(&self) -> Option<f64> {
+        fraction(self.join_entry)
+    }
+
+    /// The exit point Closest Join chose ([`StitchProps::join_exit`]), if it is in range.
+    pub fn join_exit_at(&self) -> Option<f64> {
+        fraction(self.join_exit)
+    }
+
+    /// Where the object is entered: the user's point, else the one Closest Join chose.
+    pub fn sewn_entry(&self) -> Option<f64> {
+        self.entry_at().or(fraction(self.join_entry))
+    }
+
+    /// Where the object is left: the user's point, else the one Closest Join chose.
+    pub fn sewn_exit(&self) -> Option<f64> {
+        self.exit_at().or(fraction(self.join_exit))
+    }
+
     /// Nothing set.
     pub fn is_empty(&self) -> bool {
         *self == StitchProps::default()
@@ -262,7 +314,7 @@ impl StitchProps {
 
     /// These properties over `outer`, the properties of what holds the object: each field unset
     /// here (an [`StitchType::Auto`] type, a `None` value, or a value out of range) takes
-    /// `outer`'s.
+    /// `outer`'s. The entry and exit points are the object's own and are left out.
     pub fn inherit(&self, outer: &StitchProps) -> StitchProps {
         let mut out = StitchProps {
             kind: if self.kind == StitchType::Auto { outer.kind } else { self.kind },
@@ -339,6 +391,20 @@ mod tests {
         assert_eq!(back, StitchProps { run_length: Some(2.0), ..Default::default() });
         let back: StitchProps = serde_json::from_value(serde_json::json!({"type": 7, "satinWidth": {"a": 1}})).unwrap();
         assert!(back.is_empty());
+    }
+
+    #[test]
+    fn entry_and_exit_are_fractions_kept_out_of_inheritance() {
+        let own = StitchProps { entry: Some(0.25), exit: Some(1.5), ..Default::default() };
+        assert_eq!((own.entry_at(), own.exit_at()), (Some(0.25), None));
+        assert!(!own.is_empty());
+        let inner = StitchProps::default().inherit(&own);
+        assert_eq!((inner.entry, inner.exit), (None, None));
+        let back: StitchProps = serde_json::from_value(serde_json::json!({"entry": 0.5, "exit": "end"})).unwrap();
+        assert_eq!((back.entry, back.exit), (Some(0.5), None));
+        let joined = StitchProps { entry: Some(0.1), join_entry: Some(0.9), join_exit: Some(0.4), ..Default::default() };
+        assert_eq!((joined.sewn_entry(), joined.sewn_exit()), (Some(0.1), Some(0.4)), "the user's point wins");
+        assert_eq!(serde_json::to_value(joined).unwrap(), serde_json::json!({"entry": 0.1, "joinEntry": 0.9, "joinExit": 0.4}));
     }
 
     #[test]

@@ -338,6 +338,9 @@ fn arb_stitch_props() -> impl Strategy<Value = vectorcraft_doc::StitchProps> {
             run_length: g,
             compensation: h,
             underlay,
+            entry: a.map(|v| v / 40.0),
+            exit: h.map(|v| v / 40.0),
+            ..Default::default()
         })
 }
 

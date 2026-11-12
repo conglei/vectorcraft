@@ -17,6 +17,13 @@ use crate::satin::{SatinParams, satin};
 use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
+mod sequenced;
+#[cfg(test)]
+mod tests_sequence;
+
+use sequenced::{Run, Unit, points_of};
+pub use sequenced::{SequenceItem, Sequenced, outline_fraction, outline_point, sequence};
+
 /// How far a flattened curve may stray from the true one, in millimetres.
 const FLATTEN_TOLERANCE_MM: f64 = 0.05;
 
@@ -146,6 +153,9 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     for layer in &doc.layers {
         w.node(layer, Under::default())?;
     }
+    // Sewn in the design's order (Embroidery › Sequence), each object entered and left where its
+    // points say; without them, in document order as walked.
+    w.sew_units(doc)?;
     if w.blocks.is_empty() {
         return Err(NOTHING.into());
     }
@@ -194,10 +204,14 @@ struct Walk<'o> {
     clipped: bool,
     marked_runs: usize,
     unmarked_runs: usize,
+    /// The objects walked so far, each with its runs, sewn once the walk is done.
+    units: Vec<Unit>,
+    /// Stitch types sewn so far: each fill or outline of an object is one.
+    part: usize,
 }
 
 /// How a run follows the one before it in the same thread colour.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Join {
     /// Art drawn by hand: a trim and a jump, unless the runs are within `min_stitch`.
     Drawn,
@@ -245,6 +259,8 @@ impl<'o> Walk<'o> {
             clipped: false,
             marked_runs: 0,
             unmarked_runs: 0,
+            units: vec![],
+            part: 0,
         }
     }
 
@@ -277,7 +293,18 @@ impl<'o> Walk<'o> {
             _ if !up.listed => {}
             // Guides and clipping paths don't print, so they aren't sewn either.
             NodeKind::Path { guide: true, .. } | NodeKind::Path { clipping: true, .. } => {}
-            NodeKind::Path { .. } | NodeKind::Compound { .. } => self.shape(n, up)?,
+            NodeKind::Path { .. } | NodeKind::Compound { .. } => {
+                // The object's own entry and exit points (never inherited; not on an opened
+                // stitch file's layer, whose needle points are kept).
+                let own = n.stitch_props().filter(|_| !up.marked);
+                let pin = points_of(n, (own.and_then(|p| p.entry_at()), own.and_then(|p| p.exit_at())));
+                let prefer = points_of(n, (own.and_then(|p| p.join_entry_at()), own.and_then(|p| p.join_exit_at())));
+                self.units.push(Unit { id: n.id, runs: vec![], pin, prefer });
+                self.shape(n, up)?;
+                if self.units.last().is_some_and(|u| u.runs.is_empty()) {
+                    self.units.pop();
+                }
+            }
             _ => self.other += 1,
         }
         Ok(())
@@ -391,6 +418,7 @@ impl<'o> Walk<'o> {
             NodeKind::Path { rule, .. } | NodeKind::Compound { rule, .. } => *rule,
             _ => FillRule::default(),
         };
+        self.part += 1;
         let mut rings = vec![];
         for sp in subpaths {
             rings.push(flatten(sp, MAX_STEPS.saturating_sub(self.steps))?.0);
@@ -406,6 +434,7 @@ impl<'o> Walk<'o> {
     /// Sew each of `subpaths` as `outline`, in thread `rgb`; `trim`: its first run follows a trim
     /// the opened file held.
     fn sew_outline(&mut self, subpaths: &[&SubPath], rgb: [u8; 3], outline: Outline, up: Under, mut trim: bool) -> Result<(), String> {
+        self.part += 1;
         for sp in subpaths {
             let budget = MAX_STEPS.saturating_sub(self.steps);
             let (run, mode) = match outline {
@@ -440,11 +469,28 @@ impl<'o> Walk<'o> {
         }
     }
 
+    /// Keep `run` for the object being walked (sewn by [`Walk::emit_run`] once the sewing order
+    /// is known). The step limit counts it now, so a design past it stops early.
+    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode, join: Join) -> Result<(), String> {
+        if run.is_empty() {
+            return Ok(());
+        }
+        self.steps = self.steps.saturating_add(run.len());
+        if self.steps > MAX_STEPS {
+            return Err(TOO_MANY_STEPS.to_string());
+        }
+        let part = self.part;
+        if let Some(u) = self.units.last_mut() {
+            u.runs.push(Run { rgb, pts: run.to_vec(), mode, join, part });
+        }
+        Ok(())
+    }
+
     /// Sew `run` in thread `rgb`: a new block at a colour change (which starts with a jump to the
     /// run, except at the very start), otherwise a trim and a jump unless the run starts within
     /// `min_stitch` of the needle. A run of an opened stitch file ([`Join::Opened`]) is trimmed
     /// only where the file trimmed.
-    fn add_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode, join: Join) -> Result<(), String> {
+    fn emit_run(&mut self, rgb: [u8; 3], run: &[Pt], mode: Mode, join: Join) -> Result<(), String> {
         let Some(&start) = run.first() else { return Ok(()) };
         let mut skip_first = false;
         let mut lead: Vec<Step> = vec![];

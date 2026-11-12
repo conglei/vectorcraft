@@ -19,6 +19,8 @@ pub struct Stats {
     pub color_changes: usize,
     pub width_mm: f64,
     pub height_mm: f64,
+    /// The distance moved by jumps (travel, not sewn), in mm.
+    pub travel_mm: f64,
     /// One entry per distinct colour, in order of first use.
     pub threads: Vec<ThreadStats>,
 }
@@ -30,6 +32,9 @@ pub fn stats(plan: &StitchPlan) -> Stats {
     let mut threads: Vec<ThreadStats> = Vec::new();
     // Stitched length per thread, in units, summed before converting to mm.
     let mut units: Vec<f64> = Vec::new();
+    // Where the needle is, across blocks, and the distance jumped, in units.
+    let mut at: Option<Pt> = None;
+    let mut travel = 0.0f64;
     for b in &plan.blocks {
         let idx = match threads.iter().position(|t| t.rgb == b.thread.rgb) {
             Some(i) => i,
@@ -55,9 +60,16 @@ pub fn stats(plan: &StitchPlan) -> Stats {
                         Some((x0, y0, x1, y1)) => (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
                     });
                     prev = Some(*p);
+                    at = Some(*p);
                     continue;
                 }
-                Step::Jump(_) => jumps += 1,
+                Step::Jump(p) => {
+                    jumps += 1;
+                    if let Some(q) = at {
+                        travel += q.dist(*p);
+                    }
+                    at = Some(*p);
+                }
                 Step::Trim => trims += 1,
                 Step::Stop => {}
             }
@@ -75,6 +87,7 @@ pub fn stats(plan: &StitchPlan) -> Stats {
         color_changes: plan.blocks.len().saturating_sub(1),
         width_mm: width_mm / UNITS_PER_MM,
         height_mm: height_mm / UNITS_PER_MM,
+        travel_mm: travel / UNITS_PER_MM,
         threads,
     }
 }
