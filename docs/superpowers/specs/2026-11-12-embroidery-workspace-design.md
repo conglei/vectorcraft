@@ -1,6 +1,6 @@
 # Embroidery workspace: design
 
-> **Status:** items 1 and 2 implemented (STI-31), item 2 without the sequence link; items 3 to 5 not started · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
+> **Status:** items 1 to 4 implemented (STI-31), without the sequence link of item 2 and with the design read-out on the thread bar; item 5 not started · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
 
 ## Goal
 
@@ -163,6 +163,23 @@ A bar under the canvas, shown when the stitch view is on (and hidden with it).
 - **Tools.** The toolbar keeps every tool. Hiding tools is a later decision for the owner (the app
   shell design, decision 3).
 
+**As built (items 3 and 4).** The workspace is `workspaces::EMBROIDERY` with the layout
+`panel_docking::embroidery_layout`; `AppIdentity::default_workspace` and `default_unit` replace
+`first_start_panels`, and a first start of StitchCraft switches to Embroidery and sets the General
+unit preference to millimetres, so new documents and the rulers use them. Differences from the
+text above:
+
+- The design's figures (stitches, colours, width × height in mm, trims) are on the thread bar's
+  right, not in the status bar. The status bar's fields have fixed, measured widths, and the
+  figures belong with the threads; the status bar is unchanged, timings included.
+- The three-way Artwork, Stitches, Outline switch in the control bar is not built. View ›
+  Stitches, Alt+Y and the panel's On the canvas box switch the view.
+- The warning count that opens Stitch Info is not built.
+- The Stitch Preview panel is not in the workspace; it opens from the Window and Embroidery menus.
+- A thread swatch moves the player to where its block starts. It does not select the block's
+  objects (the plan does not record them, as for the sequence link), and it shows the block's
+  number in the sewing order, not a needle number.
+
 ### 4. Thread bar
 
 A strip under the player bar: one swatch per thread block in sewing order, with its needle number
@@ -263,5 +280,6 @@ DG/ML by Pulse; whether any product marks out-of-hoop or dense areas on the canv
 | Date | Change |
 |---|---|
 | 2026-11-12 | First version, proposed (STI-31). |
+| 2026-11-12 | Items 3 and 4 implemented: what was built and what differs (figures on the thread bar, no control bar switch, no warning count). |
 | 2026-11-12 | Item 2 implemented without the sequence link: what was built and why the link waits. |
 | 2026-11-12 | Item 1 implemented: decisions updated with what was built (command parameters, region limits, transparency, where the state lives). |

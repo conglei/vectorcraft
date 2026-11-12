@@ -23,6 +23,8 @@ pub const FRAME_SCALE: f64 = 10.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockInfo {
     pub rgb: [u8; 3],
+    /// What the thread is called, when it has a name: its brand, catalogue number and name.
+    pub thread: Option<String>,
     pub stitches: usize,
     pub length_mm: f64,
     /// The number of stitches sewn before this block starts.
@@ -156,7 +158,9 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
                     }
                 }
             }
-            let info = BlockInfo { rgb: b.thread.rgb, stitches: n, length_mm: units / UNITS_PER_MM, first };
+            let named = [&b.thread.brand, &b.thread.code, &b.thread.name].into_iter().flatten().map(String::as_str).collect::<Vec<_>>().join(" ");
+            let info =
+                BlockInfo { rgb: b.thread.rgb, thread: (!named.is_empty()).then_some(named), stitches: n, length_mm: units / UNITS_PER_MM, first };
             first += n;
             info
         })
