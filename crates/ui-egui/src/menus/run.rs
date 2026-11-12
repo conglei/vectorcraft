@@ -926,6 +926,7 @@ fn run_ui_part12(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result
             crate::dialogs::eps_options::open(app, p);
             Ok(Value::Null)
         }
+        "ui.stitchPreview" => crate::panels::stitch_preview::command(app, p),
         "ui.stitchInfo" => crate::dialogs::stitch_info::open(app, p),
         "ui.stitchOptionsDialog" if app.session.active().is_none() => Err("no document".into()),
         "ui.stitchOptionsDialog" => {

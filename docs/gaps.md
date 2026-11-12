@@ -812,6 +812,7 @@ macOS cursor delivery (#2292) is narrowed to a native host adapter using the exi
   provider.
 - **Needs:** an owner decision on models and providers.
 - **Embroidery:** photo preparation uses a hosted image model (Gemini) through an opt-in provider, `photo.prepare` ([embroidery-parity.md](embroidery-parity.md) E12); the illustration features above still wait on that decision.
+- **Embroidery preview (E5):** the Stitch Preview panel shows the plan an export would sew, with playback and live refresh; travel by object or function, a density legend and fabric textures remain ([embroidery-parity.md](embroidery-parity.md) E5, 14–28 h estimated).
 - **Estimate:** 30–60 h after that decision.
 
 ## G19 Accessibility
@@ -854,6 +855,7 @@ trap, and the defaults (0.25 pt, 100%, 40%) are VectorCraft's own, the pages giv
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Embroidery E5: the Stitch Preview panel (playback, view toggles, colour blocks, live refresh) is listed with the embroidery note; estimate unchanged. |
 | 2026-11-11 | minor | G18: embroidery photo preparation uses a hosted image model (Gemini) through an opt-in provider, `photo.prepare` (embroidery gap E12); the illustration features still wait on the owner's decision; estimate unchanged. |
 | 2026-11-10 | minor | G4 type: Edit › Edit Custom Dictionary… adds, deletes and changes the custom dictionary's words, #4936; the Check Spelling dialog remains; scores and estimates unchanged. |
 | 2026-11-10 | minor | Tidy-up, no content change: in Feature submission evidence, a stray table row and two "PR #NNNN revision" notes move into Feature revisions, the three "Feature evidence last updated" lines become one, the duplicate Flyout update note goes (its row stays), and eight reconciliation rows become two. Scores and estimates unchanged. |

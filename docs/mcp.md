@@ -236,7 +236,7 @@ nothing truncated the reply is the plain summary. Both must be non-negative inte
 (the full object JSON is never truncated); anything else is an error.
 
 For embroidery, `run_command stitch.info` gives the stitch counts and warnings a DST or EXP export would have,
-and `run_command stitch.preview` returns a PNG of the stitches that export would sew (`pngBase64`, `width`,
+and `run_command ui.stitchPreview {view?, needles?, jumps?, speed?, position?, playing?}` sets and shows the Stitch Preview panel and answers what it shows, with `status` `updating` until the worker has built the plan; `run_command stitch.preview` returns a PNG of the stitches that export would sew (`pngBase64`, `width`,
 `height`; with `path`, written there instead): lit thread on fabric, or `view: "density"` for a coverage map
 with `maxCoverage` and `denseCells`, and `showJumps`, `showNeedles` and `showFunctions` overlays.
 `run_command photo.prepare {file, path?, provider?, maxSide?, keepAlpha?, cleanUp?, likenessThreshold?}` prepares a
