@@ -570,6 +570,10 @@ impl VectorcraftApp {
         if self.ui.help_bar && self.ui.screen_mode < 3 {
             chrome::hint_bar(self, ui);
         }
+        // Over the status and help bars, under the canvas: the playback of the stitches it shows.
+        if self.ui.screen_mode < 3 {
+            chrome::stitch_player(self, ui);
+        }
         if (self.ui.screen_mode >= 3 || (!self.ui.status_bar && !self.ui.help_bar))
             && !(self.ui.control_bar && self.ui.control_bar_bottom && self.ui.screen_mode < 2)
         {

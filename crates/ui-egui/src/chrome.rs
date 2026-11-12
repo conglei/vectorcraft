@@ -16,6 +16,7 @@ use crate::{VectorcraftApp, icons, menus, titlebar};
 mod control_bar;
 mod hints;
 mod status_bar;
+mod stitch_player;
 mod tabs;
 
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub use hints::{hint_bar, hint_strings};
 pub use status_bar::status_bar;
 #[cfg(test)]
 use status_bar::{StatusReadoutWidths, status_readouts};
+pub use stitch_player::stitch_player;
 #[cfg(test)]
 use tabs::{CLOSE_BEFORE_TITLE, first_tab_shown, tab_drop, tab_groups, tab_title};
 pub use tabs::{doc_tabs, isolation_bar, step_document};

@@ -1,6 +1,6 @@
 # Embroidery workspace: design
 
-> **Status:** item 1 implemented (STI-31); items 2 to 5 not started · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
+> **Status:** items 1 and 2 implemented (STI-31), item 2 without the sequence link; items 3 to 5 not started · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
 
 ## Goal
 
@@ -129,6 +129,16 @@ A bar under the canvas, shown when the stitch view is on (and hidden with it).
 - **State and commands.** The runtime state (position, playing) moves out of the panel's
   thread-local into the app, so the bar, the panel and the canvas share it. `ui.stitchPreview`
   keeps its parameters and gains `pauseAt` and `follow`.
+- **As built.** The bar is a bottom panel of the window, over the status and help bars, so it
+  runs under the tools and the panels too, not only under the canvas: a longer scrubber, and no
+  change to the canvas's own rectangle. Its buttons are drawn in code (triangles and bars). The
+  read-out is "stitch / total · colour n/N". Stops tick the full height of the scrubber in the
+  warning colour; trims tick short. The runtime state stayed in the panel's module, which the bar
+  and the canvas call (`player`, `seek`, `toggle_play`, `step_block`, `nudge`). The panel keeps
+  its own play row while the canvas shows the art, and drops it in the stitch view.
+- **Not built: the link to the sequence.** `StitchPlan` does not record which object a run came
+  from. Adding that changes `crates/stitch/src/from_doc.rs`, which STI-30 is editing, so it waits
+  for that to merge.
 - **The Stitch Preview panel stays.** It becomes the overview: the whole design, small, with a
   frame showing what the canvas shows. Its own play row is removed; its figures and colour-block
   list stay until the status bar and the thread bar replace them (item 3 and 4), and then go.
@@ -253,4 +263,5 @@ DG/ML by Pulse; whether any product marks out-of-hoop or dense areas on the canv
 | Date | Change |
 |---|---|
 | 2026-11-12 | First version, proposed (STI-31). |
+| 2026-11-12 | Item 2 implemented without the sequence link: what was built and why the link waits. |
 | 2026-11-12 | Item 1 implemented: decisions updated with what was built (command parameters, region limits, transparency, where the state lives). |

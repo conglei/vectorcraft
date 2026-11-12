@@ -35,10 +35,18 @@ struct Runtime {
     job: Option<(Key, Receiver<Result<Frame, String>>)>,
     /// Why the picture asked for last could not be drawn.
     error: Option<(Key, String)>,
+    /// The canvas rectangle drawn in last.
+    rect: Option<Rect>,
 }
 
 thread_local! {
     static RT: RefCell<Runtime> = RefCell::new(Runtime::default());
+}
+
+/// The canvas rectangle the stitch view was last drawn in, in screen points: the stitch player
+/// keeps the needle inside it. `None` before the first frame of a stitch view.
+pub(crate) fn rect() -> Option<Rect> {
+    RT.with(|rt| rt.borrow().rect)
 }
 
 /// The document rectangle the canvas shows (the bounding one when the view is turned) and the
@@ -117,10 +125,11 @@ fn wash(painter: &egui::Painter, xf: &Xf, doc: &vectorcraft_doc::Document) {
 /// when the one shown is not of this view. → a line to show when there are no stitches (why).
 fn paint(app: &VectorcraftApp, ui: &Ui, painter: &egui::Painter, xf: &Xf, rect: Rect, on: &OnCanvas) -> Option<String> {
     let uid = app.session.active()?.uid;
+    RT.with(|rt| rt.borrow_mut().rect = Some(rect));
     let (generation, plan) = match &on.plan {
         Some(Ok(p)) => p.clone(),
         Some(Err(e)) => {
-            RT.with(|rt| *rt.borrow_mut() = Runtime::default());
+            RT.with(|rt| *rt.borrow_mut() = Runtime { rect: Some(rect), ..Runtime::default() });
             return Some(e.clone());
         }
         // The first plan is being built.

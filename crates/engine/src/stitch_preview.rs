@@ -29,6 +29,13 @@ pub struct BlockInfo {
     pub first: usize,
 }
 
+/// A machine function between stitches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Trim,
+    Stop,
+}
+
 /// What the plan holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanSummary {
@@ -39,6 +46,9 @@ pub struct PlanSummary {
     pub width_mm: f64,
     pub height_mm: f64,
     pub blocks: Vec<BlockInfo>,
+    /// The trims and stops in sewing order, each with the number of stitches sewn before it. A
+    /// colour change is where a block starts ([`BlockInfo::first`]).
+    pub marks: Vec<(usize, Mark)>,
     pub warnings: Vec<String>,
 }
 
@@ -120,6 +130,7 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
     let (plan, warnings) = stitchfile::plan("stitch.preview", doc, &p, "dst", None).map_err(|e| e.to_string())?;
     let st = stats(&plan);
     let mut first = 0;
+    let mut marks = Vec::new();
     let blocks = plan
         .blocks
         .iter()
@@ -134,7 +145,15 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
                         }
                         prev = Some(*p);
                     }
-                    Step::Jump(_) | Step::Trim | Step::Stop => prev = None,
+                    Step::Jump(_) => prev = None,
+                    Step::Trim => {
+                        marks.push((first + n, Mark::Trim));
+                        prev = None;
+                    }
+                    Step::Stop => {
+                        marks.push((first + n, Mark::Stop));
+                        prev = None;
+                    }
                 }
             }
             let info = BlockInfo { rgb: b.thread.rgb, stitches: n, length_mm: units / UNITS_PER_MM, first };
@@ -150,6 +169,7 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
         width_mm: st.width_mm,
         height_mm: st.height_mm,
         blocks,
+        marks,
         warnings,
     };
     Ok(BuiltPlan { plan: Arc::new(plan), summary })
@@ -183,6 +203,22 @@ impl BuiltPlan {
 }
 
 impl BuiltPlan {
+    /// Where the needle is after the `n`-th stitch (1-based), in millimetres of the document's
+    /// space. `None` for 0 and past the last stitch.
+    pub fn needle_mm(&self, n: usize) -> Option<(f64, f64)> {
+        let at = n.checked_sub(1)?;
+        self.plan
+            .blocks
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .filter_map(|s| match s {
+                Step::Stitch(p) => Some(*p),
+                _ => None,
+            })
+            .nth(at)
+            .map(vectorcraft_stitch::Pt::to_mm)
+    }
+
     /// The stitches inside `r`, drawn as [`BuiltPlan::frame`] draws them but with no fabric: where
     /// there is no thread or mark the picture is transparent, to lay over the document's page.
     /// Errors for a scale outside [`REGION_SCALES`], a side of 0 or more than
@@ -292,6 +328,16 @@ mod tests {
         ] {
             assert!(built.region(&bad).is_err(), "{bad:?}");
         }
+        // The needle after the first stitch is on the rectangle's outline; none before or past the end.
+        let (x, y) = built.needle_mm(1).unwrap();
+        assert!((-0.1..=35.4).contains(&x) && (-0.1..=17.8).contains(&y), "({x}, {y})");
+        assert_eq!(built.needle_mm(0), None);
+        assert_eq!(built.needle_mm(built.summary.stitches + 1), None);
+        assert!(built.needle_mm(built.summary.stitches).is_some());
+        // The trims lie between the first stitch and the last, in order.
+        let marks = &built.summary.marks;
+        assert_eq!(marks.iter().filter(|m| m.1 == Mark::Trim).count(), built.summary.trims, "{marks:?}");
+        assert!(marks.windows(2).all(|w| w[0].0 <= w[1].0) && marks.iter().all(|m| m.0 <= built.summary.stitches), "{marks:?}");
         assert!(REGION_SCALES.contains(&4.0) && MAX_REGION_SIDE >= MAX_FRAME_SIDE);
         assert!((MM_PER_PT - 25.4 / 72.0).abs() < 1e-12);
     }
