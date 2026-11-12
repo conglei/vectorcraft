@@ -47,3 +47,14 @@ artwork. Licence: see `LICENSE.txt`.
 Edit or replace `vectorcraft.svg` (and `vectorcraft-small.svg`), then run `packaging/icons.sh`
 (needs `resvg`; `iconutil` on macOS for the `.icns`). It writes every PNG, the `.ico` (via
 `cargo xtask ico`) and the `.icns`.
+
+## StitchCraft
+
+`stitchcraft.svg` is StitchCraft's icon: a needle threaded with a loop of running stitches, drawn by
+hand for StitchCraft in the same three-colour scheme (ink `#0b0b0c`, paper `#efe9dc`, and the
+StitchCraft colour `#2f7d78` for the field) on the same 512 tile. `packaging/icons.sh stitchcraft`
+renders `stitchcraft-1024.png`, `stitchcraft-macos-512.png` (runtime Dock icon,
+`apps/stitchcraft/src/main.rs`), the 128 and 256 px `hicolor/…/ai.storyteller.stitchcraft.png`
+(brand mark and runtime window icon) and `stitchcraft.icns` (`cargo xtask bundle --app stitchcraft`).
+Licence: MIT OR Apache-2.0, by the VectorCraft contributors (not covered by `LICENSE.txt`, which is
+the dragon's).
