@@ -5,8 +5,8 @@
 //! ([`vectorcraft_stitch::from_document`]).
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
-use vectorcraft_stitch::{effective_number, inherited_props, sewn_as};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_stitch::{FromDocOptions, effective_number, inherited_props, sewn_as};
 
 use super::super::fileio::stitchfile;
 use super::super::{CommandSpec, Result, Session, bad, cmd, has_doc, targets};
@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Properties",
             [],
             None,
-            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; [] for a group or nothing sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay, compensation (null: none)} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there)}]}; objects of other kinds are left out",
+            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; for a group or layer, what the objects in it sew, each type once; [] when nothing is sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay, compensation (null: none)} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there)}]}; objects of other kinds are left out",
             has_doc,
             props
         ),
@@ -191,6 +191,26 @@ fn props_json(props: &StitchProps, number: impl Fn(StitchParam) -> Option<f64>, 
     m
 }
 
+/// What the paths and compound paths in group or layer `g` sew, each type once, in the order
+/// they are first sewn: empty when nothing in it is sewn.
+fn contents_sewn_as(d: &Document, g: &Node, o: &FromDocOptions) -> Vec<StitchType> {
+    let mut out: Vec<StitchType> = vec![];
+    g.walk(&mut |n: &Node| {
+        // A compound path answers for its paths; and once every type is found, nothing can be added.
+        let in_compound = d.parent_of(n.id).and_then(|p| d.node(p)).is_some_and(|p| matches!(p.kind, NodeKind::Compound { .. }));
+        if in_compound || out.len() >= StitchType::ALL.len() {
+            return;
+        }
+        let Some((props, opened)) = inherited_props(d, n.id) else { return };
+        for t in sewn_as(n, &props, opened, o) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    });
+    out
+}
+
 fn props(s: &mut Session, p: &Value) -> Result<Value> {
     let options = match p.get("options") {
         None | Some(Value::Null) => json!({}),
@@ -204,7 +224,13 @@ fn props(s: &mut Session, p: &Value) -> Result<Value> {
     for id in ids {
         let (Some(n), Some((inherited, opened))) = (d.node(id), inherited_props(d, id)) else { continue };
         let own = n.stitch_props().copied().unwrap_or_default();
-        let sews: Vec<&str> = sewn_as(n, &inherited, opened, &o).into_iter().map(StitchType::id).collect();
+        let sews: Vec<&str> = match n.kind {
+            NodeKind::Group { .. } | NodeKind::Layer { .. } => contents_sewn_as(d, n, &o),
+            _ => sewn_as(n, &inherited, opened, &o),
+        }
+        .into_iter()
+        .map(StitchType::id)
+        .collect();
         objects.push(json!({
             "id": id.0,
             "kind": kind_name(&n.kind),
@@ -312,7 +338,15 @@ mod tests {
         assert_eq!((pa["type"].as_str(), pa["sews"].clone(), pa["params"]["runLength"].as_f64()), (Some("run"), json!(["run"]), Some(3.5)));
         assert_eq!(props_of(&mut s, b)["params"]["runLength"].as_f64(), Some(2.0));
         let group = props_of(&mut s, g);
-        assert_eq!((group["kind"].as_str(), group["sews"].clone()), (Some("group"), json!([])));
+        // A group sews what the objects in it sew: here both rectangles, as running stitch.
+        assert_eq!((group["kind"].as_str(), group["sews"].clone()), (Some("group"), json!(["run"])));
+        // Left automatic, the filled and stroked rectangles are sewn as tatami, then running stitch.
+        s.execute("stitch.setType", &json!({"type": "auto", "ids": [g]})).unwrap();
+        assert_eq!(props_of(&mut s, g)["sews"], json!(["tatami", "run"]));
+        // Only a group in which nothing is sewn sews nothing.
+        s.execute("stitch.setType", &json!({"type": "none", "ids": [g]})).unwrap();
+        assert_eq!(props_of(&mut s, g)["sews"], json!([]));
+        s.execute("stitch.setType", &json!({"type": "run", "ids": [g]})).unwrap();
         // The options stand for the document's defaults where nothing is set.
         let r = s.execute("stitch.props", &json!({"ids": [a], "options": {"fill": {"spacing": 0.8}}})).unwrap();
         assert_eq!(r["objects"][0]["params"]["fillSpacing"], json!(0.8));
@@ -320,6 +354,25 @@ mod tests {
         let info = s.execute("stitch.info", &json!({})).unwrap();
         assert_eq!(info["threads"].as_array().map(Vec::len), Some(1), "{info}");
         assert_eq!(info["threads"][0]["rgb"], json!("#ff0000"));
+    }
+
+    /// An opened stitch file is a layer of groups of runs: a click selects a group, and the group
+    /// says what its runs are sewn as, not that nothing is sewn (STI-33).
+    #[test]
+    fn a_group_of_an_opened_stitch_file_is_sewn_as_its_needle_points() {
+        let mut s = session();
+        rect(&mut s, 0.0, 50.0);
+        let file = s.execute("document.export", &json!({"format": "dst"})).unwrap();
+        s.execute("document.open", &json!({"name": "a.dst", "dataBase64": file["dataBase64"]})).unwrap();
+        s.execute("select.all", &json!({})).unwrap();
+        let objects = s.execute("stitch.props", &json!({})).unwrap()["objects"].clone();
+        let objects = objects.as_array().unwrap();
+        assert!(!objects.is_empty());
+        for o in objects {
+            assert_eq!(o["opened"], true, "{o}");
+            assert_eq!(o["sews"], json!(["manual"]), "{o}");
+        }
+        assert!(objects.iter().any(|o| o["kind"] == "group"), "the runs are grouped by colour: {objects:?}");
     }
 
     /// Moving or scaling an object sews it again from its outline, at the same density.
