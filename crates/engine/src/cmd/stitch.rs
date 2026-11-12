@@ -2,6 +2,7 @@
 //! same options would give, without writing a file, and `stitch.preview`, a picture of the stitches
 //! that export would sew. The stitch properties of objects are in [`objects`].
 
+mod lettering;
 mod objects;
 mod production;
 mod sequence;
@@ -60,6 +61,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
     ];
     v.extend(objects::specs());
+    v.extend(lettering::specs());
     v.extend(production::specs());
     v.extend(worksheet::specs());
     v.extend(sequence::specs());

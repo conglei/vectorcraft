@@ -5,7 +5,7 @@
 //! ([`vectorcraft_stitch::from_document`]).
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
 use vectorcraft_stitch::{FromDocOptions, effective_number, inherited_props, sewn_as};
 
 use super::super::fileio::stitchfile;
@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Stitch Type",
             [],
             None,
-            "{type: auto (the document's stitch options decide: a fill sewn as tatami, then a stroke as running stitch or satin) | none (not sewn) | run (running stitch along the outline) | satin (a satin column centred on the path) | tatami (tatami fill of the region the outline encloses) | manual (one needle point per anchor), ids?|id? (default: the selection)} the stitch type of paths, compound paths and groups (a group's or layer's passes to the objects in it that leave theirs automatic; a compound path's member stands for the compound path); one type sews the object once, in its stroke colour (run, satin, manual) or fill colour (tatami), the other paint's colour when it has only that; objects of other kinds are skipped; not used on the layer an opened stitch file made; one undo step → {changed: [id…]}",
+            "{type: auto (the document's stitch options decide: a fill sewn as tatami, then a stroke as running stitch or satin) | none (not sewn) | run (running stitch along the outline) | satin (a satin column centred on the path) | tatami (tatami fill of the region the outline encloses) | manual (one needle point per anchor) | lettering (type sewn as satin lettering, as automatic type is; on a path it is automatic), ids?|id? (default: the selection)} the stitch type of paths, compound paths, type and groups (a group's or layer's passes to the objects in it that leave theirs automatic; a compound path's member stands for the compound path); one type sews the object once, in its stroke colour (run, satin, manual) or fill colour (tatami), the other paint's colour when it has only that; objects of other kinds are skipped; not used on the layer an opened stitch file made; one undo step → {changed: [id…]}",
             has_doc,
             set_type
         ),
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Stitch Parameters",
             [],
             None,
-            "{params: {fillAngle?: degrees -360–360 (tatami row direction, counter-clockwise), fillSpacing?: mm 0.2–5 (between tatami rows), fillStitchLength?: mm 1–8 (along a row), stagger?: 0–1 (row offset, a fraction of the stitch length), satinSpacing?: mm 0.2–5 (peak to peak), satinWidth?: mm 0.5–20 (rail to rail; unset: the stroke weight), runLength?: mm 0.5–12 (running stitch length), underlay?: bool (kept and saved; not sewn yet), compensation?: mm 0–2 (pull compensation; kept and saved, not used yet)} (null unsets one: it is inherited again, from the groups holding the object, else from the document's stitch options), ids?|id? (default: the selection)} the stitch parameters of paths, compound paths and groups, over the document's stitch options (the export's fill, stroke and stitchLength); what is not given stays as it was; one undo step → {changed: [id…]}",
+            "{params: {fillAngle?: degrees -360–360 (tatami row direction, counter-clockwise), fillSpacing?: mm 0.2–5 (between tatami rows), fillStitchLength?: mm 1–8 (along a row), stagger?: 0–1 (row offset, a fraction of the stitch length), satinSpacing?: mm 0.2–5 (peak to peak), satinWidth?: mm 0.5–20 (rail to rail; unset: the stroke weight), runLength?: mm 0.5–12 (running stitch length; lettering's runs 1.5), underlay?: bool (a centre run under two-rail satin columns and satin lettering, on by default for lettering; not yet under fills), compensation?: mm 0–2 (pull compensation each side, for two-rail satin columns (default 0) and lettering (default 0.2)), minColumn?: mm 0.3–3 (lettering: narrower strokes are running stitch; default 1), runUnder?: mm 0–20 (lettering: letters shorter than this are running stitch; default 5), letterTrims?: word (default) | letter | none (lettering: where the thread is trimmed between letters)} (null unsets one: it is inherited again, from the groups holding the object, else from the document's stitch options), ids?|id? (default: the selection)} the stitch parameters of paths, compound paths and groups, over the document's stitch options (the export's fill, stroke and stitchLength); what is not given stays as it was; one undo step → {changed: [id…]}",
             has_doc,
             set_params
         ),
@@ -69,8 +69,10 @@ fn stitch_targets(s: &Session, p: &Value, cmd: &str) -> Result<Vec<NodeId>> {
             Some(parent) if matches!(parent.kind, NodeKind::Compound { .. }) => parent,
             _ => n,
         };
-        let takes =
-            matches!(owner.kind, NodeKind::Path { guide: false, .. } | NodeKind::Compound { .. } | NodeKind::Group { .. } | NodeKind::Layer { .. });
+        let takes = matches!(
+            owner.kind,
+            NodeKind::Path { guide: false, .. } | NodeKind::Compound { .. } | NodeKind::Group { .. } | NodeKind::Layer { .. } | NodeKind::Text(_)
+        );
         if takes && !out.contains(&owner.id) {
             out.push(owner.id);
         }
@@ -103,24 +105,39 @@ fn change(s: &mut Session, p: &Value, cmd: &str, label: &str, f: impl Fn(&mut St
 }
 
 fn set_type(s: &mut Session, p: &Value) -> Result<Value> {
-    let given = p.get("type").ok_or_else(|| bad(SET_TYPE, "type is required: auto, none, run, satin, tatami or manual"))?;
-    let kind =
-        given.as_str().and_then(StitchType::parse).ok_or_else(|| bad(SET_TYPE, format!("type {given}: auto, none, run, satin, tatami or manual")))?;
+    let given = p.get("type").ok_or_else(|| bad(SET_TYPE, "type is required: auto, none, run, satin, tatami, manual or lettering"))?;
+    let kind = given
+        .as_str()
+        .and_then(StitchType::parse)
+        .ok_or_else(|| bad(SET_TYPE, format!("type {given}: auto, none, run, satin, tatami, manual or lettering")))?;
     change(s, p, SET_TYPE, "Set Stitch Type", |props| props.kind = kind)
 }
 
-/// One change `stitch.setParams` makes: a number set or unset, or the underlay.
+/// One change `stitch.setParams` makes: a number set or unset, the underlay, or lettering's trims.
 enum Edit {
     Number(StitchParam, Option<f64>),
     Underlay(Option<bool>),
+    LetterTrims(Option<LetterTrims>),
 }
 
 /// The changes `params` asks for, checked: an unknown key, a value of the wrong kind or out of
 /// range is an error and nothing changes.
 fn param_edits(params: &Map<String, Value>) -> Result<Vec<Edit>> {
-    let keys = || StitchParam::ALL.iter().map(|p| p.key()).chain(["underlay"]).collect::<Vec<_>>().join(", ");
+    let keys = || StitchParam::ALL.iter().map(|p| p.key()).chain(["underlay", "letterTrims"]).collect::<Vec<_>>().join(", ");
     let mut edits = vec![];
     for (k, v) in params {
+        if k == "letterTrims" {
+            let trims = match v {
+                Value::Null => None,
+                v => Some(
+                    v.as_str()
+                        .and_then(LetterTrims::parse)
+                        .ok_or_else(|| bad(SET_PARAMS, format!("params.letterTrims must be word, letter, none or null, not {v}")))?,
+                ),
+            };
+            edits.push(Edit::LetterTrims(trims));
+            continue;
+        }
         if k == "underlay" {
             let on = match v {
                 Value::Null => None,
@@ -154,6 +171,7 @@ fn set_params(s: &mut Session, p: &Value) -> Result<Value> {
             match *e {
                 Edit::Number(param, v) => props.set_number(param, v),
                 Edit::Underlay(v) => props.underlay = v,
+                Edit::LetterTrims(v) => props.letter_trims = v,
             }
         }
     })
@@ -169,6 +187,7 @@ fn kind_name(k: &NodeKind) -> &'static str {
         NodeKind::Compound { .. } => "compound",
         NodeKind::Group { .. } => "group",
         NodeKind::Layer { .. } => "layer",
+        NodeKind::Text(_) => "text",
         _ => "path",
     }
 }
@@ -187,6 +206,9 @@ fn props_json(props: &StitchProps, number: impl Fn(StitchParam) -> Option<f64>, 
     }
     if all || props.underlay.is_some() {
         m.insert("underlay".into(), json!(props.underlay.unwrap_or(false)));
+    }
+    if all || props.letter_trims.is_some() {
+        m.insert("letterTrims".into(), json!(props.letter_trims.unwrap_or_default().id()));
     }
     m
 }

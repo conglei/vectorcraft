@@ -187,6 +187,7 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
             ("Closest Join", Some("stitch.join.closest")),
             ("Calibration Design", Some("stitch.calibration")),
             ("Photo to Stitches…", Some("ui.photoStitchDialog")),
+            ("Convert Type to Stitch Objects", Some("text.toStitches")),
             ("Center Design in Hoop", Some("stitch.hoop.center")),
             ("Production Worksheet…", Some("ui.stitchWorksheet")),
             ("Export for Production…", Some("ui.stitchProduction")),

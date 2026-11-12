@@ -521,6 +521,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 c("Closest Join", "stitch.join.closest"),
                 c("Calibration Design", "stitch.calibration"),
                 c("Photo to Stitches…", "ui.photoStitchDialog"),
+                c("Convert Type to Stitch Objects", "text.toStitches"),
                 c("Center Design in Hoop", "stitch.hoop.center"),
                 Sep,
                 c("Production Worksheet…", "ui.stitchWorksheet"),
