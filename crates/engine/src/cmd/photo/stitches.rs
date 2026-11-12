@@ -683,7 +683,9 @@ fn sew_mono(s: &Session, p: &Value, img: &Raster, k: f64, m: &MonoSettings) -> R
     };
     // Travel is stitched only across an opaque picture: a cut-out's background is never sewn.
     let (w, h) = tone.size();
-    let rings = if tone.opaque() { vec![vec![(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]] } else { vec![] };
+    // The picture with a little room round it: rows end on its edge, and travel runs along it.
+    let (lo, w, h) = (-0.5, w + 0.5, h + 0.5);
+    let rings = if tone.opaque() { vec![vec![(lo, lo), (w, lo), (w, h), (lo, h)]] } else { vec![] };
     let steps = join_runs(runs, &rings, m.travel, m.fp.max_length);
     if steps.is_empty() {
         return Err(bad(c, "the photo is too small to fill: make the design larger"));
