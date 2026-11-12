@@ -9,7 +9,7 @@ use vectorcraft_engine::{Session, command_specs};
 use vectorcraft_testkit::catch_quiet;
 use vectorcraft_testkit::fixtures::Fixture;
 use vectorcraft_testkit::invariants::{check_all, check_session, doc_json};
-use vectorcraft_testkit::strategies::{junk_params, junk_values, param_keys};
+use vectorcraft_testkit::strategies::{is_path_key, junk_params, junk_values, param_keys};
 
 /// Commands that replace/close the active document or touch the filesystem are fine to call, but a
 /// few need their paths redirected into a temp dir (handled by `junk_params`).
@@ -230,6 +230,25 @@ fn tool_edit_state(s: &Session) -> ToolEditState {
     (docs, s.active_index(), s.paint.clone())
 }
 
+/// The names of the entries in the engine crate directory (the working directory of this test).
+fn crate_dir_entries() -> std::collections::BTreeSet<String> {
+    std::fs::read_dir(env!("CARGO_MANIFEST_DIR")).unwrap().filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string())).collect()
+}
+
+/// Fails the test when the crate directory gained a file while it lived: a probe that names its
+/// output file with a bare string (`"on"`) writes it into the working directory.
+struct NoStrayFiles(std::collections::BTreeSet<String>);
+
+impl NoStrayFiles {
+    fn new() -> Self {
+        Self(crate_dir_entries())
+    }
+    fn check(&self) {
+        let added: Vec<String> = crate_dir_entries().difference(&self.0).cloned().collect();
+        assert!(added.is_empty(), "the sweep wrote files into the crate directory: {added:?}");
+    }
+}
+
 /// Every command that runs at once while the active tool computes an edit on another thread (a
 /// Shape Builder merge), rather than applying the edit first (`waits_for_tool_edit`), leaves the
 /// documents' revisions and selections, the active document and the current paint as they were,
@@ -238,6 +257,7 @@ fn tool_edit_state(s: &Session) -> ToolEditState {
 #[test]
 fn commands_that_do_not_wait_for_a_tool_edit_change_no_document() {
     let path = safe_path();
+    let stray = NoStrayFiles::new();
     let mut failures = vec![];
     for fx in [Fixture::Single, Fixture::Multi] {
         for c in command_specs().iter().filter(|c| !vectorcraft_engine::waits_for_tool_edit(c.id)) {
@@ -247,6 +267,9 @@ fn commands_that_do_not_wait_for_a_tool_edit_change_no_document() {
             }
             for k in param_keys(c.params) {
                 for v in [json!(true), json!(false), json!(1), json!("on")] {
+                    // A key that names an output file gets the temporary path: the bare string
+                    // "on" would be written as a file in the working directory.
+                    let v = if is_path_key(&k) && v.is_string() { json!(path) } else { v };
                     cases.push(json!({ k.as_str(): v }));
                 }
             }
@@ -267,6 +290,7 @@ fn commands_that_do_not_wait_for_a_tool_edit_change_no_document() {
     failures.sort();
     failures.dedup_by(|a, b| a.split(' ').next() == b.split(' ').next());
     assert!(failures.is_empty(), "{} commands change a document without waiting for a tool edit:\n{}", failures.len(), failures.join("\n"));
+    stray.check();
 }
 
 /// Junk inside the obvious structured params: ids arrays, anchors, matrices, colours, stops.
