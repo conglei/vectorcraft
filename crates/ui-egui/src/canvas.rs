@@ -29,6 +29,8 @@ mod overlays;
 mod panes;
 mod raster;
 mod selection_marks;
+mod stitches;
+pub(crate) use stitches::state as stitch_view_state;
 mod task_bar;
 mod tool_overlays;
 mod view;
@@ -295,7 +297,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let doc = st.doc.clone();
     let mask_view = st.shown_mask();
 
-    paint_paper(app, st, ui, &painter, &xf, rect, (&t, app.outline_view()));
+    paint_paper(app, st, ui, &painter, &xf, rect, (&t, app.outline_view(), v.stitches));
     // The grid behind the art (Guides & Grid › Grids In Back), else over it below.
     let grid_look = (app.ui.view.grid && !presenting).then(|| LineLook::grid(&app.session.prefs));
     let grids_in_back = app.session.prefs.grids_in_back;
@@ -361,8 +363,12 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             &[],
         ));
     }
-    fill_uncovered(app, ui.ctx(), &painter, &key, &doc, rect, &xf);
-    reproject_frame(app, &painter, &xf, rect, (key.doc, v.rotation));
+    // View › Stitches: the stitches an export would sew, in place of the art (which still shows,
+    // washed with the fabric colour, as an underlay or while there are no stitches).
+    let stitch_view = stitches::begin(app, ui.ctx(), &v);
+    let art = stitches::shows_art(app, stitch_view.as_ref());
+    paint_art(app, ui.ctx(), &painter, (&key, &doc), (&xf, rect, v.rotation), art);
+    stitches::draw(app, ui, (&painter, &xf, rect), &doc, stitch_view.as_ref());
     if fades_outside_artboards(app) {
         fade_outside_artboards(&painter, &xf, &doc);
     }
@@ -803,6 +809,22 @@ const OUTLINE_CANVAS: Color32 = Color32::WHITE;
 /// [`OUTLINE_CANVAS`].
 const OUTLINE_DIM: Color32 = Color32::from_gray(0x4b);
 
+/// The art's frame over the canvas `rect`, when it `shows` (the stitch view draws the stitches in
+/// its place): the frame rendered last, put where this view has its part of the document.
+fn paint_art(
+    app: &mut VectorcraftApp,
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    (key, doc): (&CacheKey, &std::sync::Arc<vectorcraft_doc::Document>),
+    (xf, rect, rotation): (&Xf, egui::Rect, f64),
+    shows: bool,
+) {
+    if shows {
+        fill_uncovered(app, ctx, painter, key, doc, rect, xf);
+        reproject_frame(app, painter, xf, rect, (key.doc, rotation));
+    }
+}
+
 /// The pasteboard and the artboards' shadows and paper of document `st`, or in Outline (`outline`)
 /// the whole canvas in [`OUTLINE_CANVAS`], with no paper drawn for the artboards: no Simulate
 /// Colored Paper color, no artboard background color, and no paper with View › Hide Artboards.
@@ -813,7 +835,7 @@ fn paint_paper(
     painter: &egui::Painter,
     xf: &Xf,
     rect: egui::Rect,
-    (t, outline): (&Tokens, bool),
+    (t, outline, stitches): (&Tokens, bool, bool),
 ) {
     let doc = &st.doc;
     if outline {
@@ -831,10 +853,13 @@ fn paint_paper(
     if !shows_artboards(app) {
         // View › Hide Artboards: no edges and no pasteboard, the whole canvas paper (#4038).
         let setup = &doc.setup;
-        painter.rect_filled(rect, 0.0, if setup.simulate_paper { crate::panels::c32(&setup.paper()) } else { Color32::WHITE });
+        let paper = if setup.simulate_paper { crate::panels::c32(&setup.paper()) } else { Color32::WHITE };
+        painter.rect_filled(rect, 0.0, if stitches { stitches::FABRIC_COLOR } else { paper });
     } else {
         let setup = &doc.setup;
-        let grid = (st.transparency_grid && setup.background == vectorcraft_doc::Background::Transparent).then(|| checker_texture(ui.ctx(), setup));
+        // In the stitch view the artboards are fabric: no transparency grid, paper or artboard colour.
+        let grid = (!stitches && st.transparency_grid && setup.background == vectorcraft_doc::Background::Transparent)
+            .then(|| checker_texture(ui.ctx(), setup));
         let paper = if setup.simulate_paper { crate::panels::c32(&setup.paper()) } else { Color32::WHITE };
         for ab in &doc.artboards {
             let q = xf.quad(ab.rect);
@@ -845,7 +870,7 @@ fn paint_paper(
             match &grid {
                 Some((tex, cell)) => checker(painter, &q, ab.rect, xf.zoom, tex.id(), *cell),
                 None => {
-                    let fill = ab.color.map_or(paper, |c| crate::panels::c32(&c) * paper);
+                    let fill = if stitches { stitches::FABRIC_COLOR } else { ab.color.map_or(paper, |c| crate::panels::c32(&c) * paper) };
                     painter.add(Shape::convex_polygon(q, fill, Stroke::NONE));
                 }
             }

@@ -29,6 +29,9 @@ pub struct AppIdentity {
     pub brand_png: &'static [u8],
     /// The panels a first start shows (no saved preferences yet), in order.
     pub first_start_panels: &'static [&'static str],
+    /// Documents open in the stitch view (View › Stitches: the canvas shows the stitches an export
+    /// would sew) instead of Preview.
+    pub stitch_view: bool,
 }
 
 /// VectorCraft, the vector illustration app.
@@ -42,6 +45,7 @@ pub const VECTORCRAFT: AppIdentity = AppIdentity {
     icon_png: include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png"),
     brand_png: include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.vectorcraft.png"),
     first_start_panels: &[],
+    stitch_view: false,
 };
 
 static CURRENT: OnceLock<&'static AppIdentity> = OnceLock::new();

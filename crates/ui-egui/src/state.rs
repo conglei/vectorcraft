@@ -25,11 +25,15 @@ pub struct View {
     /// document opens in Preview.
     #[serde(default)]
     pub outline: bool,
+    /// View › Stitches: the canvas shows the stitches an export would sew, in place of the art
+    /// (`crate::canvas`'s stitch view). Each document has its own; on turns Outline off.
+    #[serde(default)]
+    pub stitches: bool,
 }
 
 impl Default for View {
     fn default() -> Self {
-        Self { zoom: 1.0, center: Point::new(306.0, 396.0), fitted: false, rotation: 0.0, artboard: 0, outline: false }
+        Self { zoom: 1.0, center: Point::new(306.0, 396.0), fitted: false, rotation: 0.0, artboard: 0, outline: false, stitches: false }
     }
 }
 
@@ -53,6 +57,7 @@ impl View {
             rotation: if v.rotation.is_finite() { v.rotation } else { 0.0 },
             artboard: 0,
             outline: false,
+            stitches: false,
         })
     }
 }

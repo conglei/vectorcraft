@@ -490,6 +490,9 @@ pub fn run(ident: &'static AppIdentity) -> std::process::ExitCode {
                     // offer VectorCraft, and installing it would replace this app.
                     app.without_release_feed();
                 }
+                if ident.stitch_view {
+                    app.open_in_stitch_view();
+                }
                 let first_start = saved.is_none();
                 load_prefs(&mut app, saved);
                 // The app's own workspace on its first start (StitchCraft docks Stitch Properties);

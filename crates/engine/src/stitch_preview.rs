@@ -8,7 +8,8 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use vectorcraft_doc::Document;
 use vectorcraft_stitch::{
-    MARGIN_MM, MAX_SCALE, MIN_SCALE, PreviewMode, PreviewOptions, Step, StitchPlan, UNITS_PER_MM, preview_prefix, preview_size, stats,
+    MARGIN_MM, MAX_SCALE, MIN_SCALE, PreviewMode, PreviewOptions, Region, Step, StitchPlan, UNITS_PER_MM, preview_prefix, preview_region,
+    preview_size, stats,
 };
 
 use crate::cmd::fileio::stitchfile;
@@ -71,7 +72,31 @@ pub struct FrameOptions {
     pub stitches: Option<usize>,
 }
 
-/// A picture of the plan: opaque RGBA rows.
+/// The fabric colour pictures are drawn on, and a canvas showing a [`BuiltPlan::region`] paints.
+pub const FABRIC: [u8; 3] = vectorcraft_stitch::DEFAULT_FABRIC;
+/// The most pixels a side of a region.
+pub const MAX_REGION_SIDE: u32 = vectorcraft_stitch::MAX_SIDE;
+/// The pixels per millimetre a region can be drawn at.
+pub const REGION_SCALES: std::ops::RangeInclusive<f64> = vectorcraft_stitch::MIN_REGION_SCALE..=MAX_SCALE;
+/// Millimetres per document point.
+pub const MM_PER_PT: f64 = 1.0 / vectorcraft_stitch::PT_PER_MM;
+
+/// A rectangle of the document to draw the plan's stitches in, for a canvas that shows them in
+/// place: the plan's coordinates are the document's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegionOptions {
+    pub frame: FrameOptions,
+    /// The picture's top-left corner, in millimetres of the document's space.
+    pub left_mm: f64,
+    pub top_mm: f64,
+    /// Pixels per millimetre, within [`REGION_SCALES`].
+    pub scale: f64,
+    /// The picture's size in pixels, at most [`MAX_REGION_SIDE`] a side.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A picture of the plan: RGBA rows, straight alpha; opaque from [`BuiltPlan::frame`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub width: u32,
@@ -157,6 +182,26 @@ impl BuiltPlan {
     }
 }
 
+impl BuiltPlan {
+    /// The stitches inside `r`, drawn as [`BuiltPlan::frame`] draws them but with no fabric: where
+    /// there is no thread or mark the picture is transparent, to lay over the document's page.
+    /// Errors for a scale outside [`REGION_SCALES`], a side of 0 or more than
+    /// [`MAX_REGION_SIDE`] pixels, or a corner that is not finite.
+    pub fn region(&self, r: &RegionOptions) -> Result<Frame, String> {
+        let view = PreviewOptions {
+            scale: r.scale,
+            show_jumps: r.frame.show_jumps,
+            show_needles: r.frame.show_needles,
+            show_functions: r.frame.show_functions,
+            mode: if r.frame.density { PreviewMode::Density } else { PreviewMode::Realistic },
+            ..PreviewOptions::default()
+        };
+        let region = Region { left_mm: r.left_mm, top_mm: r.top_mm, width: r.width, height: r.height, transparent: true };
+        let img = preview_region(&self.plan, &view, &region, r.frame.stitches)?;
+        Ok(Frame { width: img.width, height: img.height, rgba: img.rgba, max_coverage: img.max_coverage, dense_cells: img.dense_cells })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +258,41 @@ mod tests {
         assert!(f.width <= MAX_FRAME_SIDE && f.height <= MAX_FRAME_SIDE, "{} × {}", f.width, f.height);
         // Bad options are errors, not panics.
         assert!(build_plan(&doc, &json!({"stitchLength": -1})).is_err());
+    }
+
+    #[test]
+    fn a_region_shows_the_stitches_where_the_document_has_them() {
+        let s = session();
+        let doc = s.active().unwrap().doc.clone();
+        let built = build_plan(&doc, &json!({})).unwrap();
+        // The red rectangle spans 0..100 pt × 0..50 pt: its top edge is the line y = 0 mm.
+        let r = RegionOptions { frame: FrameOptions::default(), left_mm: -5.0, top_mm: -5.0, scale: 4.0, width: 200, height: 120 };
+        let f = built.region(&r).unwrap();
+        assert_eq!((f.width, f.height, f.rgba.len()), (200, 120, 200 * 120 * 4));
+        let at = |x: usize, y: usize| &f.rgba[(y * 200 + x) * 4..][..4];
+        // (10 mm, 0 mm) is pixel (60, 20): red thread. (10 mm, 5 mm), inside the rectangle: nothing.
+        // The thread is 1.6 pixels wide at this scale, so it covers most of the pixel, not all.
+        assert!(at(60, 20)[3] > 150, "{:?}", at(60, 20));
+        assert!(at(60, 20)[0] > at(60, 20)[2] + 60, "{:?}", at(60, 20));
+        assert_eq!(at(60, 40)[3], 0);
+        // The same place whatever the playback position; before any stitch, nothing.
+        let none = built.region(&RegionOptions { frame: FrameOptions { stitches: Some(0), ..FrameOptions::default() }, ..r }).unwrap();
+        assert!(none.rgba.chunks(4).all(|p| p[3] == 0));
+        // Somewhere else in the document: nothing, and no error.
+        let far = built.region(&RegionOptions { left_mm: 5000.0, ..r }).unwrap();
+        assert!(far.rgba.chunks(4).all(|p| p[3] == 0));
+        // Bad regions are errors, not panics or huge allocations.
+        for bad in [
+            RegionOptions { scale: 0.0, ..r },
+            RegionOptions { scale: f64::NAN, ..r },
+            RegionOptions { scale: 1e9, ..r },
+            RegionOptions { width: 0, ..r },
+            RegionOptions { height: u32::MAX, ..r },
+            RegionOptions { left_mm: f64::INFINITY, ..r },
+        ] {
+            assert!(built.region(&bad).is_err(), "{bad:?}");
+        }
+        assert!(REGION_SCALES.contains(&4.0) && MAX_REGION_SIDE >= MAX_FRAME_SIDE);
+        assert!((MM_PER_PT - 25.4 / 72.0).abs() < 1e-12);
     }
 }

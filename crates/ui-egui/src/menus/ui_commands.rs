@@ -193,6 +193,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{path? | dataBase64?, name?} open Import Shortcut Set for a shortcut set another app saved as text (.kys; without a file, pick one): each entry matched to a tool, command or panel, and its key and modifier codes decoded (dialog `shortcutImport`: name, start: defaults|current, remember, rows: [{name, section, line, key, modifiers, target: entry id | \"\" (no equivalent) | null (not chosen), from, choices, on}], keys and mods: {code: {text, from, votes, names}}); Apply assigns the ready rows over Edit › Keyboard Shortcuts' working set, remembers the matches (importMatches.set) and shows Keyboard Shortcuts, whose OK keeps them. File › Open of a .kys opens it too",
     ),
     ("view.outline", "Outline", "Cmd+Y", "{} toggle Outline/Preview"),
+    (
+        "view.stitches",
+        "Stitches",
+        "Alt+Y",
+        "{on?: (not given: toggle)} the stitch view of the active document: the canvas shows the stitches an export would sew (the plan of stitch.preview, with the view, needle point and jump settings of ui.stitchPreview) at the art's own place and the canvas's zoom, on the fabric colour, instead of the art; selection marks and tools work as in Preview. On turns Outline off, and Outline turns it off → on",
+    ),
     ("view.pixelPreview", "Pixel Preview", "Cmd+Alt+Y", "{}"),
     ("view.trimView", "Trim View", "", "{} toggle: hide everything outside the artboards"),
     ("view.cornerWidget", "Hide Corner Widget", "", "{} toggle the live corner widgets"),
@@ -1433,7 +1439,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "ui.stitchPreview",
         "Stitch Preview",
         "",
-        "{view?: realistic (lit thread) | density (cells coloured by thread coverage), needles?: (a dot at each needle point), jumps?: (jumps as dashed lines, rings at trims, colour changes and stops), speed?: 100 (playback, stitches per second, 1–100000), position?: (the stitches shown, a count from 0; null or \"end\": all of them), playing?: (play or pause the playback; playing from position, or from the start when it is at the end)} set the Stitch Preview panel (ui.inspect: ui.stitch_preview), show it and answer what it shows: the plan is built off the UI thread from the document and the Stitch File Options last used (machine generic when they name none), a quarter of a second after the last change, so the answer may be status `updating` first → {panel, status: ready|updating|error|none, view, needles, jumps, speed, position (null: all), playing, stitches, colorChanges, trims, jumpCount, widthMm, heightMm, blocks, warnings, image?: {width, height} (at most 4096 a side), message? (why there is no preview)}",
+        "{view?: realistic (lit thread) | density (cells coloured by thread coverage), needles?: (a dot at each needle point), jumps?: (jumps as dashed lines, rings at trims, colour changes and stops), speed?: 100 (playback, stitches per second, 1–100000), position?: (the stitches shown, a count from 0; null or \"end\": all of them), playing?: (play or pause the playback; playing from position, or from the start when it is at the end), underlay?: (in the canvas's stitch view, view.stitches, the art shows faintly under the thread)} set the Stitch Preview panel (ui.inspect: ui.stitch_preview), show it and answer what it shows: the plan is built off the UI thread from the document and the Stitch File Options last used (machine generic when they name none), a quarter of a second after the last change, so the answer may be status `updating` first → {panel, status: ready|updating|error|none, view, needles, jumps, speed, underlay, onCanvas (the active document is in the stitch view, which draws with these settings and this position), position (null: all), playing, stitches, colorChanges, trims, jumpCount, widthMm, heightMm, blocks, warnings, image?: {width, height} (at most 4096 a side), message? (why there is no preview), canvas?: (in the stitch view, the picture on the canvas: {width, height (pixels), scale (pixels per mm), leftMm, topMm (its corner in the document), stitches (null: all), pending (a newer one is being drawn)})}",
     ),
     (
         "ui.stitchInfo",

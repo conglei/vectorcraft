@@ -63,6 +63,7 @@ impl VectorcraftApp {
             ui: UiState::default(),
             views,
             view_uids,
+            stitch_view_default: false,
             services,
             canvas: CanvasCache {
                 renderer: vectorcraft_render::Renderer::new(),

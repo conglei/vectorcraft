@@ -24,6 +24,8 @@ const STITCHCRAFT: AppIdentity = AppIdentity {
     // The Stitch Properties and Stitch Preview panels (`vectorcraft_ui_egui::panels::stitch_props::ID`
     // and `panels::stitch_preview::ID`), each docked under Properties in that order.
     first_start_panels: &["stitchProps", "stitchPreview"],
+    // Embroidery is this app's work: the canvas shows the stitches, not the drawing they come from.
+    stitch_view: true,
 };
 
 fn main() -> std::process::ExitCode {
@@ -41,6 +43,8 @@ mod tests {
         assert_ne!(STITCHCRAFT.default_control_port, vectorcraft_app::VECTORCRAFT.default_control_port);
         // No release feed of its own yet: checked when this compiles.
         const { assert!(!STITCHCRAFT.update_check) };
+        // Its documents open showing their stitches; VectorCraft's show the art.
+        const { assert!(STITCHCRAFT.stitch_view && !vectorcraft_app::VECTORCRAFT.stitch_view) };
     }
 
     /// The window title and the app bar name StitchCraft, and the panels of its first start open in order.

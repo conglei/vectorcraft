@@ -133,6 +133,9 @@ pub struct VectorcraftApp {
     /// [`VectorcraftApp::sync_views`], which puts the views back with their documents after
     /// `document.move` reorders them (#5663).
     pub(crate) view_uids: Vec<u64>,
+    /// Documents open in the stitch view (View › Stitches) instead of Preview: set by an app whose
+    /// work is embroidery (StitchCraft), through [`VectorcraftApp::open_in_stitch_view`].
+    pub(crate) stitch_view_default: bool,
     pub services: Services,
     pub canvas: CanvasCache,
     pub perf: Perf,

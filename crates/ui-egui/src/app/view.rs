@@ -16,12 +16,18 @@ impl VectorcraftApp {
             self.views = docs
                 .iter()
                 .map(|d| {
-                    self.view_uids.iter().position(|u| *u == d.uid).and_then(|k| old.get_mut(k)).and_then(Option::take).unwrap_or_else(|| View::of(d))
+                    self.view_uids
+                        .iter()
+                        .position(|u| *u == d.uid)
+                        .and_then(|k| old.get_mut(k))
+                        .and_then(Option::take)
+                        .unwrap_or_else(|| View { stitches: self.stitch_view_default, ..View::of(d) })
                 })
                 .collect();
         }
         self.views.truncate(docs.len());
-        self.views.extend(docs.iter().skip(self.views.len()).map(View::of));
+        let stitches = self.stitch_view_default;
+        self.views.extend(docs.iter().skip(self.views.len()).map(|d| View { stitches, ..View::of(d) }));
         for (view, doc) in self.views.iter_mut().zip(docs) {
             view.artboard = view.artboard.min(doc.doc.artboards.len().saturating_sub(1));
         }
@@ -95,6 +101,20 @@ impl VectorcraftApp {
     /// Whether the active document is in Outline view (View › Outline); false without one.
     pub fn outline_view(&self) -> bool {
         self.view().is_some_and(|v| v.outline)
+    }
+
+    /// Whether the active document is in the stitch view (View › Stitches); false without one.
+    pub fn stitch_view(&self) -> bool {
+        self.view().is_some_and(|v| v.stitches)
+    }
+
+    /// For an app whose work is embroidery (StitchCraft): documents open in the stitch view, and
+    /// the ones already open switch to it.
+    pub fn open_in_stitch_view(&mut self) {
+        self.stitch_view_default = true;
+        for v in &mut self.views {
+            (v.stitches, v.outline) = (true, false);
+        }
     }
 
     /// The zero point shown by rulers and position fields: the document's with global rulers, the
