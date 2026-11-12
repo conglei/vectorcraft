@@ -50,7 +50,8 @@ algorithms are textbook ones written here.
    the outline. At each centre point the normal is cast both ways to the vector outline: the hits
    are the rails, held to 0.3–1.6 × the distance-transform half width (so columns at a junction
    overlap a little and no gap shows).
-5. Classification: a stretch narrower than `minColumn` becomes running stitch along the centre;
+5. Classification: a stretch that would sew narrower than `minColumn` (its width plus twice the
+   pull compensation) becomes running stitch along the centre;
    a glyph whose widest stroke passes 8 mm becomes tatami fill (whole glyph; partial fills are
    later work); letters under `runUnder` are running stitch along the skeleton.
 
@@ -91,14 +92,30 @@ is one sewing-order item, sewn forwards only.
 
 ## Commands
 
-- `text.toStitches` (Embroidery › Lettering › Convert to Stitch Objects): selected type becomes a
-  group per text object: each column a compound path of two open rails (Satin, with its
-  compensation and underlay), runs as open paths (Run), filled glyphs as closed paths (Tatami).
-  Undoable.
-- `stitch.lettering.info {ids?}`: per selected type object, what it sews as: letter height, mode
-  (satin, run, fill), columns, runs, fills, trims, stitches.
-- `stitch.lettering.set {letterTrims?, minColumn?, runUnder?, underlay?, compensation?}` sets the
-  parameters on the selected objects (one undo step); `stitch.props` shows them.
+- `text.toStitches` (Embroidery › Convert Type to Stitch Objects): selected type becomes a group
+  per text object holding a group per letter: each column a compound path of two open rails
+  (Satin, with its spacing, compensation and underlay), runs as open paths (Run), filled glyphs as
+  closed paths (Tatami). One undo step. The objects are sewn one by one, so they are joined by
+  trims where the live type travels; Closest Join and the sewing order apply to them.
+- `stitch.lettering.info {ids?, options?}`: per type object, what it sews as: letter height, mode
+  (satin, run, fill), columns, runs, fills, trims, stitches (as `stitch.info` counts them for
+  that object alone).
+- The parameters are set with `stitch.setParams` (`minColumn`, `runUnder`, `letterTrims`,
+  `compensation`, `underlay`, `satinSpacing`, `runLength`) and `stitch.setType` (`lettering`) on
+  type, groups or layers; `stitch.props` and the Stitch Properties panel show them.
+- MCP: not added in this pass; `stitch.lettering.info` and `text.toStitches` are reachable
+  through the generic command tool.
+
+## Measured (2026-11-12, StitchCraft dev build, Source Sans 3 Regular)
+
+| Text | Mode | Stitches | Columns | Trims |
+|---|---|---|---|---|
+| "Hello" 15 mm (cap 10.8 mm) | satin | 652 | 46 | 0 |
+| "Hello you" 15 mm | satin | 1118 | 89 | 1 |
+| "Test" 12 mm (cap 7.9 mm) | satin | 465 | 35 | 0 |
+| "Test" 5 mm (cap 3.3 mm) | run | 53 | 0 | 0 |
+
+`stitch.lettering.info` for "Hello" took 0.07 s (planning included). Sizes are font sizes.
 
 ## Later
 
