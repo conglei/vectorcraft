@@ -172,13 +172,77 @@ fn readout(p: &Player) -> String {
     if block > 0 { format!("{at} / {} · {} {block}/{blocks}", p.total, tl!("colour")) } else { format!("{at} / {}", p.total) }
 }
 
-/// The stitch player bar, while the active document is in the stitch view.
+/// The design's figures: "3,203 stitches · 3 colours · 49.4 × 75.9 mm · 3 trims".
+fn figures(p: &Player) -> String {
+    let colours = p.blocks.iter().filter(|b| b.stitches > 0).count();
+    format!(
+        "{} {} · {colours} {} · {:.1} × {:.1} mm · {} {}",
+        p.total,
+        tl!("stitches"),
+        tl!("colours"),
+        p.size_mm.0,
+        p.size_mm.1,
+        p.trims,
+        tl!("trims")
+    )
+}
+
+/// What a thread swatch says when pointed at: its place in the sewing order, the thread's name
+/// when it has one, and how much it sews.
+fn thread_tip(n: usize, b: &vectorcraft_engine::stitch_preview::BlockInfo) -> String {
+    let [r, g, bl] = b.rgb;
+    let name = b.thread.clone().unwrap_or_else(|| format!("#{r:02x}{g:02x}{bl:02x}"));
+    format!("{n}. {name} · {} {} · {:.1} m", b.stitches, tl!("stitches"), b.length_mm / 1000.0)
+}
+
+/// The thread bar, under the player: a swatch per thread block in sewing order (a click moves the
+/// playback to where it starts; the one being sewn is ringed), and the design's figures.
+fn thread_bar(ui: &mut Ui, t: &Tokens, player: Option<&Player>) {
+    egui::Panel::bottom("stitch_threads")
+        .exact_size(26.0)
+        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 0)).stroke(Stroke::new(1.0, t.border)))
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let Some(p) = player else { return };
+                ui.label(egui::RichText::new(tl!("Threads")).color(t.text_dim).size(11.5));
+                let at = p.position.unwrap_or(p.total);
+                let sewn: Vec<_> = p.blocks.iter().filter(|b| b.stitches > 0).collect();
+                let current = sewn.iter().filter(|b| b.first < at).count();
+                for (i, b) in sewn.iter().enumerate() {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 18.0), Sense::click());
+                    let [r, g, bl] = b.rgb;
+                    let swatch = Rect::from_min_size(rect.min + vec2(0.0, 2.0), vec2(14.0, 14.0));
+                    ui.painter().rect_filled(swatch, 2.0, Color32::from_rgb(r, g, bl));
+                    let ring = if i + 1 == current { Stroke::new(1.5, t.text_strong) } else { Stroke::new(1.0, t.border) };
+                    ui.painter().rect_stroke(swatch, 2.0, ring, egui::StrokeKind::Outside);
+                    ui.painter().text(
+                        pos2(swatch.right() + 3.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        (i + 1).to_string(),
+                        egui::FontId::proportional(11.0),
+                        if i + 1 == current { t.text_strong } else { t.text_dim },
+                    );
+                    if resp.on_hover_text(thread_tip(i + 1, b)).clicked() {
+                        stitch_preview::seek(Some(b.first));
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(figures(p)).color(t.text).size(11.5));
+                });
+            });
+        });
+}
+
+/// The stitch player bar and, under it, the thread bar, while the active document is in the
+/// stitch view.
 pub fn stitch_player(app: &mut VectorcraftApp, ui: &mut Ui) {
     if !app.stitch_view() {
         return;
     }
     let t = Tokens::get(ui.ctx());
     let player = stitch_preview::player();
+    thread_bar(ui, &t, player.as_ref());
     if let Some(p) = &player {
         follow(app, p);
     }
@@ -312,6 +376,27 @@ mod tests {
         stitch_preview::seek(Some(3));
         let texts = frames(&mut app, &ctx, &mut clock, 0.05, |_| true);
         assert!(texts.iter().any(|t| *t == format!("3 / {} · colour 1/2", p.total)), "{texts:?}");
+    }
+
+    #[test]
+    fn the_thread_bar_lists_the_threads_and_the_designs_figures() {
+        let mut app = app_with_art();
+        let (ctx, mut clock) = (egui::Context::default(), 0.0);
+        run(&mut app, "view.stitches", json!({}));
+        frames(&mut app, &ctx, &mut clock, 0.05, |_| stitch_preview::player().is_some());
+        let texts = frames(&mut app, &ctx, &mut clock, 0.05, |_| true);
+        let p = stitch_preview::player().unwrap();
+        assert!(texts.iter().any(|t| t == "Threads"), "{texts:?}");
+        // A numbered swatch per thread block, in sewing order.
+        assert!(texts.iter().any(|t| t == "1") && texts.iter().any(|t| t == "2"), "{texts:?}");
+        let line = figures(&p);
+        assert!(texts.contains(&line), "{line:?} in {texts:?}");
+        assert!(line.starts_with(&format!("{} stitches · 2 colours · ", p.total)) && line.contains(" mm · ") && line.ends_with("trims"), "{line}");
+        // The rectangle is 100 × 50 pt and the ellipse reaches 120 pt down: about 35.3 × 42.3 mm.
+        assert!((p.size_mm.0 - 35.3).abs() < 0.3 && (p.size_mm.1 - 42.3).abs() < 0.3, "{:?}", p.size_mm);
+        assert_eq!(thread_tip(1, &p.blocks[0]), format!("1. #ff0000 · {} stitches · {:.1} m", p.blocks[0].stitches, p.blocks[0].length_mm / 1000.0));
+        let named = vectorcraft_engine::stitch_preview::BlockInfo { thread: Some("Acme 1001 Red".into()), ..p.blocks[0].clone() };
+        assert!(thread_tip(3, &named).starts_with("3. Acme 1001 Red · "));
     }
 
     #[test]

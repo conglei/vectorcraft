@@ -495,10 +495,10 @@ pub fn run(ident: &'static AppIdentity) -> std::process::ExitCode {
                 }
                 let first_start = saved.is_none();
                 load_prefs(&mut app, saved);
-                // The app's own workspace on its first start (StitchCraft docks Stitch Properties);
-                // after that the saved layout, as the person left it, comes back instead.
+                // The app's own workspace and unit on its first start (StitchCraft: Embroidery,
+                // millimetres); after that what the person left comes back instead.
                 if first_start {
-                    identity::dock_first_start_panels(&mut app, ident);
+                    identity::first_start(&mut app, ident);
                 }
                 safe_mode::after_start(&mut app, stopped);
                 // The saved PDF presets live in their own folder (also read by vectorcraft-cli),

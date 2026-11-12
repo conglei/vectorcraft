@@ -1,7 +1,7 @@
 //! Which app the shared desktop launcher ([`crate::run`]) starts. VectorCraft and its embroidery
 //! sibling StitchCraft (`apps/stitchcraft`) are the same program on the same crates; they differ in
 //! what this names: the app's name, its settings folder, its icons, whether it looks for updates and
-//! which panels open on its first start (`docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md`).
+//! which workspace and unit its first start sets (`docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md`).
 
 use std::sync::OnceLock;
 
@@ -27,8 +27,11 @@ pub struct AppIdentity {
     pub icon_png: &'static [u8],
     /// The 128 px brand mark in the app bar and the About box.
     pub brand_png: &'static [u8],
-    /// The panels a first start shows (no saved preferences yet), in order.
-    pub first_start_panels: &'static [&'static str],
+    /// The workspace a first start shows (no saved preferences yet); `None`: Essentials.
+    pub default_workspace: Option<&'static str>,
+    /// The General unit a first start sets (Preferences › Units, by its name there), which new
+    /// documents are measured in; `None`: the preference's own default.
+    pub default_unit: Option<&'static str>,
     /// Documents open in the stitch view (View › Stitches: the canvas shows the stitches an export
     /// would sew) instead of Preview.
     pub stitch_view: bool,
@@ -44,7 +47,8 @@ pub const VECTORCRAFT: AppIdentity = AppIdentity {
     icon_macos_png: include_bytes!("../../../assets/app-icon/vectorcraft-macos-512.png"),
     icon_png: include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png"),
     brand_png: include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.vectorcraft.png"),
-    first_start_panels: &[],
+    default_workspace: None,
+    default_unit: None,
     stitch_view: false,
 };
 
@@ -56,19 +60,19 @@ pub(crate) fn set(identity: &'static AppIdentity) {
     let _ = CURRENT.set(identity);
 }
 
-/// Show `app`'s first-start panels docked open: each as a group of its own beside the canvas, the
-/// first under the Properties group and every next one under the one before it, so they read in
-/// the order listed. `window.panel` alone would float a panel the default workspace has no place
-/// for. A panel this build lacks is logged and skipped, leaving the workspace as it is.
-pub fn dock_first_start_panels(ui: &mut vectorcraft_ui_egui::VectorcraftApp, app: &AppIdentity) {
-    let mut below = "properties";
-    for panel in app.first_start_panels {
-        let shown = ui.run("window.panel", serde_json::json!({ "panel": panel }));
-        let docked = shown.and_then(|_| ui.run("window.panel.dock", serde_json::json!({ "panel": panel, "below": below })));
-        match docked {
-            Ok(_) => below = panel,
-            Err(e) => log::warn!("first start: panel {panel} not docked: {e}"),
-        }
+/// What a first start of `app` sets, where a later start brings back what the person left: its
+/// workspace and its General unit. One this build lacks is logged and skipped, leaving the
+/// default in place.
+pub fn first_start(ui: &mut vectorcraft_ui_egui::VectorcraftApp, app: &AppIdentity) {
+    if let Some(name) = app.default_workspace
+        && let Err(e) = ui.run("window.workspace", serde_json::json!({ "name": name }))
+    {
+        log::warn!("first start: workspace {name} not shown: {e}");
+    }
+    if let Some(unit) = app.default_unit
+        && let Err(e) = ui.session.execute("prefs.set", &serde_json::json!({ "key": "unitsGeneral", "value": unit }))
+    {
+        log::warn!("first start: unit {unit} not set: {e}");
     }
 }
 
