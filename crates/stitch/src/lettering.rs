@@ -146,7 +146,8 @@ pub struct Column {
 }
 
 impl Column {
-    /// The narrowest rung, mm.
+    /// The narrowest rung as drawn, mm; it sews this plus twice the pull compensation wide, which is
+    /// at least the minimum column.
     pub fn min_width(&self) -> f64 {
         self.left.iter().zip(&self.right).map(|(a, b)| dist(*a, *b)).fold(f64::INFINITY, f64::min)
     }
@@ -421,11 +422,77 @@ fn strokes(gr: &Graph, grid: &Grid, segs: &[(P, P)], mode: LetterMode, p: &Lette
             let dr = ray(segs, q, (-n.0, -n.1)).map_or(local, |d| d.min(hold));
             left.push((q.0 + n.0 * dl, q.1 + n.1 * dl));
             right.push((q.0 - n.0 * dr, q.1 - n.1 * dr));
-            column.push(mode == LetterMode::Satin && dl + dr >= p.min_column);
+            // The sewn width, compensation included, is what the minimum holds.
+            column.push(mode == LetterMode::Satin && dl + dr + 2.0 * p.compensation.max(0.0) >= p.min_column);
         }
         out.push(Stroke { a, b, centre: c, left, right, column });
     }
+    trim_branches(&mut out, gr);
     out
+}
+
+/// How far a branch's column reaches into the stroke it meets, mm: enough overlap that no gap
+/// shows, without its stitches lying across the other column.
+const BRANCH_OVERLAP_MM: f64 = 0.2;
+
+/// At a junction where two strokes run on through (the stem of an H, the bar of a T), the other
+/// strokes meeting there are branches: their columns start at the through stroke's edge, a
+/// little inside it, rather than at its centre, where their stitches would lie across it.
+fn trim_branches(strokes: &mut [Stroke], gr: &Graph) {
+    for (n, node) in gr.nodes.iter().enumerate() {
+        // The stroke ends at this node: (stroke, at its start?), with the direction into it.
+        let mut ends: Vec<(usize, bool, P)> = vec![];
+        for (i, s) in strokes.iter().enumerate() {
+            for (start, at) in [(true, s.a), (false, s.b)] {
+                if at != n || (s.a == s.b && !start) {
+                    continue;
+                }
+                let k = ((1.0 / STEP_MM) as usize).min(s.centre.len().saturating_sub(1));
+                let (p0, p1) =
+                    if start { (s.centre.first(), s.centre.get(k)) } else { (s.centre.last(), s.centre.get(s.centre.len().saturating_sub(1 + k))) };
+                if let (Some(p0), Some(p1)) = (p0, p1) {
+                    let l = dist(*p0, *p1);
+                    if l > 1e-9 {
+                        ends.push((i, start, ((p1.0 - p0.0) / l, (p1.1 - p0.1) / l)));
+                    }
+                }
+            }
+        }
+        if ends.len() < 3 {
+            continue;
+        }
+        // The most nearly opposite pair runs through, when it bends by less than 60 degrees.
+        let mut best: Option<(usize, usize, f64)> = None;
+        for x in 0..ends.len() {
+            for y in x + 1..ends.len() {
+                let (Some(e1), Some(e2)) = (ends.get(x), ends.get(y)) else { continue };
+                let dot = e1.2.0 * e2.2.0 + e1.2.1 * e2.2.1;
+                if dot < -0.5 && best.is_none_or(|b| dot < b.2) {
+                    best = Some((x, y, dot));
+                }
+            }
+        }
+        let Some((x, y, _)) = best else { continue };
+        let reach = node.r - BRANCH_OVERLAP_MM;
+        if reach <= 0.0 {
+            continue;
+        }
+        for (k, &(i, start, _)) in ends.iter().enumerate() {
+            if k == x || k == y {
+                continue;
+            }
+            let Some(s) = strokes.get_mut(i) else { continue };
+            let n = s.centre.len();
+            for j in 0..n {
+                let idx = if start { j } else { n - 1 - j };
+                let (Some(q), Some(flag)) = (s.centre.get(idx).copied(), s.column.get_mut(idx)) else { break };
+                if dist(q, node.pos) >= reach {
+                    break;
+                }
+                *flag = false;
+            }
+        }
+    }
 }
 
 /// What letter `rings` becomes in `mode` (satin or run; a letter too wide for satin becomes

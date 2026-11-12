@@ -136,4 +136,7 @@ fn two_rails_with_satin_sew_one_column_between_them() {
     let p = plan_of(&doc).plan;
     let first = p.blocks[0].steps.iter().find_map(|s| if let Step::Stitch(q) = s { Some(*q) } else { None }).unwrap();
     assert_eq!(first.y, 15, "the underlay runs down the middle");
+    // Never turned round (the underlay would end up over the satin).
+    let seq = sequence(&doc, &FromDocOptions::default()).unwrap();
+    assert_eq!(seq.items[0].item.ways.len(), 1);
 }

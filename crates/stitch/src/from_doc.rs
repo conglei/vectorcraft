@@ -525,6 +525,10 @@ impl<'o> Walk<'o> {
             run = run_stitches(&centre, &[], false, mm_units(UNDERLAY_LENGTH_MM));
             left.reverse();
             right.reverse();
+            // Turned round, the underlay would be sewn over the satin: the column is sewn forwards.
+            if let Some(u) = self.units.last_mut() {
+                u.fixed = true;
+            }
         }
         for q in rails_satin(&left, &right, &p, budget)? {
             if run.last() != Some(&q) {

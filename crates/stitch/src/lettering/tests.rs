@@ -104,7 +104,7 @@ fn an_l_and_a_t_meet_without_a_gap_and_sew_in_one_go() {
 
 #[test]
 fn a_thin_bar_is_a_run_and_a_wide_blob_a_fill() {
-    let s = shape(vec![rect(0.0, 0.0, 0.6, 12.0)]);
+    let s = shape(vec![rect(0.0, 0.0, 0.4, 12.0)]);
     assert!(s.columns.is_empty(), "{:?}", s.columns);
     assert_eq!(s.runs.len(), 1);
     let s = shape(vec![rect(0.0, 0.0, 20.0, 20.0)]);
@@ -161,7 +161,7 @@ proptest! {
         let p = LetteringParams { min_column, max_stitch: max, ..Default::default() };
         let s = shape_letter(std::slice::from_ref(&pts), LetterMode::Satin, &p).unwrap();
         for c in &s.columns {
-            prop_assert!(c.min_width() >= min_column - 1e-9, "{} < {}", c.min_width(), min_column);
+            prop_assert!(c.min_width() + 2.0 * p.compensation >= min_column - 1e-9, "{} < {}", c.min_width(), min_column);
         }
         let sewn = sew_letters(&[letter(vec![pts])], LetterMode::Satin, &p, MAX_STEPS).unwrap();
         for r in sewn.iter().flat_map(|l| &l.runs) {
