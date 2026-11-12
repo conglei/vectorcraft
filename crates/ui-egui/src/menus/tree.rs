@@ -519,6 +519,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 c("Sort Sequence by Colour", "stitch.sequence.sortByColor"),
                 c("Closest Join", "stitch.join.closest"),
                 c("Calibration Design", "stitch.calibration"),
+                c("Photo to Stitches…", "ui.photoStitchDialog"),
                 Sep,
                 cp("Export Stitch File…", "file.exportAs", json!({"format": "dst"})),
             ],

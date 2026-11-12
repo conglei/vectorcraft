@@ -84,6 +84,7 @@ pub mod perspective_grid;
 pub mod perspective_options;
 pub mod perspective_plane;
 pub mod perspective_presets;
+pub mod photo_stitch;
 pub mod place;
 pub mod placement_options;
 pub mod plugin;
@@ -393,6 +394,7 @@ registry! {
     SliceOptions: [slices::OPTIONS] => slices::OPTIONS_SPEC,
     DivideSlices: [slices::DIVIDE] => slices::DIVIDE_SPEC,
     EpsOptions: [eps_options::KIND] => eps_options::SPEC,
+    PhotoStitch: [photo_stitch::KIND] => photo_stitch::SPEC,
     StitchInfo: [stitch_info::KIND] => stitch_info::SPEC,
     StitchOptions: [stitch_options::KIND] => stitch_options::SPEC,
     Recovery: [crate::recovery::KIND] => recovery::SPEC,
