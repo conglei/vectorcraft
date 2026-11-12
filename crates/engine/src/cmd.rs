@@ -387,6 +387,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(stitch::specs());
         v.extend(stitchthreads::specs());
         v.extend(photo::specs());
+        v.extend(photo::stitches::specs());
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(actionset::specs());

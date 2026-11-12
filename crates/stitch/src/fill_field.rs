@@ -335,7 +335,7 @@ fn streamlines(region: &Region, grid: &DirectionGrid, p: &FieldFillParams, lo: P
                     scan += 1;
                     // Half a cell in, so a seed isn't on the outline of a rectangle.
                     let q = (lo.0 + (i as f64 + 0.5) * sep, lo.1 + (j as f64 + 0.5) * sep);
-                    if region.inside(q) && !index.near(q, sep * 0.9, u32::MAX, 0, 0) {
+                    if region.inside(q) && !index.near(q, sep * 0.75, u32::MAX, 0, 0) {
                         found = Some(q);
                         break;
                     }
@@ -346,7 +346,7 @@ fn streamlines(region: &Region, grid: &DirectionGrid, p: &FieldFillParams, lo: P
                 }
             }
         };
-        if !region.inside(seed) || index.near(seed, sep * 0.9, u32::MAX, 0, 0) {
+        if !region.inside(seed) || index.near(seed, sep * 0.75, u32::MAX, 0, 0) {
             continue;
         }
         let id = u32::try_from(lines.len()).map_err(|_| TOO_LARGE_FIELD_FILL.to_string())?;
