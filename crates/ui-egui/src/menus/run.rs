@@ -943,6 +943,12 @@ fn run_ui_part12(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result
         }
         "ui.stitchPreview" => crate::panels::stitch_preview::command(app, p),
         "ui.stitchInfo" => crate::dialogs::stitch_info::open(app, p),
+        "ui.photoStitchDialog" => {
+            crate::dialogs::photo_stitch::open(app, p);
+            Ok(Value::Null)
+        }
+        "ui.stitchWorksheet" => crate::dialogs::stitch_production::open_worksheet(app, p),
+        "ui.stitchProduction" => crate::dialogs::stitch_production::open_production(app, p),
         "ui.stitchOptionsDialog" if app.session.active().is_none() => Err("no document".into()),
         "ui.stitchOptionsDialog" => {
             crate::dialogs::stitch_options::open(app, p);

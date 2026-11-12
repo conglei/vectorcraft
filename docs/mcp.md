@@ -245,14 +245,21 @@ and `path` (where it was written) or `pngBase64`; `run_command photo.providers` 
 only; `gemini` sends the photo to Google's Gemini API and runs only when named (`provider: "gemini"`) or chosen
 by the `photoProvider` preference, with `GEMINI_API_KEY` set where the server runs.
 
-`photo_to_stitches {file | image, provider?, colors?, chart?, widthMm?, heightMm?, fill?: field|tatami, spacing?,
-minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, detail?, blur?, cell?, smoothing?, maxStitches?,
-path?, format?}` turns a photo into a stitch design in a new document (the `photo.toStitches` command): thread
-colours, colour regions, a direction field from the photo and fills whose rows follow it, sewn colour by colour;
+`photo_to_stitches {file | image, provider?, colors?, chart?, widthMm?, heightMm?, fill?: field|tatami|rows|meander,
+spacing?, color?, minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, mergeGapMm?, minRegionMm2?,
+travelMm?, features?, detail?, blur?, cell?, smoothing?, maxStitches?, path?, format?}` turns a photo into a stitch
+design in a new document (the `photo.toStitches` command): thread colours, colour regions merged by thread (photo
+colours of one thread are one area; gaps up to `mergeGapMm` closed, areas under `minRegionMm2` absorbed), a
+direction field from the photo and fills whose rows follow it, sewn colour by colour with gaps up to `travelMm`
+joined by travel instead of a trim, then small high-contrast features such as eyes over the fills (`features:
+false` leaves them out). `fill: rows` and `fill: meander` sew the photo's tone in one thread (`color`, else the
+chart's darkest): rows that zigzag wider in shorter stitches where darker, or one open path that never crosses
+itself, finer where darker;
 with `path` it then writes the stitch file (`document.export`, the format from the extension unless `format` is
 given) and adds `path`, `format` and `exportWarnings`. It returns `{document, fill, provider, widthMm, heightMm,
-chart, colors: [{rgb, coverage, regions, brand, code, name, thread, deltaE}], regions, stitches, jumps, trims,
-colorChanges, warnings}`. The stages run alone through `run_command`: `photo.palette` (thread colours and coverage),
+chart, colors: [{rgb, coverage, regions, brand, code, name, thread, deltaE}], regions, regionsBefore?, merged?,
+absorbed?, stitches, jumps, trims, colorChanges, blocks: [{thread, name, stitches, jumps, trims}], details: [{x, y,
+r}] (mm), warnings}`. The stages run alone through `run_command`: `photo.palette` (thread colours and coverage),
 `photo.regions` (editable filled regions set to sew as tatami at their direction, one undo step),
 `photo.directionField` (the field as JSON, `path` or `preview` for a PNG) and `photo.syntheticFur {path?}` (a test
 picture made in code). Only `provider: "gemini"` (or the `photoProvider` preference) sends the photo off the
@@ -512,7 +519,9 @@ opens the picker through `run_command` with the remote backend.
 | `text_wrap` | `{ids?, offset?, invert?, release?}` | Area type below the objects (same layer) flows around them. |
 | `stitch_info` | `{format?, machine?, mode?, stitchLength?, minStitch?, maxStitch?, locks?, jumpsPerTrim?, trimBeforeColorChange?, start?, returnToStart?, name?, selectedOnly?}` | The `stitch.info` command: what a DST or EXP export with the same options would write, without writing a file (see [Embroidery](#embroidery)). |
 | `export_stitch` | `{path?, format?, …the stitch_info options}` | A DST or EXP stitch file, by `document.export`; `format` defaults to the path's extension (`.exp` is EXP), else DST. Without `path` the bytes come back as `dataBase64`. See [Embroidery](#embroidery). |
-| `photo_to_stitches` | `{file? \| image?, provider?, colors?, chart?, widthMm?, heightMm?, fill?, spacing?, minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, detail?, blur?, cell?, smoothing?, maxStitches?, path?, format?}` | The `photo.toStitches` command: a photo to a stitch design in a new document whose fill rows follow the photo's direction field; with `path`, the stitch file written too. See [Embroidery](#embroidery). |
+| `stitch_worksheet` | `{path, machine?, spm?, hoop?, marginMm?, …the stitch_info options but format}` | A one-page A4 production worksheet PDF, by `stitch.worksheet`. See [Embroidery](#embroidery). |
+| `export_production` | `{dir, name?, formats?, worksheet?, machine?, spm?, hoop?, …the stitch_info options but format}` | The machine files and the worksheet in one folder, by `stitch.exportProduction` → `{dir, files, findings, warnings}`. See [Embroidery](#embroidery). |
+| `photo_to_stitches` | `{file? \| image?, provider?, colors?, chart?, widthMm?, heightMm?, fill?, spacing?, color?, minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, mergeGapMm?, minRegionMm2?, travelMm?, features?, detail?, blur?, cell?, smoothing?, maxStitches?, path?, format?}` | The `photo.toStitches` command: a photo to a stitch design in a new document whose fill rows follow the photo's direction field (or one thread in rows or a meander by tone); with `path`, the stitch file written too. See [Embroidery](#embroidery). |
 | `undo` / `redo` | `{}` | Many calls that change nothing record no undo step, for example `object.align` with nothing to move, `object.move` by 0 without `copy` and `object.showAll` with nothing hidden. `undo` (`edit.undo`) after such a call undoes the step before it. `inspect_document` lists the undo steps as `history`. `run_command` with `edit.clearHistory` removes every undo and redo step of the active document and returns `{cleared}`, the number of steps removed; the document stays as it is, and the command records no undo step. `run_command` with `edit.newDocumentFromState` and `{index?, created?}` makes a new document holding the art as it was at that state and makes it the active document, and returns `{index, title}`. `index` is a row of the History panel, with 0 the oldest state kept, and an omitted `index` uses the current state. An `index` that names no state is an error and changes nothing. `created` is File Info's created date in Unix seconds or null, and defaults to now. The new document takes the next `Untitled-N` name, is marked unsaved, has nothing selected and has no steps to undo or redo. It is out of symbol, opacity-mask and pattern editing, and the art drawn in a pattern's tile is stored in the pattern, as `object.pattern.done` stores it. The source document and its steps stay as they are, except that typing or a drag in progress is first kept as a step. While the Type tool edits type, `undo` and `redo` put its caret, with no characters selected, at the end of the text the step changed: after the text it puts back or retypes, or where the text it takes out was. A step that changes no characters, such as a formatting change, leaves the caret and the selection where they are. |
 
 For example, create editable Japanese area type with the engine's vertical writing mode:
@@ -5484,12 +5493,19 @@ Screens doesn't write EPS.
 
 VectorCraft stitches the document's stroked paths as running stitch, one thread per stroke colour, and
 writes DST and EXP machine files. The Embroidery menu of the app reaches the same commands: Stitch Info…,
-Calibration Design and Export Stitch File… (Export As on DST, then Stitch File Options).
+Calibration Design, Center Design in Hoop, Production Worksheet…, Export for Production… and Export Stitch File…
+(Export As on DST, then Stitch File Options). Stitch Info also shows the estimates, a hoop dropdown and the design check.
 
 | Tool or command | What it does |
 |---|---|
-| `stitch_info` | The `stitch.info` command. Returns `{stitches, jumps, trims, colorChanges, records, widthMm, heightMm, threads: [{rgb, stitches, lengthMm}], warnings}` for the file an export with the same options would write; a document with no stroked paths is an error. |
+| `stitch_info` | The `stitch.info` command. Returns `{stitches, jumps, trims, colorChanges, records, widthMm, heightMm, travelMm, threads: [{rgb, stitches, lengthMm, needle}], topMm, bobbinMm, spm, runTimeS, warnings}` (the estimates take `spm`, `colorChangeS` and `trimS`; the warnings include the design check's) for the file an export with the same options would write; a document with no stroked paths is an error. |
 | `export_stitch` | Writes the file: `document.export` with `format` `dst`, `dsb` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
+| `stitch_worksheet` | `stitch.worksheet {path, hoop?, …}`: a one-page A4 PDF built as a document and written by the PDF export: design name, date, machine, the stitch preview, size, stitches, colours, trims, jumps, hoop, speed, run time, top and bobbin thread, the design check's count, and the stop table (swatch, code and name from the file or the active thread chart, needle, stitches, length). Type is the bundled Source Sans 3. |
+| `export_production` | `stitch.exportProduction {dir, name?, formats?, worksheet?}`: `<name>.dst` etc. (default: the machine's panel formats, DST and DSB on `bai_mirror`, else DST) and `<name>-worksheet.pdf` in `dir` (made if missing). `name` takes letters, digits, spaces, `-`, `_` and `.`, so nothing lands outside `dir`; files of the same names are replaced. Returns the files with their sizes and the design check's findings. |
+| `run_command stitch.hoops.list` / `stitch.hoop.get` / `stitch.hoop.set` | The built-in hoops for a machine (generic sizes by inner dimensions; `cap` frames are never chosen automatically), the document's hoop, and setting it: `{id}` or a custom `{widthMm, heightMm, name?, shape?: rectangle\|round}`, or `{clear: true}`; one undo step. The hoop's centre is the first artboard's centre. |
+| `run_command stitch.hoop.fit {marginMm?}` | The smallest built-in hoop within the machine field that the stitches fit with the margin (10 mm), whether they fit the document's hoop, whether they lie in it where they are, and `offsetMm`, the stitches' centre from the hoop's centre. |
+| `run_command stitch.hoop.center` | Moves the art so the stitches are centred on the hoop's centre; one undo step. |
+| `run_command stitch.check {marginMm?, thresholds?}` | The design checker: `{findings: [{level, code, message, count?, where?}], errors, warnings}` for short and long stitches, stitches over the machine maximum, needle-point density, trims, colours past the needles, the field, the hoop fit and an empty design. `thresholds: {shortMm, longMm, densityCellMm, maxDensity, maxTrims}`. |
 | `photo_to_stitches` | `photo.toStitches`: a photo to a fill design in a new document, the rows following the photo's direction field (or tatami at each region's mean direction), and with `path` the stitch file. Its stages are `run_command photo.palette`, `photo.regions` and `photo.directionField`. |
 | `run_command stitch.calibration` | Adds a 100 mm test piece for a first stitch-out, as one group of paths in three thread colours; one undo step. `{x?, y?}` puts its top-left corner. |
 | `run_command stitch.preview` | Draws the stitch plan over the art. Added by another change: use it when `list_commands` with `filter: "stitch"` lists it. |
@@ -5509,6 +5525,8 @@ exporting.
 {"name":"run_command","arguments":{"command":"stitch.calibration","params":{"x":20,"y":20}}}
 {"name":"stitch_info","arguments":{"format":"dst","stitchLength":2.5}}
 {"name":"export_stitch","arguments":{"path":"/tmp/out/design.dst","stitchLength":2.5,"name":"DESIGN"}}
+{"name":"run_command","arguments":{"command":"stitch.check","params":{"machine":"bai_mirror"}}}
+{"name":"export_production","arguments":{"dir":"/tmp/out/job","machine":"bai_mirror","name":"design"}}
 ```
 
 ## Print

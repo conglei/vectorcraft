@@ -209,6 +209,9 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
+mod detail;
+mod labels;
+mod mono;
 pub(crate) mod stitches;
 
 #[cfg(test)]

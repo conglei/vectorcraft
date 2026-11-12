@@ -336,11 +336,13 @@ impl Deadline {
     }
 
     pub(crate) fn passed(&self) -> bool {
+        // Two `let`s rather than a cfg'd `if`: clippy 1.100's `needless_bool` rejects the `if`,
+        // and a plain comparison would not compile on wasm, which has no `at`.
         #[cfg(not(target_arch = "wasm32"))]
-        if std::time::Instant::now() >= self.at {
-            return true;
-        }
-        false
+        let passed = std::time::Instant::now() >= self.at;
+        #[cfg(target_arch = "wasm32")]
+        let passed = false;
+        passed
     }
 
     pub(crate) fn check(&self) -> Result<()> {
