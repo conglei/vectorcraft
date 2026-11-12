@@ -125,14 +125,9 @@ fn cost_json(c: &Cost) -> Value {
     json!({"trims": c.trims, "travelMm": (c.travel / UNITS_PER_MM * 10.0).round() / 10.0, "colorChanges": c.changes})
 }
 
-/// The name an object shows in the list: its own, else its kind.
+/// The name an object shows in the list: the Layers panel's (its own, else its kind).
 fn name_of(d: &Document, id: NodeId) -> String {
-    let Some(n) = d.node(id) else { return String::new() };
-    match (&n.name, &n.kind) {
-        (Some(name), _) if !name.trim().is_empty() => name.clone(),
-        (_, NodeKind::Compound { .. }) => "<Compound Path>".into(),
-        _ => "<Path>".into(),
-    }
+    d.node(id).map(|n| n.display_name()).unwrap_or_default()
 }
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
