@@ -61,7 +61,7 @@ const MAX_CELLS_SIDE: usize = 1024;
 
 impl Default for CheckLimits {
     fn default() -> Self {
-        CheckLimits { short_mm: 0.5, long_mm: 7.0, cell_mm: 2.0, max_density: 4.0, max_trims: 50 }
+        CheckLimits { short_mm: 0.3, long_mm: 7.0, cell_mm: 2.0, max_density: 4.0, max_trims: 50 }
     }
 }
 
@@ -158,7 +158,7 @@ pub fn check_plan(plan: &StitchPlan, profile: &MachineProfile, l: &CheckLimits) 
             at: None,
         }),
     }
-    out.sort_by(|a, b| b.level.cmp(&a.level));
+    out.sort_by_key(|f| std::cmp::Reverse(f.level));
     out
 }
 

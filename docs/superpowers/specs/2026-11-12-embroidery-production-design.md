@@ -52,7 +52,7 @@ Rules on the prepared plan (`vectorcraft-stitch::check_plan`) and the hoop (engi
 |---|---|---|
 | `empty` | error | no stitches (also when the planner finds nothing to sew) |
 | `overMaxStitch` | error | a stitch longer than the machine maximum on an axis |
-| `shortStitches` | warning | stitches shorter than `shortMm` (0.5; lock stitches are 0.6) |
+| `shortStitches` | warning | stitches shorter than `shortMm` (0.3, the export's default minimum: the export drops shorter ones, so these come from a lower `minStitch` or an opened file; 0.5 flagged the normal ends of tatami rows) |
 | `longStitches` | warning | stitches longer than `longMm` (7) |
 | `density` | warning | 2 mm cells with more than 4 needle points per mm² (`densityCellMm`, `maxDensity`) |
 | `trims` | warning | more trims than `maxTrims` (50) |

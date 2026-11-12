@@ -503,9 +503,10 @@ pub fn param_keys(doc: &str) -> Vec<String> {
 }
 
 /// Parameter-name keys that name filesystem paths: fuzzing these with arbitrary strings could
-/// write files anywhere, so callers substitute a temp path.
+/// write files anywhere, so callers substitute a temp path. `dir` too: `stitch.exportProduction`
+/// makes the folder it names, so a junk name would make folders where the tests run.
 pub fn is_path_key(k: &str) -> bool {
-    k == "path"
+    matches!(k, "path" | "dir")
 }
 
 /// A deterministic list of junk param objects for `doc` (the command's params doc): each

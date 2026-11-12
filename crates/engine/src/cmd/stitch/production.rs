@@ -88,7 +88,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Design Check",
             [],
             None,
-            "{marginMm?: 10 (the hoop fit's clearance, 0–100), thresholds?: {shortMm?: 0.5 (stitches shorter are reported, 0–5), longMm?: 7 (stitches longer are reported, 1–12.7), densityCellMm?: 2 (the density grid's cell, 0.5–10), maxDensity?: 4 (needle points per mm² in a cell, 0.1–100), maxTrims?: 50}, …the plan options of stitch.info} check the stitch plan an export would write → {findings: [{level: info|warning|error, code: empty|overMaxStitch|shortStitches|longStitches|density|trims|colors|hoopTooSmall|noHoopFits|fieldTooSmall|offCenter|hoop, message, count?, where?: {x, y} (document units: the first case, or the densest cell's centre)}] (errors first), errors, warnings}; a document with nothing to sew is an `empty` error finding, not a command error",
+            "{marginMm?: 10 (the hoop fit's clearance, 0–100), thresholds?: {shortMm?: 0.3 (stitches shorter are reported, 0–5; the export drops those under its minStitch, 0.3 by default, so these come from a lower minStitch or an opened file), longMm?: 7 (stitches longer are reported, 1–12.7), densityCellMm?: 2 (the density grid's cell, 0.5–10), maxDensity?: 4 (needle points per mm² in a cell, 0.1–100), maxTrims?: 50}, …the plan options of stitch.info} check the stitch plan an export would write → {findings: [{level: info|warning|error, code: empty|overMaxStitch|shortStitches|longStitches|density|trims|colors|hoopTooSmall|noHoopFits|fieldTooSmall|offCenter|hoop, message, count?, where?: {x, y} (document units: the first case, or the densest cell's centre)}] (errors first), errors, warnings}; a document with nothing to sew is an `empty` error finding, not a command error",
             has_doc,
             check_cmd
         ),
@@ -236,7 +236,8 @@ pub(crate) fn fit(doc: &Document, plan: &StitchPlan, prof: &MachineProfile, marg
 
 fn round(v: f64, places: i32) -> f64 {
     let k = 10f64.powi(places);
-    (v * k).round() / k
+    // Adding 0 turns -0 into 0.
+    (v * k).round() / k + 0.0
 }
 
 fn fit_cmd(s: &mut Session, p: &Value) -> Result<Value> {
@@ -367,7 +368,7 @@ pub(crate) fn findings(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Finding>
     };
     let mut out = check_plan(&plan, &prof, &l);
     out.extend(hoop_findings(&s.doc()?.doc, &plan, &prof, m));
-    out.sort_by(|a, b| b.level.cmp(&a.level));
+    out.sort_by_key(|f| std::cmp::Reverse(f.level));
     Ok(out)
 }
 

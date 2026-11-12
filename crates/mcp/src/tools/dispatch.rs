@@ -257,14 +257,8 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
             }
             j(exec(b, "document.export", Value::Object(params))?)
         }
-        "stitch_worksheet" | "export_production" => {
-            let (cmd, key) = if name == "stitch_worksheet" { ("stitch.worksheet", "path") } else { ("stitch.exportProduction", "dir") };
-            let mut params = a.clone();
-            if let Some(path) = a.get(key).and_then(Value::as_str) {
-                params.insert(key.into(), json!(absolute_path(b, path)?));
-            }
-            j(exec(b, cmd, Value::Object(params))?)
-        }
+        "stitch_worksheet" => j(with_path(b, "stitch.worksheet", "path", a)?),
+        "export_production" => j(with_path(b, "stitch.exportProduction", "dir", a)?),
         "photo_to_stitches" => j(photo_to_stitches(b, a)?),
         "add_text" => j(add_text(b, a)?),
         "apply_effect" => {
@@ -312,6 +306,16 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
 /// The named `export` arguments passed on to `document.export`. `scale` is raster pixels per
 /// point, so only a raster format gets it: DXF's own (drawing units per unit, given in `options`)
 /// would resize the drawing and leave its units unset.
+/// Command `cmd` with the tool's arguments, the path in `key` made absolute (`stitch_worksheet`,
+/// `export_production`).
+fn with_path(b: &mut dyn Backend, cmd: &str, key: &str, a: &Args) -> Result<Value, String> {
+    let mut params = a.clone();
+    if let Some(path) = a.get(key).and_then(Value::as_str) {
+        params.insert(key.into(), json!(absolute_path(b, path)?));
+    }
+    exec(b, cmd, Value::Object(params))
+}
+
 /// `photo_to_stitches`: `photo.toStitches`, then, with `path`, `document.export` of the stitch file
 /// (the format from `format`, else the path's extension: dsb or exp, else dst).
 fn photo_to_stitches(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {

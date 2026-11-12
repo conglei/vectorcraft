@@ -42,7 +42,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Production Worksheet",
             [],
             None,
-            "{path (the PDF to write), hoop?: a hoop id of stitch.hoops.list (default: the document's hoop, else the smallest that fits), …the options of stitch.info (machine, spm, colorChangeS, trimS, marginMm, thresholds and the plan options)} write a one-page A4 PDF for the machine operator: the design name, the date, the design picture (the stitch preview), its size, stitches, colour changes, trims, hoop, machine, speed and estimated run time, top and bobbin thread, the design check's count, and the stop table (one row per thread block in sewing order: number, colour swatch, thread code and name (the file's, else the active chart's nearest), needle, stitches, length); type is set in the bundled Source Sans 3 → {path, bytes, stops, warnings (the PDF writer's)}",
+            "{path: (the PDF to write), hoop?: a hoop id of stitch.hoops.list (default: the document's hoop, else the smallest that fits), …the options of stitch.info (machine, spm, colorChangeS, trimS, marginMm, thresholds and the plan options)} write a one-page A4 PDF for the machine operator: the design name, the date, the design picture (the stitch preview), its size, stitches, colour changes, trims, hoop, machine, speed and estimated run time, top and bobbin thread, the design check's count, and the stop table (one row per thread block in sewing order: number, colour swatch, thread code and name (the file's, else the active chart's nearest), needle, stitches, length); type is set in the bundled Source Sans 3 → {path, bytes, stops, warnings (the PDF writer's)}",
             has_doc,
             worksheet_cmd
         ),
@@ -51,7 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export for Production",
             [],
             None,
-            "{dir (the folder: made if missing; a file there is an error), name?: (the files' base name, letters, digits, spaces, - _ and . only; default the design name), formats?: [dst|dsb|exp…] (default: the formats the machine's panel reads, else dst), worksheet?: true (also <name>-worksheet.pdf), …the options of stitch.worksheet} write the machine files and the worksheet into one folder, replacing files of the same names there → {dir, files: [{path, format: dst|dsb|exp|pdf, bytes}], findings (stitch.check's), warnings (the files' warnings)}",
+            "{dir: (the folder: made if missing; a file there is an error), name?: (the files' base name, letters, digits, spaces, - _ and . only; default the design name), formats?: [dst|dsb|exp…] (default: the formats the machine's panel reads, else dst), worksheet?: true (also <name>-worksheet.pdf), …the options of stitch.worksheet} write the machine files and the worksheet into one folder, replacing files of the same names there → {dir, files: [{path, format: dst|dsb|exp|pdf, bytes}], findings (stitch.check's), warnings (the files' warnings)}",
             has_doc,
             export_cmd
         ),
