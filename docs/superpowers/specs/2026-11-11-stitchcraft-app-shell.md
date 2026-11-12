@@ -31,12 +31,13 @@ binary and bundle, the same features, its own name everywhere a person sees one.
 3. **Menus and tools.** StitchCraft keeps every VectorCraft menu, panel and tool for now: artwork is
    drawn with the vector tools before it is stitched, and nothing is hidden until the owner asks.
    The Embroidery menu (first pass of STI-22) is where the stitch commands live.
-4. **Default workspace.** On a first start (no saved preferences) StitchCraft shows the Stitch
-   Properties panel (`stitchProps`) and the Stitch Preview panel (`stitchPreview`, STI-29) docked
-   open beside the canvas, each in a group of its own, under the Properties group in that order
-   (`identity::dock_first_start_panels`, `first_start_panels`); the rest of the layout is
-   VectorCraft's default. After that the saved layout comes back as the person left it. An id this
-   build does not know is logged and skipped. The home screen heading names StitchCraft.
+4. **Default workspace.** On a first start (no saved preferences) StitchCraft shows the built-in
+   Embroidery workspace and sets the General unit to millimetres (`identity::first_start`,
+   `default_workspace`, `default_unit`); its documents open in the stitch view (`stitch_view`).
+   The layout is in [the workspace design](2026-11-12-embroidery-workspace-design.md), which
+   replaced the two first-start panels of the first pass. After that the saved layout comes back
+   as the person left it. A workspace or unit this build does not know is logged and skipped. The
+   home screen heading names StitchCraft.
 5. **Home screen.** The same as VectorCraft's (new, open, recent files), under StitchCraft's name
    and mark ("Welcome to StitchCraft"). An embroidery-specific start (hoop sizes, open a machine file) is later work.
 6. **Settings.** StitchCraft keeps its own folder: `~/Library/Application Support/StitchCraft`

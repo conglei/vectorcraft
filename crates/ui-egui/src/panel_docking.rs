@@ -177,6 +177,15 @@ fn default_from(tab: DockTab, order: &[DockTab], collapsed: bool, width: Option<
     with_canvas(columns, Vec::new())
 }
 
+/// The Embroidery workspace's layout: beside the canvas one column with Stitch Sequence on top,
+/// then Stitch Properties and Properties as tabs, then Layers; no icon column. The panels it
+/// leaves out open from the Window menu, floating.
+pub(crate) fn embroidery_layout() -> Layout<String> {
+    let group = |ids: &[&str]| Group::new(ids.iter().map(|id| (*id).to_string()).collect(), 0);
+    let groups = vec![group(&[crate::panels::stitch_sequence::ID]), group(&[crate::panels::stitch_props::ID, "properties"]), group(&["layers"])];
+    with_canvas(vec![Column { groups, width: COLUMN_WIDTH, iconic: false, iconic_width: Some(ICON_WIDTH) }], Vec::new())
+}
+
 /// The layout of a workspace that has not been customized, from its flags.
 pub(crate) fn default_layout(ui: &UiState) -> Layout<String> {
     default_from(ui.dock_tab, &ui.dock_tab_order, ui.dock_collapsed, ui.dock_width, ui.open_panel.as_deref())

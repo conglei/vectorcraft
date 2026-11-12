@@ -82,6 +82,9 @@ impl Default for Workspace {
 pub const ESSENTIALS: &str = "Essentials";
 /// Touch workspace (Window → Workspace → Touch; Preferences › Devices › Enable Touch Workspace).
 pub const TOUCH: &str = "Touch";
+/// The embroidery workspace (Window → Workspace → Embroidery), StitchCraft's default: the stitch
+/// panels beside the canvas and no column of illustration panels.
+pub const EMBROIDERY: &str = "Embroidery";
 
 /// Built-in workspaces, in Illustrator's menu order (Essentials first).
 pub fn builtins() -> Vec<Workspace> {
@@ -142,6 +145,12 @@ pub fn builtins() -> Vec<Workspace> {
             x.rulers = true;
             x.toolbar_advanced = true;
             x.open_panel = Some("symbols".into());
+        }),
+        w(EMBROIDERY, &|x| {
+            x.control_bar = true;
+            x.rulers = true;
+            x.open_panel = None;
+            x.docking = Some(crate::panel_docking::embroidery_layout());
         }),
         w(TOUCH, &|x| {
             x.control_bar = true;
@@ -752,6 +761,33 @@ mod tests {
         for n in ["Essentials", "Essentials Classic", "Painting", "Typography", "Layout", "Tracing", "Web", "Automation", TOUCH] {
             assert!(find(&ui, n).is_some(), "{n}");
         }
+    }
+
+    #[test]
+    fn the_embroidery_workspace_has_the_stitch_panels_and_no_icon_column() {
+        let mut ui = UiState::default();
+        assert_eq!(switch(&mut ui, "embroidery").unwrap(), EMBROIDERY);
+        let layout = ui.docking.clone().expect("its own layout, and a valid one");
+        let v = serde_json::to_value(&layout).unwrap();
+        let columns = v["root"]["Split"]["second"]["Dock"]["columns"].as_array().unwrap();
+        assert_eq!(columns.len(), 1, "{v}");
+        assert_eq!(columns[0]["iconic"], false);
+        let panels: Vec<&serde_json::Value> = columns[0]["groups"].as_array().unwrap().iter().map(|g| &g["panels"]).collect();
+        assert_eq!(
+            panels,
+            [&serde_json::json!(["stitchSequence"]), &serde_json::json!(["stitchProps", "properties"]), &serde_json::json!(["layers"])]
+        );
+        assert!(ui.control_bar && ui.view.rulers && ui.toolbar && ui.status_bar);
+        // Illustration panels are left out of it, not taken away: they are still panels.
+        assert!(!layout.panels().iter().any(|p| p.as_str() == "brushes"));
+        // Reset brings it back after a change; Essentials is as it was.
+        ui.control_bar = false;
+        ui.docking = None;
+        assert_eq!(reset(&mut ui), EMBROIDERY);
+        assert!(ui.control_bar && ui.docking.is_some());
+        switch(&mut ui, ESSENTIALS).unwrap();
+        assert!(ui.docking.is_none(), "Essentials keeps its default layout");
+        assert!(is_builtin(EMBROIDERY));
     }
 
     #[test]

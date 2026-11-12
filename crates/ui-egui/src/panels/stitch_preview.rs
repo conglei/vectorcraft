@@ -281,6 +281,9 @@ pub(crate) struct Player {
     pub playing: bool,
     pub blocks: Vec<BlockInfo>,
     pub marks: Vec<(usize, Mark)>,
+    /// The design's width and height in millimetres, and its trims.
+    pub size_mm: (f64, f64),
+    pub trims: usize,
     /// Where the needle stands, in millimetres of the document, while fewer than all stitches show.
     pub needle_mm: Option<(f64, f64)>,
 }
@@ -296,6 +299,8 @@ pub(crate) fn player() -> Option<Player> {
             playing: rt.playing,
             blocks: plan.summary.blocks.clone(),
             marks: plan.summary.marks.clone(),
+            size_mm: (plan.summary.width_mm, plan.summary.height_mm),
+            trims: plan.summary.trims,
             needle_mm: position.and_then(|n| plan.needle_mm(n)),
         })
     })
