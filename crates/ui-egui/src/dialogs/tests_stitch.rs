@@ -179,6 +179,7 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
         items,
         [
             ("Stitch Info…", Some("ui.stitchInfo")),
+            ("Stitch Preview", Some("window.panel")),
             ("Stitch Properties", Some("window.panel")),
             ("Calibration Design", Some("stitch.calibration")),
             ("Export Stitch File…", Some("file.exportAs"))
