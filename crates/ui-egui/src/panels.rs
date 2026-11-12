@@ -40,6 +40,7 @@ pub mod properties;
 pub mod separations;
 pub mod stitch_preview;
 pub mod stitch_props;
+pub mod stitch_sequence;
 pub mod stroke;
 pub mod svg_interactivity;
 pub mod swatches;
@@ -184,6 +185,7 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         links::ID => links::show(app, ui),
         stitch_preview::ID => stitch_preview::show(app, ui),
         stitch_props::ID => stitch_props::show(app, ui),
+        stitch_sequence::ID => stitch_sequence::show(app, ui),
         asset_export::ID => asset_export::show(app, ui),
         css_properties::ID => css_properties::show(app, ui),
         three_d::ID => three_d::show(app, ui),

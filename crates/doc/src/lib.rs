@@ -64,6 +64,7 @@ pub mod selection;
 pub mod setup;
 pub mod shaper;
 pub mod slices;
+pub mod stitch_design;
 pub mod stitch_props;
 pub mod style_libs;
 pub mod swatches;
@@ -113,6 +114,7 @@ pub use rastersettings::{RasterColorModel, RasterEffectsSettings};
 pub use selection::{AnchorRef, SegmentRef, Selection, SymbolPart};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
+pub use stitch_design::StitchDesign;
 pub use stitch_props::{StitchParam, StitchProps, StitchType};
 pub use style_libs::StyleLibrary;
 pub use text::FontHeightReference;
@@ -341,6 +343,10 @@ pub struct Document {
     /// names it as the file's active artboard. `None`: the first. Native files do not keep it.
     #[serde(skip)]
     pub opened_artboard: Option<u32>,
+    /// Embroidery › Sequence: the sewing order and the design's start and end points
+    /// ([`StitchDesign`]). Read leniently; empty in files from before it existed.
+    #[serde(default, skip_serializing_if = "StitchDesign::is_empty", deserialize_with = "stitch_design_lenient")]
+    pub stitch: StitchDesign,
     /// Some object is a dimension (the Dimension tool): edits refresh dimensions only while this
     /// is set, so documents without any pay nothing for them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -348,6 +354,12 @@ pub struct Document {
     /// Where each node is in the tree, for lookups by id ([`id_index`]): a cache, never saved.
     #[serde(skip)]
     index: id_index::IdIndex,
+}
+
+/// The stitch design read leniently: one written differently (a later version's, or damage) reads
+/// as empty and the rest of the document still opens.
+fn stitch_design_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<StitchDesign, D::Error> {
+    Ok(stitch_props::lenient(d)?.unwrap_or_default())
 }
 
 fn ppi72() -> f64 {

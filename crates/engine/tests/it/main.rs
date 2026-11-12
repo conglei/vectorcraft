@@ -29,6 +29,7 @@ mod pen_click_after_smooth;
 mod pen_endpoint_picking;
 mod ruler_origin;
 mod selection_commands;
+mod stitch_sequence;
 mod stroke_visibility;
 mod text_stroke_scale;
 mod three_d_light_color;

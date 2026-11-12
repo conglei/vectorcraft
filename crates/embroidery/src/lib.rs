@@ -28,6 +28,8 @@ pub enum Start {
     Center,
     /// The first needle point.
     FirstStitch,
+    /// A point the design names (Embroidery › Sequence: the design start), in plan units.
+    Point(Pt),
 }
 
 /// Options for the writers.
@@ -99,6 +101,7 @@ fn origin(plan: &StitchPlan, start: Start) -> Option<Pt> {
     let first = stitches.next()?;
     match start {
         Start::FirstStitch => Some(first),
+        Start::Point(p) => Some(p),
         Start::Center => {
             let (mut lo, mut hi) = (first, first);
             for p in stitches {

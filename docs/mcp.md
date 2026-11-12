@@ -262,6 +262,15 @@ Per object, `run_command stitch.setType {type: auto|none|run|satin|tatami|manual
 {params: {fillAngle?, fillSpacing?, …}, ids?}` and `stitch.clear {ids?}` set how paths, compound paths and groups are
 sewn (one undo step each; groups pass theirs down), and `stitch.props {ids?, options?}` reads what each sews with.
 
+The sewing order: `run_command stitch.sequence.list {options?}` lists the objects in the order they are sewn, each
+with its thread colours, stitch types, stitches and entry and exit points, plus the colour blocks, colour changes,
+trims and travel of that order. `stitch.sequence.move {id, to}`, `stitch.sequence.set {ids}` (`[]`: document order
+again) and `stitch.sequence.sortByColor` change it; `stitch.entryExit.set {ids?, entry?, exit?, clear?}` sets where
+objects are entered and left (a fraction 0–1 along the outline or a point `{x, y}`), `stitch.join.closest` enters
+each object nearest where the one before it was left (never more trims or travel), and
+`stitch.designStartEnd.set {start?, end?}` sets the design's start (a stitch file's origin) and end. Each change is
+one undo step; exports, `stitch.info` (which reports `travelMm`) and the previews follow them.
+
 In the summary an object reports its paint as `fill`, `stroke` (labels) and `strokeWidth`. So does a compound path,
 whose paint is its own: its member paths report `compoundMember: true` instead of a paint they don't have. Every
 node (layers and groups too) reports its opacity when it is below 1, in both scales: `opacity` is the 0–1 fraction

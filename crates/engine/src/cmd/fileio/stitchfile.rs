@@ -6,7 +6,7 @@ use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dsb, dst, exp};
 use vectorcraft_stitch::{
-    FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
+    FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, Pt, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
     from_document, prepare, profile, to_document,
 };
 
@@ -69,7 +69,12 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         description: "how many jumps in a row the machine reads as a trim, 2–8; travel that long gets a trim first",
     },
     FormatOption { name: "trimBeforeColorChange", ty: "boolean", default: "false", description: "a trim before each colour change" },
-    FormatOption { name: "start", ty: "string", default: "\"center\"", description: "the file's origin: center (of the stitches) or firstStitch" },
+    FormatOption {
+        name: "start",
+        ty: "string",
+        default: "\"center\"",
+        description: "the file's origin: center (of the stitches) or firstStitch; a design start set with stitch.designStartEnd.set is the origin instead",
+    },
     FormatOption {
         name: "returnToStart",
         ty: "boolean",
@@ -335,7 +340,11 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
         warnings.push(format!("this machine's panel reads {list}, not {}", format.to_uppercase()));
     }
     // Not given: an opened file did not return to its start, so its re-export adds no such travel.
-    let write = WriteOptions { return_to_start: o.return_to_start.unwrap_or(!opened), ..o.write.clone() };
+    let mut write = WriteOptions { return_to_start: o.return_to_start.unwrap_or(!opened), ..o.write.clone() };
+    // The design start (Embroidery › Sequence) is the origin; the `start` option is the fallback.
+    if let Some(p) = doc.stitch.start_point().and_then(|p| Pt::from_pt(p.x, p.y)) {
+        write.start = Start::Point(p);
+    }
     let mut out = match format {
         "exp" => exp::write(&plan, &write),
         "dsb" => dsb::write(&plan, &write),

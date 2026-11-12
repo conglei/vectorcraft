@@ -16,6 +16,7 @@ mod profile;
 mod props;
 mod run;
 mod satin;
+pub mod sequence;
 mod stats;
 mod thread;
 mod to_doc;
@@ -27,7 +28,8 @@ pub use calibration::{CalibrationPart, calibration};
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
 pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
-    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, StrokeOptions, StrokeType, from_document,
+    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions, StrokeType,
+    from_document, outline_fraction, outline_point, sequence,
 };
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};

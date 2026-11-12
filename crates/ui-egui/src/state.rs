@@ -206,6 +206,7 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     (crate::panels::links::ID, "Links", "link"),
     (crate::panels::stitch_preview::ID, "Stitch Preview", "eye"),
     (crate::panels::stitch_props::ID, "Stitch Properties", "pen-tool"),
+    (crate::panels::stitch_sequence::ID, "Stitch Sequence", "dc-list-view"),
     (crate::panels::asset_export::ID, "Asset Export", "share-2"),
     (crate::panels::css_properties::ID, "CSS Properties", "globe"),
     (crate::panels::three_d::ID, "3D and Materials", "dc-cube"),
