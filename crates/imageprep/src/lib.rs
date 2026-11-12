@@ -245,5 +245,64 @@ pub fn synthetic_photo(w: u32, h: u32, seed: u32) -> Raster {
     })
 }
 
+/// The fur directions of [`synthetic_fur`], in degrees counter-clockwise from horizontal as seen:
+/// the left half's and the right half's.
+pub const FUR_ANGLES: (f64, f64) = (30.0, 120.0);
+
+/// The eye of [`synthetic_fur`] for a `w × h` image: centre and radius in pixels.
+pub fn synthetic_fur_eye(w: u32, h: u32) -> ((f64, f64), f64) {
+    ((f64::from(w) * 0.72, f64::from(h) * 0.38), f64::from(w.min(h)) * 0.09)
+}
+
+/// A made-up close-up of fur for tests and trial runs, so none of them needs a real photo: the left
+/// half warm brown hair running at [`FUR_ANGLES`]`.0`, the right half grey-brown hair running at
+/// [`FUR_ANGLES`]`.1`, each drawn as streaks of value noise along the hair, and a light round eye in
+/// the right half. The same `w`, `h` and `seed` give the same pixels.
+pub fn synthetic_fur(w: u32, h: u32, seed: u32) -> Raster {
+    let (eye, er) = synthetic_fur_eye(w, h);
+    let hash = |a: i64, b: u32| -> f64 {
+        let mut n = (a as u32).wrapping_mul(0x9E37_79B1) ^ b.wrapping_mul(0x85EB_CA77) ^ seed.wrapping_mul(0xC2B2_AE35);
+        n ^= n >> 15;
+        n = n.wrapping_mul(0x2C1B_3C6D);
+        n ^= n >> 12;
+        f64::from(n % 2001) / 1000.0 - 1.0
+    };
+    // Smooth 1-D value noise: random values at whole steps, eased between them.
+    let noise = |u: f64, layer: u32| -> f64 {
+        let i = u.floor();
+        let t = u - i;
+        let t = t * t * (3.0 - 2.0 * t);
+        let i = i as i64;
+        hash(i, layer) * (1.0 - t) + hash(i + 1, layer) * t
+    };
+    Raster::from_fn(w, h, |x, y| {
+        let (fx, fy) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+        if (fx - eye.0).hypot(fy - eye.1) <= er {
+            return [235, 228, 210, 255];
+        }
+        let left = fx < f64::from(w) * 0.5;
+        let a = (if left { FUR_ANGLES.0 } else { FUR_ANGLES.1 }).to_radians();
+        // Across the hair (u) and along it (v), image coordinates.
+        let u = fx * a.sin() + fy * a.cos();
+        let v = fx * a.cos() - fy * a.sin();
+        let streak = 0.8 * noise(u / 2.5, 1) + 0.2 * noise(u / 2.5 + v / 60.0, 2);
+        let base: [f64; 3] = if left { [168.0, 108.0, 58.0] } else { [98.0, 92.0, 86.0] };
+        let k = 1.0 + 0.2 * streak;
+        let c = |v: f64| (v * k).round().clamp(0.0, 255.0) as u8;
+        [c(base[0]), c(base[1]), c(base[2]), 255]
+    })
+}
+
+/// The known fur direction of [`synthetic_fur`] at pixel `(x, y)`: `None` in the eye, near it, and
+/// within `margin` pixels of the line between the two halves.
+pub fn synthetic_fur_angle(w: u32, h: u32, x: f64, y: f64, margin: f64) -> Option<f64> {
+    let (eye, er) = synthetic_fur_eye(w, h);
+    let mid = f64::from(w) * 0.5;
+    if (x - eye.0).hypot(y - eye.1) <= er + margin || (x - mid).abs() < margin || x < 0.0 || y < 0.0 || x > f64::from(w) || y > f64::from(h) {
+        return None;
+    }
+    Some(if x < mid { FUR_ANGLES.0 } else { FUR_ANGLES.1 })
+}
+
 #[cfg(test)]
 mod tests;
