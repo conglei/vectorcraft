@@ -536,6 +536,7 @@ pub(super) const ALLOWED: &[&str] = &[
     "stitch.entryExit.set",
     "stitch.hoop.center",
     "stitch.hoop.fit",
+    "stitch.hoop.get",
     "stitch.hoop.set",
     "stitch.hoops.list",
     "stitch.info",

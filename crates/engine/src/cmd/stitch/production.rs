@@ -1,15 +1,18 @@
-//! Embroidery production: the hoop (`stitch.hoops.list`, `stitch.hoop.set`, `stitch.hoop.fit`,
-//! `stitch.hoop.center`), the estimates `stitch.info` adds (bobbin, run time, needles) and the
-//! design checker (`stitch.check`). The worksheet and the production folder are in
-//! [`super::worksheet`].
+//! Embroidery production: the hoop (`stitch.hoops.list`, `stitch.hoop.set`, `stitch.hoop.get`,
+//! `stitch.hoop.fit`, `stitch.hoop.center`), the estimates `stitch.info` adds (bobbin, run time,
+//! needles) and the design checker (`stitch.check`). The worksheet and the production folder are
+//! in [`super::worksheet`].
+//!
+//! The hoop's centre on the page is the first artboard's centre; `stitch.hoop.fit` reports the
+//! design's offset from it, and `stitch.hoop.center` moves the art onto it.
 
 use serde_json::{Value, json};
-use vectorcraft_doc::{Document, HoopChoice, NodeId};
+use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_geom::{Affine, Point};
+use vectorcraft_stitch::hoop as hoops;
 use vectorcraft_stitch::{
     CELL_RANGE, CheckLimits, DEFAULT_MARGIN_MM, DENSITY_RANGE, Finding, Hoop, HoopShape, LONG_RANGE, Level, MAX_MARGIN_MM, MAX_TRIMS_LIMIT,
-    MachineProfile, PT_PER_MM, Pt, SHORT_RANGE, Stats, StitchPlan, UNITS_PER_MM, assign_needles, check_plan, hoops_for, library_hoop, profile,
-    smallest_fit,
+    MachineProfile, PT_PER_MM, Pt, SHORT_RANGE, Stats, StitchPlan, UNITS_PER_MM, assign_needles, check_plan, profile,
 };
 
 use super::super::fileio::stitchfile;
@@ -40,16 +43,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "Hoops",
             [],
             None,
-            "{machine?: commercial15 (default) | bai_mirror | generic} the built-in hoops and frames that fit the machine's field, smallest first: generic sizes by their inner dimensions, no maker's catalogue → {machine, field: {widthMm, heightMm}|null, hoops: [{id, name, widthMm, heightMm, shape: rect|round (round: the ellipse inside width × height), cap (a cap frame: never chosen by stitch.hoop.fit)}], chosen: the document's hoop (stitch.hoop.set)|null}",
+            "{machine?: commercial15 (default) | bai_mirror | generic} the built-in hoops and frames that fit the machine's field, smallest first: generic sizes by their inner dimensions, no maker's catalogue → {machine, field: {widthMm, heightMm}|null, hoops: [{id, name, widthMm, heightMm, shape: rectangle|round (round: the ellipse inside width × height), cap (a cap frame: never chosen by stitch.hoop.fit)}], chosen: the document's hoop (stitch.hoop.get)|null}",
             has_doc,
             list
+        ),
+        cmd!(
+            query "stitch.hoop.get",
+            "Hoop",
+            [],
+            None,
+            "{} the document's hoop → {hoop: {id (null: custom), name, widthMm, heightMm, shape: rectangle|round, cap}|null, center: {x, y} (where the hoop's centre is on the page, document units: the first artboard's centre)}",
+            has_doc,
+            get
         ),
         cmd!(
             "stitch.hoop.set",
             "Set Hoop",
             [],
             None,
-            "{id?: a hoop of stitch.hoops.list | widthMm?, heightMm?: (a custom hoop, mm, 10–2000), name?: (a custom hoop's name), shape?: rect (default) | round, center?: {x, y} | [x, y] (the hoop's centre, document units; null or not given: the first artboard's centre), clear?: false (no hoop)} the hoop the design is sewn in, kept in the document: the canvas draws it, stitch.check and the worksheet use it; one undo step when it changes → {hoop: {id, name, widthMm, heightMm, shape, cap, center: {x, y}}|null}",
+            "{id?: a hoop of stitch.hoops.list | widthMm?, heightMm?: (a custom hoop, mm, 10–2000), name?: (a custom hoop's name), shape?: rectangle (default) | round, clear?: false (no hoop)} the hoop the design is sewn in, kept in the document; stitch.check and the worksheet use it; one undo step when it changes → {hoop: (as stitch.hoop.get)|null}",
             has_doc,
             set
         ),
@@ -58,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fit Hoop",
             [],
             None,
-            "{marginMm?: 10 (clearance from the hoop's edge, 0–100), …the plan options of stitch.info} the smallest built-in hoop (cap frames left out) that the machine's field allows and the stitches fit, centred, with the margin; and whether they fit the document's hoop where they are → {widthMm, heightMm (the stitches' extents), fits (some hoop holds them), hoop: the smallest that does|null, chosen: the document's hoop|null, fitsChosen (centred)|null, inPlace (where the stitches are now, inside the chosen or else the fitted hoop around its centre)|null, offsetMm: {x, y} (the stitches' centre from that hoop's centre, mm, y down)|null}",
+            "{marginMm?: 10 (clearance from the hoop's edge, 0–100), …the plan options of stitch.info} the smallest built-in hoop by area (cap frames left out) within the machine's field that the stitches fit, centred, with the margin; and whether they fit the document's hoop → {widthMm, heightMm (the stitches' extents), fits (some hoop holds them), hoop: the smallest that does|null, chosen: the document's hoop|null, fitsChosen (centred)|null, inPlace (where the stitches are now, inside the chosen or else the fitted hoop centred on the first artboard's centre)|null, offsetMm: {x, y} (the stitches' centre from the hoop's centre, the first artboard's centre, mm, y down)}",
             has_doc,
             fit_cmd
         ),
@@ -67,7 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Center Design in Hoop",
             ["Embroidery"],
             None,
-            "{…the plan options of stitch.info} move the art so the stitches' centre is the hoop's centre (the document's hoop, else the first artboard's centre); with selectedOnly the selection moves, else every object on an unlocked, visible layer; one undo step, none when it is already centred → {moved, dx, dy (document units)}",
+            "{…the plan options of stitch.info} move the art so the stitches' centre is the hoop's centre (the first artboard's centre); with selectedOnly the selection moves, else every object on an unlocked, visible layer; one undo step, none when it is already centred → {moved, dx, dy (document units)}",
             has_doc,
             center_cmd
         ),
@@ -109,22 +121,14 @@ fn margin(p: &Value, cmd: &str) -> Result<f64> {
     ranged(p, "marginMm", DEFAULT_MARGIN_MM, (0.0, MAX_MARGIN_MM), cmd)
 }
 
-/// The document's hoop as a [`Hoop`], with its centre in document units.
-pub(crate) fn chosen(doc: &Document) -> Option<(Hoop, Point)> {
-    let c = doc.stitch.hoop()?;
-    let hoop = Hoop {
-        id: c.id.clone(),
-        name: c.name.clone(),
-        width_mm: c.width_mm,
-        height_mm: c.height_mm,
-        shape: HoopShape::parse(&c.shape).unwrap_or(HoopShape::Rect),
-        cap: c.cap,
-    };
-    Some((hoop, c.center.unwrap_or_else(|| default_center(doc))))
+/// The document's hoop, if set and usable.
+pub(crate) fn chosen(doc: &Document) -> Option<Hoop> {
+    doc.stitch.hoop().cloned()
 }
 
-/// The first artboard's centre (the origin when there is none).
-pub(crate) fn default_center(doc: &Document) -> Point {
+/// Where the hoop's centre is on the page: the first artboard's centre (the origin when there is
+/// none).
+pub(crate) fn hoop_center(doc: &Document) -> Point {
     doc.artboards.first().map_or(Point::ZERO, |a| a.rect.center())
 }
 
@@ -133,31 +137,20 @@ pub(crate) fn hoop_json(h: &Hoop) -> Value {
 }
 
 fn chosen_json(doc: &Document) -> Value {
-    chosen(doc).map_or(Value::Null, |(h, c)| {
-        let mut v = hoop_json(&h);
-        v["center"] = json!({"x": c.x, "y": c.y});
-        v
-    })
+    chosen(doc).as_ref().map_or(Value::Null, hoop_json)
 }
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let prof = machine(p, LIST)?;
-    let hoops: Vec<Value> = hoops_for(&prof).iter().map(hoop_json).collect();
+    let list: Vec<Value> = hoops::for_field(prof.field_mm).iter().map(hoop_json).collect();
     let field = prof.field_mm.map_or(Value::Null, |(w, h)| json!({"widthMm": w, "heightMm": h}));
-    Ok(json!({"machine": prof.id, "field": field, "hoops": hoops, "chosen": chosen_json(&s.doc()?.doc)}))
+    Ok(json!({"machine": prof.id, "field": field, "hoops": list, "chosen": chosen_json(&s.doc()?.doc)}))
 }
 
-/// A point from `{x, y}` or `[x, y]`, finite.
-fn point_of(v: &Value, cmd: &str) -> Result<Point> {
-    let (x, y) = match v {
-        Value::Array(a) => (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)),
-        Value::Object(_) => (v.get("x").and_then(Value::as_f64), v.get("y").and_then(Value::as_f64)),
-        _ => (None, None),
-    };
-    match (x, y) {
-        (Some(x), Some(y)) if x.is_finite() && y.is_finite() && x.abs() <= 1e7 && y.abs() <= 1e7 => Ok(Point::new(x, y)),
-        _ => Err(bad(cmd, format!("center must be {{x, y}} or [x, y] in document units, not {v}"))),
-    }
+fn get(s: &mut Session, _: &Value) -> Result<Value> {
+    let doc = &s.doc()?.doc;
+    let c = hoop_center(doc);
+    Ok(json!({"hoop": chosen_json(doc), "center": {"x": c.x, "y": c.y}}))
 }
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
@@ -168,48 +161,23 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         let id = text_param(p, "id", SET)?;
         let has_size = p.get("widthMm").is_some() || p.get("heightMm").is_some();
-        let hoop = match (id, has_size) {
+        next.hoop = Some(match (id, has_size) {
             (Some(_), true) => return Err(bad(SET, "give id or widthMm and heightMm, not both")),
-            (Some(id), false) => library_hoop(id).ok_or_else(|| bad(SET, format!("no hoop `{id}`: stitch.hoops.list lists them")))?,
+            (Some(id), false) => hoops::find(id).ok_or_else(|| bad(SET, format!("no hoop `{id}`: stitch.hoops.list lists them")))?,
             (None, true) => {
                 let w = number_or(p, "widthMm", f64::NAN, SET)?;
                 let h = number_or(p, "heightMm", f64::NAN, SET)?;
                 let shape = match text_param(p, "shape", SET)? {
-                    None => HoopShape::Rect,
-                    Some(v) => HoopShape::parse(v).ok_or_else(|| bad(SET, format!("shape `{v}`: rect or round")))?,
+                    None => HoopShape::Rectangle,
+                    Some(v) => HoopShape::parse(v).ok_or_else(|| bad(SET, format!("shape `{v}`: rectangle or round")))?,
                 };
                 let name = text_param(p, "name", SET)?.unwrap_or("");
                 if name.chars().count() > vectorcraft_doc::stitch_design::MAX_HOOP_NAME {
                     return Err(bad(SET, "the name is too long"));
                 }
-                Hoop::custom(name, w, h, shape).map_err(|e| bad(SET, e))?
+                hoops::custom(name, w, h, shape).map_err(|e| bad(SET, e))?
             }
-            (None, false) => match (&now.hoop, p.get("center")) {
-                // Only the centre moves.
-                (Some(c), Some(_)) => Hoop {
-                    id: c.id.clone(),
-                    name: c.name.clone(),
-                    width_mm: c.width_mm,
-                    height_mm: c.height_mm,
-                    shape: HoopShape::parse(&c.shape).unwrap_or(HoopShape::Rect),
-                    cap: c.cap,
-                },
-                _ => return Err(bad(SET, "give id, widthMm and heightMm, or clear")),
-            },
-        };
-        let center = match p.get("center") {
-            None => now.hoop.as_ref().and_then(|h| h.center),
-            Some(Value::Null) => None,
-            Some(v) => Some(point_of(v, SET)?),
-        };
-        next.hoop = Some(HoopChoice {
-            id: hoop.id,
-            name: hoop.name,
-            width_mm: hoop.width_mm,
-            height_mm: hoop.height_mm,
-            shape: hoop.shape.id().into(),
-            cap: hoop.cap,
-            center,
+            (None, false) => return Err(bad(SET, "give id, widthMm and heightMm, or clear")),
         });
     }
     if next != now {
@@ -241,33 +209,28 @@ pub(crate) struct Fit {
     pub height_mm: f64,
     /// The smallest library hoop that holds the stitches, centred.
     pub fitted: Option<Hoop>,
-    /// The document's hoop and its centre.
-    pub chosen: Option<(Hoop, Point)>,
+    /// The document's hoop.
+    pub chosen: Option<Hoop>,
     pub fits_chosen: Option<bool>,
     /// Whether the stitches, where they are, lie in the hoop checked (chosen, else fitted).
     pub in_place: Option<bool>,
-    /// The stitches' centre from that hoop's centre, mm.
-    pub offset_mm: Option<(f64, f64)>,
+    /// The stitches' centre from the hoop's centre, mm.
+    pub offset_mm: (f64, f64),
 }
 
 pub(crate) fn fit(doc: &Document, plan: &StitchPlan, prof: &MachineProfile, margin: f64) -> Option<Fit> {
     let (x0, y0, x1, y1) = extents(plan)?;
     let mm = |v: i32| f64::from(v) / UNITS_PER_MM;
     let (w, h) = (mm(x1) - mm(x0), mm(y1) - mm(y0));
-    let fitted = smallest_fit(&hoops_for(prof), w, h, margin);
+    let fitted = hoops::fit((w, h), margin, prof.field_mm);
     let chosen = chosen(doc);
-    let fits_chosen = chosen.as_ref().map(|(c, _)| c.fits(w, h, margin));
-    // The hoop the stitches are placed in: the chosen one, else the fitted one at the default centre.
-    let placed = chosen.clone().or_else(|| fitted.clone().map(|f| (f, default_center(doc))));
-    let (in_place, offset_mm) = match placed {
-        Some((hoop, c)) => {
-            let (cx, cy) = (c.x / PT_PER_MM, c.y / PT_PER_MM);
-            let rel = (mm(x0) - cx, mm(y0) - cy, mm(x1) - cx, mm(y1) - cy);
-            let off = ((rel.0 + rel.2) / 2.0, (rel.1 + rel.3) / 2.0);
-            (Some(hoop.holds(rel, margin)), Some(off))
-        }
-        None => (None, None),
-    };
+    let fits_chosen = chosen.as_ref().map(|c| hoops::fits((w, h), c, margin));
+    let c = hoop_center(doc);
+    let (cx, cy) = (c.x / PT_PER_MM, c.y / PT_PER_MM);
+    let rel = (mm(x0) - cx, mm(y0) - cy, mm(x1) - cx, mm(y1) - cy);
+    let offset_mm = ((rel.0 + rel.2) / 2.0, (rel.1 + rel.3) / 2.0);
+    // The hoop the stitches are placed in: the chosen one, else the fitted one.
+    let in_place = chosen.as_ref().or(fitted.as_ref()).map(|hoop| hoop.holds(rel, margin));
     Some(Fit { width_mm: w, height_mm: h, fitted, chosen, fits_chosen, in_place, offset_mm })
 }
 
@@ -289,7 +252,7 @@ fn fit_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         "chosen": chosen_json(&s.doc()?.doc),
         "fitsChosen": f.fits_chosen,
         "inPlace": f.in_place,
-        "offsetMm": f.offset_mm.map_or(Value::Null, |(x, y)| json!({"x": round(x, 1), "y": round(y, 1)})),
+        "offsetMm": {"x": round(f.offset_mm.0, 1), "y": round(f.offset_mm.1, 1)},
     }))
 }
 
@@ -314,7 +277,7 @@ fn center_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let (plan, _) = plan_of(s, p, CENTER)?;
     let Some((x0, y0, x1, y1)) = extents(&plan) else { return Err(bad(CENTER, "the design has no stitches")) };
     let doc = &s.doc()?.doc;
-    let c = chosen(doc).map_or_else(|| default_center(doc), |(_, c)| c);
+    let c = hoop_center(doc);
     // The stitches' centre in document units.
     let to_pt = |v: i32| f64::from(v) / UNITS_PER_MM * PT_PER_MM;
     let (dx, dy) = (c.x - (to_pt(x0) + to_pt(x1)) / 2.0, c.y - (to_pt(y0) + to_pt(y1)) / 2.0);
@@ -368,10 +331,10 @@ fn hoop_findings(doc: &Document, plan: &StitchPlan, prof: &MachineProfile, margi
         out.push(finding(Level::Error, "fieldTooSmall", format!("the design ({size}) is larger than the machine's {fw} × {fh} mm field")));
     }
     match (&f.chosen, f.fits_chosen) {
-        (Some((h, _)), Some(false)) => {
+        (Some(h), Some(false)) => {
             out.push(finding(Level::Error, "hoopTooSmall", format!("the design ({size}) does not fit the {} with a {margin} mm margin", h.name)))
         }
-        (Some((h, _)), _) => out.push(finding(Level::Info, "hoop", format!("the design ({size}) fits the {}", h.name))),
+        (Some(h), _) => out.push(finding(Level::Info, "hoop", format!("the design ({size}) fits the {}", h.name))),
         (None, _) => match &f.fitted {
             Some(h) => out.push(finding(Level::Info, "hoop", format!("the design ({size}) fits the {} (the smallest that holds it)", h.name))),
             None => {
@@ -380,7 +343,7 @@ fn hoop_findings(doc: &Document, plan: &StitchPlan, prof: &MachineProfile, margi
         },
     }
     if f.in_place == Some(false) && f.fits_chosen != Some(false) && (f.chosen.is_some() || f.fitted.is_some()) {
-        let (x, y) = f.offset_mm.unwrap_or_default();
+        let (x, y) = f.offset_mm;
         out.push(finding(
             Level::Info,
             "offCenter",
@@ -493,20 +456,20 @@ mod tests {
         let undo = s.active().unwrap().history.undo.len();
         let r = s.execute("stitch.hoop.set", &json!({"id": "square-200"})).unwrap();
         assert_eq!(r["hoop"]["widthMm"], 200.0);
-        assert_eq!(r["hoop"]["center"], json!({"x": 300.0, "y": 200.0}));
+        assert_eq!(r["hoop"]["id"], "square-200");
         assert_eq!(s.active().unwrap().history.undo.len(), undo + 1);
+        let g = s.execute("stitch.hoop.get", &json!({})).unwrap();
+        assert_eq!(g["center"], json!({"x": 300.0, "y": 200.0}));
+        assert_eq!(g["hoop"]["shape"], "rectangle");
         // The same again changes nothing and adds no undo step.
         s.execute("stitch.hoop.set", &json!({"id": "square-200"})).unwrap();
         assert_eq!(s.active().unwrap().history.undo.len(), undo + 1);
-        let r = s.execute("stitch.hoop.set", &json!({"widthMm": 150, "heightMm": 120, "shape": "round", "center": [10, 20]})).unwrap();
-        assert_eq!(r["hoop"]["id"], "custom");
+        let r = s.execute("stitch.hoop.set", &json!({"widthMm": 150, "heightMm": 120, "shape": "round"})).unwrap();
+        assert_eq!(r["hoop"]["id"], Value::Null);
         assert_eq!(r["hoop"]["shape"], "round");
-        assert_eq!(r["hoop"]["center"], json!({"x": 10.0, "y": 20.0}));
-        // Moving the centre keeps the hoop.
-        let r = s.execute("stitch.hoop.set", &json!({"center": {"x": 5, "y": 6}})).unwrap();
-        assert_eq!(r["hoop"]["widthMm"], 150.0);
+        assert_eq!(r["hoop"]["name"], "Custom 150 × 120 mm");
         s.execute("edit.undo", &json!({})).unwrap();
-        assert_eq!(s.execute("stitch.hoops.list", &json!({})).unwrap()["chosen"]["center"]["x"], 10.0);
+        assert_eq!(s.execute("stitch.hoop.get", &json!({})).unwrap()["hoop"]["id"], "square-200");
         assert_eq!(s.execute("stitch.hoop.set", &json!({"clear": true})).unwrap()["hoop"], Value::Null);
         for bad in [
             json!({"id": "nope"}),
@@ -514,7 +477,7 @@ mod tests {
             json!({"widthMm": 100}),
             json!({"id": "square-100", "widthMm": 100}),
             json!({"widthMm": 100, "heightMm": 100, "shape": "star"}),
-            json!({"id": "square-100", "center": "middle"}),
+            json!({"id": "square-100", "center": [1, 2]}),
             json!({}),
         ] {
             assert!(s.execute("stitch.hoop.set", &bad).is_err(), "{bad}");

@@ -11,8 +11,7 @@ use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, CharStyle, Document, ImageBlob, ImageObject, Node, NodeKind, TextObject};
 use vectorcraft_geom::{Affine, Point, Rect, shapes};
 use vectorcraft_stitch::{
-    DEFAULT_FABRIC, Finding, Level, MAX_SIDE, PreviewMode, PreviewOptions, Step, StitchPlan, UNITS_PER_MM, assign_needles, library_hoop, preview,
-    stats,
+    DEFAULT_FABRIC, Finding, Level, MAX_SIDE, PreviewMode, PreviewOptions, Step, StitchPlan, UNITS_PER_MM, assign_needles, preview, stats,
 };
 
 use super::super::fileio::{self, stitchfile};
@@ -162,8 +161,8 @@ fn worksheet_doc(s: &Session, p: &Value, cmd: &str) -> Result<(Document, usize)>
     let src = &s.doc()?.doc;
     let fit = production::fit(src, &plan, &prof, margin);
     let hoop = match text_param(p, "hoop", cmd)? {
-        Some(id) => Some(library_hoop(id).ok_or_else(|| bad(cmd, format!("no hoop `{id}`: stitch.hoops.list lists them")))?),
-        None => fit.as_ref().and_then(|f| f.chosen.as_ref().map(|(h, _)| h.clone()).or_else(|| f.fitted.clone())),
+        Some(id) => Some(vectorcraft_stitch::hoop::find(id).ok_or_else(|| bad(cmd, format!("no hoop `{id}`: stitch.hoops.list lists them")))?),
+        None => fit.as_ref().and_then(|f| f.chosen.clone().or_else(|| f.fitted.clone())),
     };
     let found: Vec<Finding> = findings(s, p, cmd)?;
     let (errors, warnings) = (found.iter().filter(|f| f.level == Level::Error).count(), found.iter().filter(|f| f.level == Level::Warning).count());

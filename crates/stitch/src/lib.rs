@@ -10,7 +10,7 @@ mod check;
 mod fill;
 mod fill_field;
 mod from_doc;
-mod hoop;
+pub mod hoop;
 mod plan;
 mod prepare;
 mod preview;
@@ -34,7 +34,7 @@ pub use from_doc::{
     DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions, StrokeType,
     from_document, outline_fraction, outline_point, sequence,
 };
-pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_HOOP_MM, MAX_MARGIN_MM, MIN_HOOP_MM, hoop_library, hoops_for, library_hoop, smallest_fit};
+pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM};
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use preview::{
