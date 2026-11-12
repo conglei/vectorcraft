@@ -502,6 +502,66 @@ pub fn preview(plan: &StitchPlan, o: &PreviewOptions) -> Result<Preview, String>
     Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
 }
 
+/// The plan up to and including its `stitches`-th sewn stitch (needle penetration): whole blocks
+/// before it, and the block it falls in cut after it. Jumps, trims and stops after it are left
+/// out, so what is kept is what a machine would have sewn at that moment. `stitches` of 0 gives a
+/// plan with no blocks.
+pub fn prefix_plan(plan: &StitchPlan, stitches: usize) -> StitchPlan {
+    let mut left = stitches;
+    let mut blocks = Vec::new();
+    for b in &plan.blocks {
+        if left == 0 {
+            break;
+        }
+        let mut steps = Vec::new();
+        for s in &b.steps {
+            if left == 0 {
+                break;
+            }
+            if matches!(s, Step::Stitch(_)) {
+                left -= 1;
+            }
+            steps.push(*s);
+        }
+        blocks.push(crate::Block { thread: b.thread.clone(), steps });
+    }
+    StitchPlan { name: plan.name.clone(), blocks }
+}
+
+/// Draw the first `stitches` sewn stitches of `plan` (see [`prefix_plan`]) in the picture
+/// [`preview`] makes of the whole plan: the same size and position, so frames of a playback line
+/// up. The last needle point is marked with a ring. The layout comes from the whole plan, so a
+/// plan with no stitches or jumps is an error as for [`preview`]; `stitches` of 0 gives the bare
+/// fabric.
+pub fn preview_prefix(plan: &StitchPlan, o: &PreviewOptions, stitches: usize) -> Result<Preview, String> {
+    let l = Layout::new(plan, o)?;
+    let part = prefix_plan(plan, stitches);
+    let mut c = Canvas::new(l.width, l.height, o.fabric)?;
+    let (max_coverage, dense_cells) = if part.blocks.is_empty() {
+        (0.0, 0)
+    } else {
+        match o.mode {
+            PreviewMode::Realistic => {
+                draw_realistic(&mut c, &part, &l, o);
+                (0.0, 0)
+            }
+            PreviewMode::Density => draw_density(&mut c, &part, &l, o)?,
+        }
+    };
+    draw_overlays(&mut c, &part, &l, o);
+    let needle = part.blocks.iter().rev().flat_map(|b| b.steps.iter().rev()).find_map(|s| match s {
+        Step::Stitch(p) => Some(*p),
+        _ => None,
+    });
+    if let Some(p) = needle {
+        let at = l.px(p);
+        let mark = (0.8 * l.scale).clamp(4.0, 14.0);
+        c.ring(at, mark, 2.0, [0.1; 3], false);
+        c.ring(at, mark, 1.0, [1.0, 0.85, 0.1], false);
+    }
+    Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,5 +729,32 @@ mod tests {
         assert_eq!(img.rgba.len(), 24 * 24 * 4);
         let d = preview(&p, &PreviewOptions { mode: PreviewMode::Density, ..o }).unwrap();
         assert!(d.dense_cells > 0);
+    }
+
+    #[test]
+    fn a_prefix_is_the_same_picture_with_fewer_stitches() {
+        let p = plan(vec![(vec![st(0, 0), st(100, 0), st(100, 50)], [200, 0, 0]), (vec![st(0, 50), st(0, 100)], [0, 0, 200])]);
+        let o = PreviewOptions::default();
+        let whole = preview(&p, &o).unwrap();
+        let none = preview_prefix(&p, &o, 0).unwrap();
+        assert_eq!((none.width, none.height), (whole.width, whole.height));
+        assert!(none.rgba.chunks(4).all(|px| px == [236, 232, 222, 255]), "no stitches, bare fabric");
+        // The first two stitches sew the top edge only; the whole plan also has the right edge.
+        let two = preview_prefix(&p, &o, 2).unwrap();
+        let at = |img: &Preview, x: usize, y: usize| {
+            let i = (y * img.width as usize + x) * 4;
+            img.rgba[i]
+        };
+        assert_ne!(at(&two, 90, 20), 236, "the top edge is sewn");
+        // Mid right edge (10 mm, 2.5 mm) + margin = (120, 45): thread in the whole, fabric in the prefix.
+        assert_eq!(&two.rgba[(45 * two.width as usize + 120) * 4..][..3], &[236, 232, 222]);
+        assert_ne!(&whole.rgba[(45 * whole.width as usize + 120) * 4..][..3], &[236, 232, 222]);
+        // Past the end is the whole plan, with the needle marked at its end.
+        let all = preview_prefix(&p, &o, 1000).unwrap();
+        assert_ne!(all.rgba, whole.rgba);
+        let cut = prefix_plan(&p, 4);
+        assert_eq!((cut.blocks.len(), cut.blocks[1].steps.len()), (2, 1));
+        assert_eq!(prefix_plan(&p, 3).blocks.len(), 1);
+        assert!(preview_prefix(&StitchPlan::default(), &o, 3).is_err());
     }
 }
