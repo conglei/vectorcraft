@@ -12,15 +12,21 @@ mod plan;
 mod prepare;
 mod preview;
 mod profile;
+mod props;
 mod run;
 mod satin;
 mod stats;
 mod thread;
 mod to_doc;
 
+#[cfg(test)]
+mod tests_props;
+
 pub use calibration::{CalibrationPart, calibration};
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
-pub use from_doc::{FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, StrokeOptions, StrokeType, from_document};
+pub use from_doc::{
+    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, StrokeOptions, StrokeType, from_document,
+};
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use preview::{
@@ -28,6 +34,7 @@ pub use preview::{
     MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, TOO_DENSE, density, preview, preview_size,
 };
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
+pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
 pub use satin::{SatinParams, satin};
 pub use stats::{Stats, ThreadStats, stats};

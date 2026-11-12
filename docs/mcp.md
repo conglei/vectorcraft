@@ -245,6 +245,10 @@ and `path` (where it was written) or `pngBase64`; `run_command photo.providers` 
 only; `gemini` sends the photo to Google's Gemini API and runs only when named (`provider: "gemini"`) or chosen
 by the `photoProvider` preference, with `GEMINI_API_KEY` set where the server runs.
 
+Per object, `run_command stitch.setType {type: auto|none|run|satin|tatami|manual, ids?}`, `stitch.setParams
+{params: {fillAngle?, fillSpacing?, …}, ids?}` and `stitch.clear {ids?}` set how paths, compound paths and groups are
+sewn (one undo step each; groups pass theirs down), and `stitch.props {ids?, options?}` reads what each sews with.
+
 In the summary an object reports its paint as `fill`, `stroke` (labels) and `strokeWidth`. So does a compound path,
 whose paint is its own: its member paths report `compoundMember: true` instead of a paint they don't have. Every
 node (layers and groups too) reports its opacity when it is below 1, in both scales: `opacity` is the 0–1 fraction

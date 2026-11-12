@@ -177,7 +177,12 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
         entries.iter().filter(|e| e.path == ["Embroidery"]).map(|e| (e.label.as_str(), e.command.as_deref())).collect();
     assert_eq!(
         items,
-        [("Stitch Info…", Some("ui.stitchInfo")), ("Calibration Design", Some("stitch.calibration")), ("Export Stitch File…", Some("file.exportAs"))]
+        [
+            ("Stitch Info…", Some("ui.stitchInfo")),
+            ("Stitch Properties", Some("window.panel")),
+            ("Calibration Design", Some("stitch.calibration")),
+            ("Export Stitch File…", Some("file.exportAs"))
+        ]
     );
     // Calibration Design is undoable and adds the test piece.
     let before = app.session.active().unwrap().history.undo.len();

@@ -321,3 +321,91 @@ fn saved_views_round_trip_and_from_a_file_are_tidied() {
     v["document"]["views"] = json!([{"name": 5, "center": "x", "zoom": "big"}]);
     assert!(load(&serde_json::to_vec(&v).unwrap()).is_err());
 }
+
+/// Arbitrary stitch properties: each field set or not, numbers in and out of range.
+fn arb_stitch_props() -> impl Strategy<Value = vectorcraft_doc::StitchProps> {
+    use vectorcraft_doc::{StitchProps, StitchType};
+    let num = || prop::option::of(-50.0f64..50.0);
+    (prop::sample::select(StitchType::ALL.to_vec()), (num(), num(), num(), num()), (num(), num(), num(), num()), prop::option::of(any::<bool>()))
+        .prop_map(|(kind, (a, b, c, d), (e, f, g, h), underlay)| StitchProps {
+            kind,
+            fill_angle: a,
+            fill_spacing: b,
+            fill_stitch_length: c,
+            stagger: d,
+            satin_spacing: e,
+            satin_width: f,
+            run_length: g,
+            compensation: h,
+            underlay,
+        })
+}
+
+/// A document of one closed path in a group, with the given stitch properties: (document, path
+/// id, group id).
+fn stitched_doc(on_path: &vectorcraft_doc::StitchProps, on_group: &vectorcraft_doc::StitchProps) -> (Document, NodeId, NodeId) {
+    use vectorcraft_doc::Appearance;
+    use vectorcraft_geom::{PathData, Point, SubPath};
+    let mut d = Document::new(100.0, 100.0);
+    let layer = d.layers[0].id;
+    let pid = d.alloc_id();
+    let path = PathData::single(SubPath::polyline(&[Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0)], true));
+    let mut p = Node::path(pid, path, Appearance::default());
+    p.set_stitch_props(*on_path);
+    let gid = d.alloc_id();
+    let mut g = Node::group(gid, vec![std::sync::Arc::new(p)]);
+    g.set_stitch_props(*on_group);
+    d.insert(Some(layer), 0, g).unwrap();
+    (d, pid, gid)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// Stitch properties on a path and on its group save and load unchanged (empty ones as none),
+    /// compressed and in older versions too.
+    #[test]
+    fn stitch_props_roundtrip(on_path in arb_stitch_props(), on_group in arb_stitch_props()) {
+        let (d, pid, gid) = stitched_doc(&on_path, &on_group);
+        let want = |props: &vectorcraft_doc::StitchProps| (!props.is_empty()).then_some(*props);
+        for o in [SaveOptions::default(), SaveOptions { compress: true, ..SaveOptions::default() }, SaveOptions { version: 1, ..SaveOptions::default() }] {
+            let back = load(&save_with(&d, &o).unwrap()).unwrap();
+            prop_assert_eq!(back.node(pid).and_then(|n| n.stitch_props()).cloned(), want(&on_path));
+            prop_assert_eq!(back.node(gid).and_then(|n| n.stitch_props()).cloned(), want(&on_group));
+        }
+    }
+}
+
+/// A file from before stitch properties (no `stitch` member) opens with every object automatic;
+/// stitch properties a later version writes differently (or damage) read as none or as unset
+/// fields, and the rest of the document still opens.
+#[test]
+fn files_without_or_with_unreadable_stitch_props_open() {
+    use vectorcraft_doc::{StitchProps, StitchType};
+    let none = StitchProps::default();
+    let (d, pid, gid) = stitched_doc(&none, &none);
+    let bytes = save(&d, false);
+    assert!(!String::from_utf8_lossy(&bytes).contains("\"stitch\""), "nothing is written for automatic objects");
+    let back = load(&bytes).unwrap();
+    assert!(back.node(pid).unwrap().stitch_props().is_none() && back.node(gid).unwrap().stitch_props().is_none());
+    // The older files of the rich fixture open automatic too.
+    let rich = load(&save(&rich_doc(), false)).unwrap();
+    let mut any = false;
+    for l in &rich.layers {
+        l.walk(&mut |n| any |= n.stitch_props().is_some());
+    }
+    assert!(!any, "every object is automatic");
+    let mut v: Value = serde_json::from_slice(&bytes).unwrap();
+    for (stitch, want) in [
+        (json!(5), None),
+        (json!("satin"), None),
+        (json!(null), None),
+        (json!({}), None),
+        (json!({"type": "zigzag", "runLength": 2}), Some(StitchProps { run_length: Some(2.0), ..Default::default() })),
+        (json!({"type": "satin", "satinWidth": "wide", "later": [1, 2]}), Some(StitchProps { kind: StitchType::Satin, ..Default::default() })),
+    ] {
+        v["document"]["layers"][0]["kind"]["children"][0]["stitch"] = stitch.clone();
+        let back = load(&serde_json::to_vec(&v).unwrap()).unwrap_or_else(|e| panic!("{stitch}: {e}"));
+        assert_eq!(back.node(gid).and_then(|n| n.stitch_props()).cloned(), want, "{stitch}");
+    }
+}

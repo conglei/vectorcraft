@@ -55,6 +55,7 @@ impl Serialize for Node {
             e.symbol_overrides.is_empty(),
             e.envelope_edit_margin.is_none(),
             is_default(&e.pixel_aligned),
+            e.stitch.is_none(),
         ];
         let mut st = s.serialize_struct("Node", skips.iter().filter(|s| !**s).count())?;
         let mut skip = skips.into_iter();
@@ -98,6 +99,7 @@ impl Serialize for Node {
         field!("symbol_overrides", &e.symbol_overrides);
         field!("envelope_edit_margin", &e.envelope_edit_margin);
         field!("pixel_aligned", &e.pixel_aligned);
+        field!("stitch", &e.stitch);
         st.end()
     }
 }
@@ -240,6 +242,10 @@ pub(super) struct NodeWire {
     envelope_edit_margin: Option<[f32; 4]>,
     #[serde(default)]
     pixel_aligned: bool,
+    /// Read leniently: stitch properties a later version wrote differently read as none, and the
+    /// document still opens.
+    #[serde(default, deserialize_with = "crate::stitch_props::lenient")]
+    stitch: Option<Box<crate::StitchProps>>,
 }
 
 impl From<NodeWire> for Node {
@@ -268,6 +274,8 @@ impl From<NodeWire> for Node {
             symbol_overrides: w.symbol_overrides,
             envelope_edit_margin: w.envelope_edit_margin,
             pixel_aligned: w.pixel_aligned,
+            // Empty properties are the same as none (`Node::set_stitch_props`).
+            stitch: w.stitch.filter(|s| !s.is_empty()),
         };
         Node {
             id: w.id,

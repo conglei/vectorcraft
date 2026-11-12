@@ -202,6 +202,10 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             d.fields.insert(key.into(), json!(o.0));
         }
     }
+    super::form::caption(
+        ui,
+        tl!("These are the document defaults for automatic objects. Window › Stitch Properties sets the stitch type and parameters of an object."),
+    );
     ui.add_space(8.0);
     widgets::subheader(ui, tl!("Trims and Colors"));
     number(ui, d, "jumpsPerTrim", tl!("Jumps per Trim:"), "", 0, (2.0, 8.0));
