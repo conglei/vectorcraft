@@ -39,7 +39,8 @@ pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use preview::{
     DEFAULT_FABRIC, DEFAULT_SCALE, DEFAULT_THREAD_MM, DENSITY_CELL_MM, DensityGrid, MARGIN_MM, MAX_DENSITY_CELLS, MAX_SCALE, MAX_SIDE, MAX_THREAD_MM,
-    MIN_SCALE, MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, TOO_DENSE, density, prefix_plan, preview, preview_prefix, preview_size,
+    MIN_REGION_SCALE, MIN_SCALE, MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, Region, TOO_DENSE, density, prefix_plan, preview,
+    preview_prefix, preview_region, preview_size,
 };
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use props::{effective_number, inherited_props, sewn_as};

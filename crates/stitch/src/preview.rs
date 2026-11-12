@@ -82,7 +82,7 @@ impl Default for PreviewOptions {
     }
 }
 
-/// A rendered preview: opaque RGBA rows, top to bottom.
+/// A rendered preview: RGBA rows, top to bottom; opaque but for a [`Region::transparent`] one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preview {
     pub width: u32,
@@ -199,13 +199,19 @@ struct Canvas {
 
 impl Canvas {
     fn new(width: u32, height: u32, fill: [u8; 3]) -> Result<Canvas, String> {
+        Canvas::filled(width, height, fill, 255)
+    }
+
+    /// A canvas of `fill` at opacity `alpha`: 255 for the fabric, 0 for a picture of the thread
+    /// alone, to lay over something else.
+    fn filled(width: u32, height: u32, fill: [u8; 3], alpha: u8) -> Result<Canvas, String> {
         let (w, h) = (width as usize, height as usize);
         let n = w.checked_mul(h).and_then(|n| n.checked_mul(4)).ok_or("the preview is too large")?;
         let mut px = Vec::new();
         px.try_reserve_exact(n).map_err(|_| format!("not enough memory for a {width} × {height} preview"))?;
         let [r, g, b] = fill;
         for _ in 0..w * h {
-            px.extend_from_slice(&[r, g, b, 255]);
+            px.extend_from_slice(&[r, g, b, alpha]);
         }
         Ok(Canvas { w, h, px })
     }
@@ -224,12 +230,17 @@ impl Canvas {
         }
         let a = a.min(1.0);
         let Some(i) = y.checked_mul(self.w).and_then(|i| i.checked_add(x)).and_then(|i| i.checked_mul(4)) else { return };
-        let Some(p) = self.px.get_mut(i..i + 3) else { return };
-        for (c, s) in p.iter_mut().zip(rgb) {
-            let v = f64::from(*c) * (1.0 - a) + s.clamp(0.0, 1.0) * 255.0 * a;
+        let Some(p) = self.px.get_mut(i..i + 4) else { return };
+        let [pr, pg, pb, pa] = p else { return };
+        // "Over" with straight alpha: on an opaque pixel `below` is 1 and `out` is 1.
+        let below = f64::from(*pa) / 255.0 * (1.0 - a);
+        let out = a + below;
+        for (c, s) in [pr, pg, pb].into_iter().zip(rgb) {
+            let v = (f64::from(*c) * below + s.clamp(0.0, 1.0) * 255.0 * a) / out;
             // Within 0..=255 by construction.
             *c = v.round().clamp(0.0, 255.0) as u8;
         }
+        *pa = (out * 255.0).round().clamp(0.0, 255.0) as u8;
     }
 
     /// Run `paint` over every pixel near the capsule from `a` to `b` of radius `r` (pixels). It
@@ -502,6 +513,67 @@ pub fn preview(plan: &StitchPlan, o: &PreviewOptions) -> Result<Preview, String>
     Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
 }
 
+/// The fewest pixels per millimetre a region is drawn at: a whole 400 mm frame in 20 pixels.
+pub const MIN_REGION_SCALE: f64 = 0.05;
+
+/// A rectangle of the plan's own space to draw: where the picture's top-left corner is, and how
+/// many pixels it has. [`PreviewOptions::scale`] gives the pixels per millimetre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    /// The picture's top-left corner in mm, in the plan's coordinates (the document's).
+    pub left_mm: f64,
+    pub top_mm: f64,
+    /// The picture's size in pixels, at most [`MAX_SIDE`] a side.
+    pub width: u32,
+    pub height: u32,
+    /// Leave the fabric out: pixels no thread or mark covers are transparent, so the picture can
+    /// be laid over a page. The pixels are straight (not premultiplied) RGBA.
+    pub transparent: bool,
+}
+
+/// Draw the part of `plan` inside `region` at `o.scale` pixels per mm, which may be as low as
+/// [`MIN_REGION_SCALE`]: what [`preview`] draws, cut to the rectangle, wherever the rectangle is.
+/// `stitches`: only the first that many sewn stitches (see [`prefix_plan`]), with the last needle
+/// point ringed, as [`preview_prefix`]. A region with no stitches in it is bare fabric (or fully
+/// transparent). Errors for bad options, a region with a side of 0 or more than [`MAX_SIDE`]
+/// pixels, a corner that is not finite, or too little memory.
+pub fn preview_region(plan: &StitchPlan, o: &PreviewOptions, region: &Region, stitches: Option<usize>) -> Result<Preview, String> {
+    check(&PreviewOptions { scale: o.scale.max(MIN_SCALE), ..o.clone() })?;
+    if !(o.scale.is_finite() && o.scale >= MIN_REGION_SCALE) {
+        return Err(format!("scale must be {MIN_REGION_SCALE}–{MAX_SCALE} pixels per mm, not {}", o.scale));
+    }
+    if !(region.left_mm.is_finite() && region.top_mm.is_finite()) {
+        return Err("the region's corner must be finite".into());
+    }
+    if region.width == 0 || region.height == 0 || region.width > MAX_SIDE || region.height > MAX_SIDE {
+        return Err(format!("the region must be 1–{MAX_SIDE} pixels a side, not {} × {}", region.width, region.height));
+    }
+    let l = Layout { left: region.left_mm, top: region.top_mm, scale: o.scale, width: region.width, height: region.height };
+    let mut c = Canvas::filled(l.width, l.height, o.fabric, if region.transparent { 0 } else { 255 })?;
+    let cut;
+    let part = match stitches {
+        Some(n) => {
+            cut = prefix_plan(plan, n);
+            &cut
+        }
+        None => plan,
+    };
+    // A plan with nothing in it has no density grid to make.
+    let (max_coverage, dense_cells) = match o.mode {
+        _ if extents(part).is_none() => (0.0, 0),
+        PreviewMode::Realistic => {
+            draw_realistic(&mut c, part, &l, o);
+            (0.0, 0)
+        }
+        PreviewMode::Density => draw_density(&mut c, part, &l, o)?,
+    };
+    draw_overlays(&mut c, part, &l, o);
+    if stitches.is_some() {
+        needle_ring(&mut c, part, &l);
+    }
+    Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
+}
+
 /// The plan up to and including its `stitches`-th sewn stitch (needle penetration): whole blocks
 /// before it, and the block it falls in cut after it. Jumps, trims and stops after it are left
 /// out, so what is kept is what a machine would have sewn at that moment. `stitches` of 0 gives a
@@ -549,6 +621,12 @@ pub fn preview_prefix(plan: &StitchPlan, o: &PreviewOptions, stitches: usize) ->
         }
     };
     draw_overlays(&mut c, &part, &l, o);
+    needle_ring(&mut c, &part, &l);
+    Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
+}
+
+/// A ring at the last needle point of `part`, where a playback stands.
+fn needle_ring(c: &mut Canvas, part: &StitchPlan, l: &Layout) {
     let needle = part.blocks.iter().rev().flat_map(|b| b.steps.iter().rev()).find_map(|s| match s {
         Step::Stitch(p) => Some(*p),
         _ => None,
@@ -559,7 +637,6 @@ pub fn preview_prefix(plan: &StitchPlan, o: &PreviewOptions, stitches: usize) ->
         c.ring(at, mark, 2.0, [0.1; 3], false);
         c.ring(at, mark, 1.0, [1.0, 0.85, 0.1], false);
     }
-    Ok(Preview { width: l.width, height: l.height, rgba: c.px, max_coverage, dense_cells })
 }
 
 #[cfg(test)]
@@ -756,5 +833,77 @@ mod tests {
         assert_eq!((cut.blocks.len(), cut.blocks[1].steps.len()), (2, 1));
         assert_eq!(prefix_plan(&p, 3).blocks.len(), 1);
         assert!(preview_prefix(&StitchPlan::default(), &o, 3).is_err());
+    }
+
+    /// The rows `y0..y0 + h` and columns `x0..x0 + w` of `img`.
+    fn cut(img: &Preview, x0: usize, y0: usize, w: usize, h: usize) -> Vec<u8> {
+        (y0..y0 + h).flat_map(|y| img.rgba[(y * img.width as usize + x0) * 4..][..w * 4].to_vec()).collect()
+    }
+
+    #[test]
+    fn a_region_is_the_same_rectangle_of_the_whole_picture() {
+        let p = plan(vec![
+            (vec![st(0, 0), st(100, 0), st(100, 50)], [200, 0, 0]),
+            (vec![Step::Jump(Pt { x: 0, y: 50 }), st(0, 50), st(60, 20)], [0, 0, 200]),
+        ]);
+        for mode in [PreviewMode::Realistic, PreviewMode::Density] {
+            let o = PreviewOptions { mode, show_jumps: true, show_needles: true, show_functions: true, ..PreviewOptions::default() };
+            let whole = preview(&p, &o).unwrap();
+            // The whole picture starts a margin before the design: (-2, -2) mm.
+            let all = Region { left_mm: -MARGIN_MM, top_mm: -MARGIN_MM, width: whole.width, height: whole.height, transparent: false };
+            let same = preview_region(&p, &o, &all, None).unwrap();
+            assert_eq!(same, whole, "{mode:?}");
+            // 3 mm right and 1 mm down of that, 50 × 40 pixels: columns 30.., rows 10...
+            let part = Region { left_mm: 1.0, top_mm: -1.0, width: 50, height: 40, transparent: false };
+            let got = preview_region(&p, &o, &part, None).unwrap();
+            assert_eq!((got.width, got.height), (50, 40));
+            assert_eq!(got.rgba, cut(&whole, 30, 10, 50, 40), "{mode:?}");
+            // A playback position: the same rectangle of the prefix picture.
+            let prefix = preview_prefix(&p, &o, 2).unwrap();
+            assert_eq!(preview_region(&p, &o, &part, Some(2)).unwrap().rgba, cut(&prefix, 30, 10, 50, 40), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_region_away_from_the_design_is_fabric_and_a_transparent_one_is_clear() {
+        let p = plan(vec![(vec![st(0, 0), st(100, 0)], [200, 0, 0])]);
+        let o = PreviewOptions::default();
+        let far = Region { left_mm: 500.0, top_mm: -900.0, width: 30, height: 20, transparent: false };
+        let img = preview_region(&p, &o, &far, None).unwrap();
+        assert!(img.rgba.chunks(4).all(|px| px == [236, 232, 222, 255]));
+        // Over the stitch, without fabric: thread where it runs, nothing beside it.
+        let over = Region { left_mm: 2.0, top_mm: -2.0, width: 40, height: 40, transparent: true };
+        let img = preview_region(&p, &o, &over, None).unwrap();
+        let at = |x: usize, y: usize| &img.rgba[(y * 40 + x) * 4..][..4];
+        assert_eq!(at(20, 2)[3], 0, "above the thread");
+        assert_eq!(at(20, 20)[3], 255, "on the thread");
+        assert!(at(20, 20)[0] > at(20, 20)[1] + 60, "red thread: {:?}", at(20, 20));
+        // No stitches yet: nothing drawn, and no error for the empty prefix.
+        let none = preview_region(&p, &o, &over, Some(0)).unwrap();
+        assert!(none.rgba.chunks(4).all(|px| px[3] == 0));
+        // An empty plan is an empty picture: a canvas shows the page, not an error.
+        let empty = preview_region(&StitchPlan::default(), &PreviewOptions { mode: PreviewMode::Density, ..o.clone() }, &over, None).unwrap();
+        assert!(empty.rgba.chunks(4).all(|px| px[3] == 0));
+    }
+
+    #[test]
+    fn a_region_draws_far_below_and_at_the_picture_scales_and_refuses_bad_ones() {
+        let p = plan(vec![(vec![st(0, 0), st(4000, 0)], [0; 3])]);
+        let r = Region { left_mm: 0.0, top_mm: -10.0, width: 40, height: 20, transparent: true };
+        // 400 mm in 20 pixels: below the whole picture's lowest scale.
+        let small = preview_region(&p, &PreviewOptions { scale: MIN_REGION_SCALE, ..PreviewOptions::default() }, &r, None).unwrap();
+        assert!(small.rgba.chunks(4).any(|px| px[3] > 0));
+        for scale in [0.0, 0.01, MAX_SCALE + 1.0, f64::NAN, f64::INFINITY] {
+            let err = preview_region(&p, &PreviewOptions { scale, ..PreviewOptions::default() }, &r, None).unwrap_err();
+            assert!(err.contains("scale"), "{scale}: {err}");
+        }
+        let o = PreviewOptions::default();
+        for (w, h) in [(0, 10), (10, 0), (MAX_SIDE + 1, 10), (10, u32::MAX)] {
+            let err = preview_region(&p, &o, &Region { width: w, height: h, ..r }, None).unwrap_err();
+            assert!(err.contains("pixels a side"), "{err}");
+        }
+        for (x, y) in [(f64::NAN, 0.0), (0.0, f64::INFINITY)] {
+            assert!(preview_region(&p, &o, &Region { left_mm: x, top_mm: y, ..r }, None).is_err());
+        }
     }
 }

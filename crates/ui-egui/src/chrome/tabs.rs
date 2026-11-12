@@ -3,18 +3,32 @@ use super::{Sense, Stroke, Tokens, Ui, VectorcraftApp, icons, json, theme, vec2,
 /// [`view_tab_title`] for a document with one view.
 #[cfg(test)]
 pub(super) fn tab_title(d: &vectorcraft_engine::DocState, zoom: f64, outline: bool, display_print_size: bool) -> String {
-    view_tab_title(d, None, zoom, outline, display_print_size)
+    view_tab_title(d, None, zoom, (outline, false), display_print_size)
 }
 
 /// A document tab's title: "Name* @ 66.67 % (RGB/Preview)", or while an opacity mask is edited
 /// "Name* @ 66.67 % (<Opacity Mask>/Opacity Mask)". For a view of a document with more than one
-/// view, the view's `number` follows the name: "Name:2* @ 66.67 % (RGB/Preview)".
-fn view_tab_title(d: &vectorcraft_engine::DocState, number: Option<u32>, zoom: f64, outline: bool, display_print_size: bool) -> String {
+/// view, the view's `number` follows the name: "Name:2* @ 66.67 % (RGB/Preview)". The last word
+/// names how the view draws the document: Preview, Outline or (`stitches`) Stitches.
+fn view_tab_title(
+    d: &vectorcraft_engine::DocState,
+    number: Option<u32>,
+    zoom: f64,
+    (outline, stitches): (bool, bool),
+    display_print_size: bool,
+) -> String {
     let mode = if d.doc.mask_edit.is_some() {
         format!("<{0}>/{0}", tl!("Opacity Mask"))
     } else {
         let color = if d.doc.color_mode == vectorcraft_doc::ColorMode::Cmyk { "CMYK" } else { "RGB" };
-        format!("{color}/{}", if outline { tl!("Outline") } else { tl!("Preview") })
+        let drawn = if stitches {
+            tl!("Stitches")
+        } else if outline {
+            tl!("Outline")
+        } else {
+            tl!("Preview")
+        };
+        format!("{color}/{drawn}")
     };
     let number = number.map(|n| format!(":{n}")).unwrap_or_default();
     format!("{}{number}{} @ {} ({mode})", d.title(), if d.is_dirty() { "*" } else { "" }, zoom_label(zoom, display_print_size).replace('%', " %"))
@@ -25,7 +39,8 @@ fn view_tab_title(d: &vectorcraft_engine::DocState, number: Option<u32>, zoom: f
 fn window_tab_title(app: &VectorcraftApp, w: crate::doc_windows::Win, d: &vectorcraft_engine::DocState) -> String {
     let view = crate::doc_windows::view(app, w);
     let zoom = view.map_or(1.0, |v| v.zoom);
-    view_tab_title(d, crate::doc_windows::label(app, w), zoom, view.is_some_and(|v| v.outline), app.session.prefs.display_print_size)
+    let drawn = (view.is_some_and(|v| v.outline), view.is_some_and(|v| v.stitches));
+    view_tab_title(d, crate::doc_windows::label(app, w), zoom, drawn, app.session.prefs.display_print_size)
 }
 
 /// The title of window `w`'s tab and floating window ([`crate::doc_windows`]).

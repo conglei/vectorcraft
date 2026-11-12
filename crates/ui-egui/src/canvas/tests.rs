@@ -3902,7 +3902,7 @@ fn scrolls_and_pans_move_the_view_by_whole_device_pixels() {
 /// another document, or when the device pixels a point changed.
 #[test]
 fn a_scrolls_leftover_pixel_part_carries_only_to_the_same_view() {
-    let view = View { zoom: 1.0, center: Point::new(100.0, 100.0), fitted: true, rotation: 0.0, artboard: 0, outline: false };
+    let view = View { zoom: 1.0, center: Point::new(100.0, 100.0), fitted: true, rotation: 0.0, artboard: 0, outline: false, stitches: false };
     let mut v = view;
     let rest = scroll_by(&mut v, 1, 1.0, vec2(0.4, -0.3), ScrollRest::default());
     assert_eq!(v.center, view.center, "less than half a pixel does not move the view");

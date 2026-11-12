@@ -73,11 +73,13 @@ pub struct Settings {
     pub jumps: bool,
     /// Stitches per second in playback.
     pub speed: u32,
+    /// In the canvas's stitch view (View › Stitches), the art shows faintly under the thread.
+    pub underlay: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { view: View::Realistic, needles: false, jumps: false, speed: 100 }
+        Settings { view: View::Realistic, needles: false, jumps: false, speed: 100, underlay: false }
     }
 }
 
@@ -153,7 +155,10 @@ fn with_rt<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
 
 /// Runs `work` on a worker thread (at once where there are none) → the receiver of its result. The
 /// UI is asked to repaint when it is done.
-fn spawn<T: Send + 'static>(ctx: &egui::Context, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Receiver<Result<T, String>> {
+pub(crate) fn spawn<T: Send + 'static>(
+    ctx: &egui::Context,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Receiver<Result<T, String>> {
     let (tx, rx) = channel();
     #[cfg(target_arch = "wasm32")]
     {
@@ -182,7 +187,7 @@ fn plan_options(app: &VectorcraftApp) -> Value {
 }
 
 /// The frame options for the settings and the stitches shown.
-fn frame_options(set: &Settings, position: Option<usize>) -> FrameOptions {
+pub(crate) fn frame_options(set: &Settings, position: Option<usize>) -> FrameOptions {
     FrameOptions {
         density: set.view == View::Density,
         show_jumps: set.jumps,
@@ -219,8 +224,23 @@ impl Runtime {
     }
 }
 
-/// Advance the state to now: collect finished work, start what is wanted, play.
-fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings) {
+/// What the canvas's stitch view draws from: the plan on show (with the count of plans built, so
+/// a picture knows which plan it is of) or why there is none, and the stitches shown (`None`: all).
+pub(crate) struct OnCanvas {
+    pub plan: Option<Result<(u64, Arc<BuiltPlan>), String>>,
+    pub position: Option<usize>,
+}
+
+/// Advance the plan and the playback for the canvas's stitch view (the panel need not be open; its
+/// own picture is not drawn for this), and say what there is to draw.
+pub(crate) fn for_canvas(app: &VectorcraftApp, ctx: &egui::Context) -> OnCanvas {
+    update(app, ctx, &app.ui.stitch_preview, false);
+    with_rt(|rt| OnCanvas { plan: rt.plan.as_ref().map(|p| p.plan.clone().map(|plan| (p.generation, plan))), position: rt.shown() })
+}
+
+/// Advance the state to now: collect finished work, start what is wanted, play. `panel`: the
+/// panel is drawing, so its picture of the whole design is wanted too.
+fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings, panel: bool) {
     let Some(st) = app.session.active() else { return };
     let (uid, doc) = (st.uid, st.doc.clone());
     let key = PlanKey { uid, doc, options: plan_options(app).to_string() };
@@ -276,6 +296,9 @@ fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings) {
             rt.playing = false;
         }
         rt.last_tick = now;
+        if !panel {
+            return;
+        }
         // A finished frame.
         if let Some((k, rx)) = rt.frame_job.take() {
             match rx.try_recv() {
@@ -409,10 +432,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let mut set = app.ui.stitch_preview.clone();
-    update(app, ui.ctx(), &set);
+    update(app, ui.ctx(), &set, true);
     let mut position = with_rt(|rt| rt.position);
     let (total, playing) = with_rt(|rt| (rt.total(), rt.playing));
     let mut toggle_play = false;
+    let mut canvas_view = None;
 
     ui.horizontal_wrapped(|ui| {
         let labels = [tl!("Thread"), tl!("Density")];
@@ -422,7 +446,21 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
         ui.checkbox(&mut set.needles, tl!("Needle points")).on_hover_text(tl!("A dot at each needle point"));
         ui.checkbox(&mut set.jumps, tl!("Jumps and trims")).on_hover_text(tl!("Jumps as dashed lines; rings at trims, colour changes and stops"));
+        let mut on_canvas = app.stitch_view();
+        if ui
+            .checkbox(&mut on_canvas, tl!("On the canvas"))
+            .on_hover_text(tl!("Show the stitches on the canvas instead of the art (View › Stitches)"))
+            .changed()
+        {
+            canvas_view = Some(on_canvas);
+        }
+        ui.add_enabled(on_canvas, egui::Checkbox::new(&mut set.underlay, tl!("Artwork underlay")))
+            .on_hover_text(tl!("On the canvas, show the art faintly under the thread"));
     });
+    if let Some(on) = canvas_view {
+        // The command only fails without a document, and the panel shows nothing then.
+        app.run("view.stitches", json!({ "on": on })).ok();
+    }
     ui.add_space(4.0);
 
     let height = {
@@ -515,7 +553,7 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
         let v = v.as_str().and_then(View::parse).ok_or("view must be realistic or density")?;
         set.view = v;
     }
-    for (key, field) in [("needles", &mut set.needles), ("jumps", &mut set.jumps)] {
+    for (key, field) in [("needles", &mut set.needles), ("jumps", &mut set.jumps), ("underlay", &mut set.underlay)] {
         if let Some(v) = p.get(key) {
             *field = v.as_bool().ok_or_else(|| format!("{key} must be true or false"))?;
         }
@@ -557,6 +595,15 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
     Ok(state(app))
 }
 
+/// Why there is no plan to show, when that is so.
+#[cfg(test)]
+pub(crate) fn state_message() -> Option<String> {
+    with_rt(|rt| match rt.plan.as_ref().map(|p| &p.plan) {
+        Some(Err(e)) => Some(e.clone()),
+        _ => None,
+    })
+}
+
 /// What the panel is showing (`ui.stitchPreview`'s answer): `status` is `ready`, `updating`, `error`
 /// or `none` (no document).
 pub(crate) fn state(app: &VectorcraftApp) -> Value {
@@ -580,6 +627,8 @@ pub(crate) fn state(app: &VectorcraftApp) -> Value {
             "needles": set.needles,
             "jumps": set.jumps,
             "speed": set.speed,
+            "underlay": set.underlay,
+            "onCanvas": app.stitch_view(),
             "position": rt.shown(),
             "playing": rt.playing,
             "stitches": rt.total(),
@@ -599,6 +648,9 @@ pub(crate) fn state(app: &VectorcraftApp) -> Value {
         }
         if let Some(f) = &rt.frame {
             v["image"] = json!({"width": f.size[0], "height": f.size[1]});
+        }
+        if app.stitch_view() {
+            v["canvas"] = crate::canvas::stitch_view_state();
         }
         v
     })

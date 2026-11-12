@@ -216,7 +216,22 @@ fn run_ui_part2(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result<
         }
         // Outline or Preview is a setting of the active document's view.
         "view.outline" => match app.view_mut() {
-            Some(v) => flag(&mut v.outline),
+            Some(v) => {
+                // One way of drawing the document at a time.
+                v.stitches = false;
+                flag(&mut v.outline)
+            }
+            None => Err("no document".into()),
+        },
+        // The stitch view is a setting of the active document's view too: {on?} sets it, none flips it.
+        "view.stitches" => match app.view_mut() {
+            Some(v) => {
+                v.stitches = p.get("on").and_then(Value::as_bool).unwrap_or(!v.stitches);
+                if v.stitches {
+                    v.outline = false;
+                }
+                Ok(json!(v.stitches))
+            }
             None => Err("no document".into()),
         },
         _ => return None,

@@ -868,7 +868,7 @@ fn set_ui(app: &mut VectorcraftApp, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     // Outline is a setting of the active document's view: without one, nothing is set.
-    if p.get("outline").is_some_and(Value::is_boolean) && app.session.active().is_none() {
+    if ["outline", "stitches"].iter().any(|k| p.get(*k).is_some_and(Value::is_boolean)) && app.session.active().is_none() {
         return err("no document");
     }
     let mut r = Ok(Value::Null);
@@ -884,6 +884,7 @@ fn set_ui(app: &mut VectorcraftApp, req: &ControlRequest) -> Outcome {
     for (k, flag) in [
         ("rulers", "view.rulers"),
         ("outline", "view.outline"),
+        ("stitches", "view.stitches"),
         ("grid", "view.grid"),
         ("smartGuides", "view.smartGuides"),
         ("boundingBox", "view.boundingBox"),
@@ -892,6 +893,7 @@ fn set_ui(app: &mut VectorcraftApp, req: &ControlRequest) -> Outcome {
             let cur = match k {
                 "rulers" => app.ui.view.rulers,
                 "outline" => app.outline_view(),
+                "stitches" => app.stitch_view(),
                 "grid" => app.ui.view.grid,
                 "smartGuides" => app.ui.view.smart_guides,
                 _ => app.ui.view.bounding_box,

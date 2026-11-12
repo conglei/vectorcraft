@@ -292,7 +292,8 @@ pub(crate) fn pane(app: &mut VectorcraftApp, ui: &Ui, w: Win, cell: egui::Rect) 
     let slot = (st.uid, w.1);
     let xf = Xf::new(rect, &v);
     let painter = ui.painter_at(rect);
-    paint_paper(app, st, ui, &painter, &xf, rect, (&t, v.outline));
+    // A second pane of the same document shows the art: the stitch view is the main canvas's.
+    paint_paper(app, st, ui, &painter, &xf, rect, (&t, v.outline, false));
     let grid_look = app.ui.view.grid.then(|| LineLook::grid(&app.session.prefs));
     let grids_in_back = app.session.prefs.grids_in_back;
     if let Some(look) = grid_look.filter(|_| grids_in_back) {

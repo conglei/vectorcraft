@@ -178,6 +178,7 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
     assert_eq!(
         items,
         [
+            ("Stitches on the Canvas", Some("view.stitches")),
             ("Stitch Info…", Some("ui.stitchInfo")),
             ("Stitch Preview", Some("window.panel")),
             ("Stitch Properties", Some("window.panel")),
