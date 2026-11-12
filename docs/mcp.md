@@ -5460,6 +5460,9 @@ Calibration Design and Export Stitch File… (Export As on DST, then Stitch File
 | `export_stitch` | Writes the file: `document.export` with `format` `dst`, `dsb` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
 | `run_command stitch.calibration` | Adds a 100 mm test piece for a first stitch-out, as one group of paths in three thread colours; one undo step. `{x?, y?}` puts its top-left corner. |
 | `run_command stitch.preview` | Draws the stitch plan over the art. Added by another change: use it when `list_commands` with `filter: "stitch"` lists it. |
+| `run_command stitch.threads.import` / `.list` / `.use` | Thread charts: `import {path? \| data? \| dataBase64?, name?, user?}` reads a CSV (`code` and `hex` columns, optionally `brand`, `name`, `weight`) or JSON chart; `list {chart?}` shows the starter set and the imported charts; `use {name}` makes one active, so `stitch.info` names the nearest thread of it for each colour (`brand`, `code`, `name`, `deltaE`). |
+| `run_command stitch.threads.match {chart?}` | The nearest thread of a chart to each colour of the stitch plan, per block. |
+| `run_command stitch.needles {machine?, chart?}` | The needle each colour is sewn with, 1 up to the machine's needle count (15 for `bai_mirror`), a repeated colour keeping its needle; a warning when there are more colours than needles. |
 
 Both tools take the options of `document.formats` for `dst`, `dsb` and `exp` (lengths in mm): `machine`
 (`commercial15` default, or `generic`), `mode` (`run` or `manual`; not given, art on the layer an opened

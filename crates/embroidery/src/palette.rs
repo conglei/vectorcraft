@@ -20,7 +20,7 @@ const COLOURS: [[u8; 3]; 12] = [
 /// The thread for block `index` of a file that stores no colours.
 pub fn default_thread(index: usize) -> Thread {
     let rgb = COLOURS.get(index % COLOURS.len()).copied().unwrap_or_default();
-    Thread { rgb, name: None, code: None }
+    Thread { rgb, name: None, code: None, brand: None }
 }
 
 #[cfg(test)]

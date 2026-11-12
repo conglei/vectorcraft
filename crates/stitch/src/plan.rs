@@ -35,12 +35,14 @@ pub enum Step {
     Stop,
 }
 
-/// A thread: its colour and optional name and catalogue code.
+/// A thread: its colour and optional name, catalogue code and brand (set by a file that names its
+/// threads, or by matching to a thread chart).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Thread {
     pub rgb: [u8; 3],
     pub name: Option<String>,
     pub code: Option<String>,
+    pub brand: Option<String>,
 }
 
 /// The steps sewn with one thread.

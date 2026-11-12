@@ -6742,6 +6742,7 @@ version = "0.21.0"
 dependencies = [
  "kurbo 0.13.1",
  "proptest",
+ "serde_json",
  "vectorcraft-color",
  "vectorcraft-doc",
  "vectorcraft-geom",

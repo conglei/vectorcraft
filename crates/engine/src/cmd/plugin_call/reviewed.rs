@@ -531,6 +531,9 @@ pub(super) const ALLOWED: &[&str] = &[
     "slice.list",
     "stitch.calibration",
     "stitch.info",
+    "stitch.needles",
+    "stitch.threads.list",
+    "stitch.threads.match",
     "stroke.set",
     "stroke.setAdvanced",
     "stroke.weightDown",
@@ -673,5 +676,6 @@ pub(super) const DENIED: &[&str] = &[
     "object.blend.options",
     "object.liquify",
     "object.pathfinder.options",
+    "stitch.threads.use",
     "type.compositeFonts.set",
 ];

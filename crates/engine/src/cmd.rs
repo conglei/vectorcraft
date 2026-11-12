@@ -86,6 +86,7 @@ pub mod shortcutset;
 pub(crate) mod slices;
 pub mod spelling;
 mod stitch;
+pub mod stitchthreads;
 mod stroke;
 mod style;
 pub mod stylelib;
@@ -383,6 +384,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(cut::specs());
         v.extend(halftone::specs());
         v.extend(stitch::specs());
+        v.extend(stitchthreads::specs());
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(actionset::specs());

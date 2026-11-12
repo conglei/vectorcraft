@@ -113,7 +113,7 @@ mod tests {
             name: String::new(),
             blocks: vec![
                 Block {
-                    thread: Thread { rgb: [200, 10, 20], name: None, code: None },
+                    thread: Thread { rgb: [200, 10, 20], name: None, code: None, brand: None },
                     steps: vec![
                         Step::Stitch(p(0, 0)),
                         Step::Stitch(p(25, 0)),
@@ -125,7 +125,7 @@ mod tests {
                     ],
                 },
                 Block {
-                    thread: Thread { rgb: [0, 90, 255], name: None, code: None },
+                    thread: Thread { rgb: [0, 90, 255], name: None, code: None, brand: None },
                     steps: vec![Step::Jump(p(-100, 50)), Step::Stitch(p(-100, 50)), Step::Stitch(p(-75, 50)), Step::Stitch(p(-50, 60))],
                 },
             ],

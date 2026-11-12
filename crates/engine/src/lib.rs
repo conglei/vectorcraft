@@ -142,6 +142,10 @@ pub struct Session {
     pub(crate) pending_paint: Option<Paint>,
     /// User Defined and loaded swatch libraries (Window → Swatch Libraries); not saved.
     pub swatch_libraries: cmd::swatchlib::Libraries,
+    /// User Defined and loaded embroidery thread charts (the `Threads` folder); not saved.
+    pub thread_charts: cmd::stitchthreads::Libraries,
+    /// The thread chart `stitch.threads.use` chose (its id), for the session.
+    pub(crate) active_thread_chart: Option<String>,
     /// The selected freeform gradient point (`paint.freeform.selectPoint`) and whose gradient it
     /// was selected on: read it with [`Session::selected_freeform_point`].
     pub(crate) freeform_point: Option<(usize, cmd::gradient::StopOwner)>,

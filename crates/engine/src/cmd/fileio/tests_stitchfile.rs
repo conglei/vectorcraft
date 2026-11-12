@@ -423,7 +423,7 @@ fn travelling_file(format: &str, jumps: u8) -> Vec<u8> {
     a.extend(line(850, 3));
     let mut b = vec![Step::Jump(Pt { x: 0, y: 100 })];
     b.extend((0..4).map(|i| Step::Stitch(Pt { x: 30 * i, y: 100 })));
-    let thread = |rgb| Thread { rgb, name: None, code: None };
+    let thread = |rgb| Thread { rgb, name: None, code: None, brand: None };
     let plan = StitchPlan {
         name: "T".into(),
         blocks: vec![Block { thread: thread([200, 0, 0]), steps: a }, Block { thread: thread([0, 0, 200]), steps: b }],
