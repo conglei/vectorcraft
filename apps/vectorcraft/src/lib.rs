@@ -1,4 +1,7 @@
-//! VectorCraft desktop app.
+//! The VectorCraft desktop app, as a launcher both desktop binaries run: `vectorcraft`
+//! (`src/main.rs`) starts it as VectorCraft and `stitchcraft` (`apps/stitchcraft`) as StitchCraft,
+//! the embroidery app on the same crates. [`run`] takes the app's [`AppIdentity`]; everything below
+//! is the same for both, with the app's name in place of VectorCraft's.
 //!
 //! Usage: `vectorcraft [--control <port> [--automation-read-root <dir>]... [--automation-write-root <dir>]...]
 //! [--in-window-menus] [--new-instance] [--safe-mode] [--] [files…]`, `vectorcraft --version`, `vectorcraft --help` (or `-h`)
@@ -19,7 +22,6 @@
 //! `--automation-write-root` (or `VECTORCRAFT_AUTOMATION_READ_ROOT` / `_WRITE_ROOT`) confine the
 //! files its requests read and write (`vectorcraft_engine::file_access`); the person at the
 //! keyboard isn't confined.
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
 mod automation_args;
 mod caps_lock;
@@ -30,6 +32,7 @@ mod control_server;
 mod cursor_theme;
 #[cfg(feature = "wgpu")]
 mod gpu;
+pub mod identity;
 #[cfg(target_os = "linux")]
 mod linux_stylus;
 mod logging;
@@ -67,6 +70,7 @@ mod windows_cores;
 mod windows_stylus;
 mod xwayland;
 
+pub use identity::{AppIdentity, VECTORCRAFT};
 use vectorcraft_engine::Session;
 use vectorcraft_engine::cmd::fileio;
 use vectorcraft_engine::file_access::{self, AutomationRoots};
@@ -155,6 +159,12 @@ Without a window (converting, scripting, the MCP server), use vectorcraft-cli:
   vectorcraft-cli --help
 ";
 
+/// `--help` for the running app: [`USAGE`] with its name, and the control port agents use for it.
+fn usage(app: &AppIdentity) -> String {
+    let usage = USAGE.replace("Usage: vectorcraft", &format!("Usage: {}", app.lower)).replace("VectorCraft", app.name);
+    format!("{usage}\nAgents drive {} on port {} by convention: --control {}\n", app.name, app.default_control_port, app.default_control_port)
+}
+
 /// The command line's options other than the automation roots and the control port.
 struct CommandLine {
     files: Vec<String>,
@@ -172,6 +182,8 @@ fn read_command_line(
     control: &mut automation_args::ControlArg,
     roots_args: &mut automation_args::AutomationArgs,
 ) -> Result<CommandLine, std::process::ExitCode> {
+    let app = identity::current();
+    let me = app.lower;
     let mut files = Vec::new();
     let mut in_window_menus = std::env::var_os("VECTORCRAFT_IN_WINDOW_MENUS").is_some_and(|v| !v.is_empty() && v != "0");
     let mut new_instance = false;
@@ -187,7 +199,7 @@ fn read_command_line(
             Ok(true) => continue,
             Ok(false) => {}
             Err(e) => {
-                eprintln!("vectorcraft: {e}");
+                eprintln!("{me}: {e}");
                 return Err(std::process::ExitCode::FAILURE);
             }
         }
@@ -196,7 +208,7 @@ fn read_command_line(
             "--new-instance" => new_instance = true,
             "--safe-mode" => safe_mode = true,
             "--version" => {
-                println!("vectorcraft {}", env!("CARGO_PKG_VERSION"));
+                println!("{me} {}", env!("CARGO_PKG_VERSION"));
                 return Err(std::process::ExitCode::SUCCESS);
             }
             // Before anything starts, like `--version`: from a terminal or an agent's shell the app
@@ -204,7 +216,7 @@ fn read_command_line(
             "--help" | "-h" => {
                 // Not `print!`, which panics when standard output is closed (`| head -0`):
                 // there is nothing left to tell then.
-                let _ = std::io::Write::write_all(&mut std::io::stdout(), USAGE.as_bytes());
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), usage(app).as_bytes());
                 return Err(std::process::ExitCode::SUCCESS);
             }
             // The process serial number older macOS versions pass to an app the Finder starts.
@@ -219,13 +231,19 @@ fn read_command_line(
         }
     }
     if let Some(a) = unknown {
-        eprintln!("vectorcraft: unknown option {a}; see vectorcraft --help, or put -- before a file whose name starts with '-'");
+        eprintln!("{me}: unknown option {a}; see {me} --help, or put -- before a file whose name starts with '-'");
         return Err(std::process::ExitCode::FAILURE);
     }
     Ok(CommandLine { files, in_window_menus, new_instance, safe_mode })
 }
 
-fn main() -> std::process::ExitCode {
+/// Start the desktop app `app` (VectorCraft or StitchCraft) with this process's arguments, and run
+/// it until its window closes. Call once, from `main`.
+pub fn run(ident: &'static AppIdentity) -> std::process::ExitCode {
+    // First: the name, the settings folder and the brand mark every later step reads.
+    identity::set(ident);
+    prefs_dir::set_app_folder(ident.name, ident.lower);
+    vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand { name: ident.name, mark_png: ident.brand_png });
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
     if let Some(result) = craft_update::self_update::finish(&vectorcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
@@ -252,7 +270,7 @@ fn main() -> std::process::ExitCode {
         None => match automation_args::env_control_port(std::env::var_os("VECTORCRAFT_CONTROL_PORT")) {
             Ok(port) => port,
             Err(e) => {
-                eprintln!("vectorcraft: {e}");
+                eprintln!("{}: {e}", ident.lower);
                 return std::process::ExitCode::FAILURE;
             }
         },
@@ -286,7 +304,7 @@ fn main() -> std::process::ExitCode {
     if let Some(logger) = logger {
         match log_dir().filter(|_| prefs_enabled()) {
             Some(dir) => match logger.attach_dir(&dir) {
-                Ok(path) => log::info!("VectorCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
+                Ok(path) => log::info!("{} {}, log file {}", ident.name, env!("CARGO_PKG_VERSION"), path.display()),
                 // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
                 Err(e) => log::warn!("no log file: {e}"),
             },
@@ -307,7 +325,7 @@ fn main() -> std::process::ExitCode {
             Ok(roots) => roots,
             Err(e) => {
                 log::error!("{e}");
-                eprintln!("vectorcraft: {e}");
+                eprintln!("{}: {e}", ident.lower);
                 return std::process::ExitCode::FAILURE;
             }
         }
@@ -441,11 +459,11 @@ fn main() -> std::process::ExitCode {
     let run = |options: eframe::NativeOptions, app_creator: eframe::AppCreator<'_>| {
         #[cfg(target_os = "linux")]
         {
-            linux_stylus::run_native("VectorCraft", options, app_creator)
+            linux_stylus::run_native(ident.name, options, app_creator)
         }
         #[cfg(not(target_os = "linux"))]
         {
-            eframe::run_native("VectorCraft", options, app_creator)
+            eframe::run_native(ident.name, options, app_creator)
         }
     };
     let outcome = vectorcraft_engine::guard::catch_panic(|| {
@@ -465,8 +483,20 @@ fn main() -> std::process::ExitCode {
                 prefs_dir::attach_plugin_store(&mut session);
                 prefs_dir::attach_image_providers(&mut session);
                 let mut app = VectorcraftApp::new(session, services(cc.winit_window().cloned(), cc.egui_ctx.clone()));
-                app.set_startup_update_check(true);
+                if ident.update_check {
+                    app.set_startup_update_check(true);
+                } else {
+                    // No release feed of this app's own yet (StitchCraft): VectorCraft's would
+                    // offer VectorCraft, and installing it would replace this app.
+                    app.without_release_feed();
+                }
+                let first_start = saved.is_none();
                 load_prefs(&mut app, saved);
+                // The app's own workspace on its first start (StitchCraft docks Stitch Properties);
+                // after that the saved layout, as the person left it, comes back instead.
+                if first_start {
+                    identity::dock_first_start_panels(&mut app, ident);
+                }
                 safe_mode::after_start(&mut app, stopped);
                 // The saved PDF presets live in their own folder (also read by vectorcraft-cli),
                 // which takes over from the copy the preferences file used to hold.
@@ -523,15 +553,16 @@ fn main() -> std::process::ExitCode {
                             ""
                         };
                         app.status(format!(
-                            "The graphics processor tried first couldn't show the window, so VectorCraft started again on {summary}{hint}"
+                            "The graphics processor tried first couldn't show the window, so {} started again on {summary}{hint}",
+                            ident.name
                         ));
                     } else if let Some(crash) = &crash {
                         app.status(match crash {
                             gpu::Crash::Adapter { name, .. } => format!(
-                                "The last start of VectorCraft ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set"
+                                "The last start of {} ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set", ident.name
                             ),
                             gpu::Crash::Listing => format!(
-                                "The last start of VectorCraft ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set"
+                                "The last start of {} ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set", ident.name
                             ),
                         });
                     }
@@ -602,7 +633,7 @@ fn main() -> std::process::ExitCode {
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            log::error!("VectorCraft stopped: {e}");
+            log::error!("{} stopped: {e}", ident.name);
             std::process::ExitCode::FAILURE
         }
     }

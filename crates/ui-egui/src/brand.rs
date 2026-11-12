@@ -7,9 +7,43 @@ use egui::{Color32, Context, Id, Rect, TextureHandle, TextureOptions, Ui, pos2};
 /// 128 px: sharp at 44 pt on a 2× display, and the mipmaps keep 22 pt clean.
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.vectorcraft.png");
 
+/// The app this UI runs in, as people see it: VectorCraft, or a sibling app built on the same
+/// crates (StitchCraft) that names itself with [`set_app_brand`].
+#[derive(Debug, Clone, Copy)]
+pub struct AppBrand {
+    /// The window title, the app bar's title, the About box and the macOS app menu.
+    pub name: &'static str,
+    /// The brand mark: a 128 px PNG of the app icon, with its rounded corners.
+    pub mark_png: &'static [u8],
+}
+
+static BRAND: std::sync::OnceLock<AppBrand> = std::sync::OnceLock::new();
+
+/// Name the app this process runs, before its first frame. The first call wins: one process is
+/// one app.
+pub fn set_app_brand(brand: AppBrand) {
+    // A later call keeps the first brand: the window may already show it.
+    let _ = BRAND.set(brand);
+}
+
+fn brand() -> AppBrand {
+    BRAND.get().copied().unwrap_or(AppBrand { name: "VectorCraft", mark_png: ICON_PNG })
+}
+
+/// The app's name ([`set_app_brand`]; VectorCraft by default).
+pub fn app_name() -> &'static str {
+    brand().name
+}
+
+/// `text` with VectorCraft's name replaced by the running app's ([`app_name`]): for the few labels
+/// that name the app (About VectorCraft, Quit VectorCraft), in every language.
+pub(crate) fn rename(text: &str) -> String {
+    text.replace("VectorCraft", app_name())
+}
+
 /// The icon's pixels (one transparent pixel if it couldn't be decoded, which a test rules out).
 fn decode() -> egui::ColorImage {
-    match image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png) {
+    match image::load_from_memory_with_format(brand().mark_png, image::ImageFormat::Png) {
         Ok(img) => {
             let img = img.to_rgba8();
             egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw())

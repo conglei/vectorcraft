@@ -27,7 +27,7 @@ fn home_content(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // The welcome and the New / Open buttons sit centred, as PhotoCraft's Home screen does (#4684).
     ui.vertical_centered(|ui| {
-        ui.label(egui::RichText::new(tl!("Welcome to VectorCraft")).font(theme::semibold(26.0)).color(t.text));
+        ui.label(egui::RichText::new(crate::brand::rename(tl!("Welcome to VectorCraft"))).font(theme::semibold(26.0)).color(t.text));
         ui.add_space(4.0);
         ui.label(egui::RichText::new(tl!("Vector illustration — fast, open, scriptable.")).size(14.0).color(t.text_dim));
         ui.add_space(22.0);

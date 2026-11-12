@@ -71,6 +71,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("imageprep", Class::Layer(3)),
     // Hosted image models (HTTPS): above the engine, installed into a session by the apps.
     ("imagemodel", Class::Layer(6)),
+    // StitchCraft, the embroidery app: VectorCraft's launcher under its own name (L7).
+    ("stitchcraft", Class::Exempt),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
@@ -344,7 +346,7 @@ mod tests {
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["vectorcraft", "vectorcraft-cli", "vectorcraft-web", "xtask"] {
+        for app in ["vectorcraft", "vectorcraft-cli", "vectorcraft-web", "stitchcraft", "xtask"] {
             assert!(check(&[c(app, &[("egui", Normal, false), ("vectorcraft-ui-egui", Normal, true)])]).is_empty());
         }
     }

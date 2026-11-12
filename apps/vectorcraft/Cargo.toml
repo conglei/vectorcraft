@@ -6,6 +6,16 @@ license.workspace = true
 publish = false
 default-run = "vectorcraft"
 
+# The desktop launcher, shared with StitchCraft (apps/stitchcraft), which starts it under its own
+# name; `src/main.rs` starts it as VectorCraft.
+[lib]
+name = "vectorcraft_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vectorcraft"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

@@ -9,10 +9,18 @@ mod profile;
 
 /// The settings file `ui.json` of the app `name`: in a folder named `name` in ~/Library/Application
 /// Support (macOS) or %APPDATA% (Windows), or `lower` in $XDG_CONFIG_HOME or ~/.config (Linux and
-/// BSD).
+/// BSD). Callers name VectorCraft or its former name, DrawCraft; VectorCraft's folder is the one
+/// [`set_app_folder`] named instead, when it was called (StitchCraft keeps its own settings).
 pub fn prefs_path_for(name: &str, lower: &str) -> Option<PathBuf> {
     let legacy = name == "DrawCraft" || lower == "drawcraft";
     profile::prefs_path(legacy)
+}
+
+/// Keep this process's settings, and everything kept next to them, in the folder of the app `name`
+/// (`lower` on Linux and the BSDs) instead of VectorCraft's. Call before anything reads them.
+#[allow(dead_code, reason = "vectorcraft-cli shares this file and keeps VectorCraft's settings")]
+pub fn set_app_folder(name: &'static str, lower: &'static str) {
+    profile::set_app(name, lower);
 }
 
 /// Have the font scans read VectorCraft's own Fonts folder, next to the settings, which

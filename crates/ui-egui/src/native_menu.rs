@@ -316,7 +316,9 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
             None => Some(sc),
         }
     };
-    let hide = Item::system(HIDE, "Hide VectorCraft", key("Ctrl+Cmd+H", "Hide"), lang);
+    // The items that name the app name the running one (StitchCraft too).
+    let mut hide = Item::system(HIDE, "Hide VectorCraft", key("Ctrl+Cmd+H", "Hide"), lang);
+    hide.label = crate::brand::rename(&hide.label);
     let hide_others = Item::system(HIDE_OTHERS, "Hide Others", key("Cmd+Alt+H", "Hide Others"), lang);
     let minimize = Item::system(MINIMIZE, "Minimize", key("Ctrl+Cmd+M", "Minimize"), lang);
 
@@ -333,7 +335,10 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
     bar.menus.retain(|m| m.role != MenuRole::App);
 
     let mut app = Vec::new();
-    app.extend(about.map(Node::Item));
+    app.extend(about.map(|mut a| {
+        a.label = crate::brand::rename(&a.label);
+        Node::Item(a)
+    }));
     app.push(Node::Separator);
     app.extend(settings.map(|s| Node::Submenu { label: tr(lang, "Settings").into(), children: settings_pages(&s, lang) }));
     app.extend(language);
@@ -346,10 +351,10 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
     app.extend([Node::Item(hide), Node::Item(hide_others), Node::Standard(Standard::ShowAll), Node::Separator]);
     // Quit is File › Exit in the window; in the App menu it reads as a Mac Quit item.
     app.extend(quit.map(|mut q| {
-        q.label = tr(lang, "Quit VectorCraft").into();
+        q.label = crate::brand::rename(tr(lang, "Quit VectorCraft"));
         Node::Item(q)
     }));
-    bar.menus.insert(0, Menu { title: APP_NAME.into(), role: MenuRole::App, children: app });
+    bar.menus.insert(0, Menu { title: crate::brand::rename(APP_NAME), role: MenuRole::App, children: app });
 
     if let Some(window) = bar.menus.iter_mut().find(|m| m.role == MenuRole::Window) {
         let mut children = vec![Node::Item(minimize), Node::Standard(Standard::Zoom), Node::Separator];
