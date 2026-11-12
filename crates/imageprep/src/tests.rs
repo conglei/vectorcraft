@@ -129,3 +129,33 @@ fn a_reshaped_result_is_noted() {
     let l = likeness(&photo, &square);
     assert!(l.notes.iter().any(|n| n.contains("not the photo's shape")), "{l:?}");
 }
+
+#[test]
+fn the_synthetic_fur_runs_the_way_it_says() {
+    let (w, h) = (240, 180);
+    let fur = synthetic_fur(w, h, 3);
+    assert_eq!(fur, synthetic_fur(w, h, 3));
+    assert_ne!(fur, synthetic_fur(w, h, 4));
+    let (eye, _) = synthetic_fur_eye(w, h);
+    assert_eq!(fur.pixel(eye.0 as u32, eye.1 as u32), [235, 228, 210, 255]);
+    let field = vectorcraft_trace::direction_field(&fur, &vectorcraft_trace::FieldParams::default()).unwrap();
+    let mut checked = 0;
+    for r in 0..field.rows {
+        for c in 0..field.cols {
+            let (x, y) = ((c as f64 + 0.5) * field.cell, (r as f64 + 0.5) * field.cell);
+            let Some(want) = synthetic_fur_angle(w, h, x, y, 24.0) else { continue };
+            if x < 12.0 || y < 12.0 || x > f64::from(w) - 12.0 || y > f64::from(h) - 12.0 {
+                continue;
+            }
+            let (got, coh) = field.cell_at(c, r).unwrap();
+            let d = (got - want).rem_euclid(180.0);
+            assert!(d.min(180.0 - d) < 10.0, "cell {c},{r}: {got} not {want}");
+            assert!(coh > 0.3, "cell {c},{r}: coherence {coh}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 150, "{checked}");
+    assert_eq!(synthetic_fur_angle(w, h, 30.0, 30.0, 4.0), Some(FUR_ANGLES.0));
+    assert_eq!(synthetic_fur_angle(w, h, 200.0, 150.0, 4.0), Some(FUR_ANGLES.1));
+    assert_eq!(synthetic_fur_angle(w, h, 121.0, 30.0, 4.0), None);
+}

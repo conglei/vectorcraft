@@ -100,7 +100,7 @@ fn save_extensions() -> Vec<&'static str> {
 }
 
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
-    let writes_file = matches!(name, "screenshot" | "save_file" | "export" | "export_stitch");
+    let writes_file = matches!(name, "screenshot" | "save_file" | "export" | "export_stitch" | "photo_to_stitches");
     let read_only = read_only && !writes_file;
     json!({
         "name": name,
@@ -448,6 +448,40 @@ pub fn tool_definitions() -> Vec<Value> {
                     }
                     props
                 },
+                &[],
+            ),
+            false,
+        ),
+        tool(
+            "photo_to_stitches",
+            "Photo to stitches",
+            "Turn a photo (a pet's fur, say) into an embroidery design in a new document: thread colours from a chart, colour regions, a direction field from the photo, and fills whose rows follow it (or straight tatami rows at each region's mean direction), sewn colour by colour. It runs the photo.toStitches command; with `path` it then writes the stitch file with document.export (format from the extension: dsb or exp, else dst). Returns the stitch, jump, trim and colour-change counts, the thread colours with their coverage, the regions and warnings. Works on this computer unless provider is gemini (or the photoProvider preference chooses it), which sends the photo to Google's Gemini API. See run_command photo.palette, photo.regions and photo.directionField for the stages alone.",
+            obj(
+                json!({
+                    "file": string("The photo: a PNG, JPEG, WebP, GIF, TIFF or BMP file, at most 64 MB"),
+                    "image": string("The photo as base64, instead of file"),
+                    "provider": {"type": "string", "enum": ["none", "nomodel", "gemini"], "description": "Prepare the photo first: none (as it is), nomodel (on this computer) or gemini (sends it to Google's Gemini API, which cuts the subject out). Default: the photoProvider preference (nomodel unless chosen)"},
+                    "colors": {"type": "integer", "minimum": 7, "maximum": 16, "description": "Thread colours (default 8)"},
+                    "chart": string("Thread chart id or name (stitch.threads.list; default the active chart, else the starter set)"),
+                    "maxSide": num("Pixels the photo is worked at, 64–2048 (default 600)"),
+                    "widthMm": num("Design width in mm, 10–1000 (default 100)"),
+                    "heightMm": num("Design height in mm, 10–1000 (with widthMm: fits within both)"),
+                    "fill": {"type": "string", "enum": ["field", "tatami"], "description": "field (default): rows follow the photo's direction field; tatami: straight rows at each region's mean direction, regions left editable"},
+                    "spacing": num("mm between rows, 0.2–5 (default 0.4)"),
+                    "minLength": num("Shortest stitch, mm 0.5–12 (default 2)"),
+                    "maxLength": num("Longest stitch, mm 0.5–12 (default 4): lengths are random between the two"),
+                    "feather": num("mm 0–10 (default 0): row ends pulled in by a random amount up to this, a ragged fur edge"),
+                    "featherEdges": {"type": "string", "enum": ["both", "start", "end"], "description": "Which row ends are feathered (default both)"},
+                    "seed": {"type": "integer", "minimum": 0, "description": "Random seed (default 1): the same seed sews the same"},
+                    "minArea": num("mm², 0–10000 (default 4): smaller patches join their neighbours"),
+                    "detail": num("0–100 (default 40): how closely region outlines follow the photo"),
+                    "blur": num("Pixels, 0–8 (default 1.5): softens fine texture before colours are chosen"),
+                    "cell": num("Direction field cell, mm 0.5–50 (default 2)"),
+                    "smoothing": num("Direction field smoothing, mm 0.2–100 (default 2)"),
+                    "maxStitches": {"type": "integer", "minimum": 1, "maximum": 1_000_000, "description": "More stitches is an error (default 100000)"},
+                    "path": string("Write the stitch file here (omit to only build the document)"),
+                    "format": {"type": "string", "enum": ["dst", "dsb", "exp"], "description": "The stitch file format (default: from the path's extension, else dst)"},
+                }),
                 &[],
             ),
             false,

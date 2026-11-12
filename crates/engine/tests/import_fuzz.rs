@@ -11,7 +11,8 @@
 //! faces), nor scripts written for the reference app checked without running them (garbage,
 //! generated script text and mutated scripts), nor embroidery stitch files (DST and EXP: garbage,
 //! with and without a DST header, and mutated files) read directly or opened, nor thread charts (CSV
-//! and JSON: garbage, chart-shaped text and mutated charts) imported and used to match a design's threads.
+//! and JSON: garbage, chart-shaped text and mutated charts) imported and used to match a design's threads,
+//! nor the pictures the photo stitch commands read (garbage, odd sizes and mutated PNGs) turned into stitches.
 //!
 //! `PROPTEST_CASES=20000 cargo test -p vectorcraft-engine --test import_fuzz` runs a deeper search.
 // Integration tests: unwrapping and panicking on failure is fine here, unlike in shipped code (AGENTS.md › Robustness).
@@ -7308,5 +7309,71 @@ proptest! {
         prop_assert_eq!(paths, 1, "{:?}", notes);
         prop_assert!(notes.iter().any(|n| n.contains("graphs come in as plain art")), "{:?}", notes);
         prop_assert!(!notes.iter().any(|n| n.contains("art this can't read")), "the records aren't art: {:?}", notes);
+    }
+}
+
+// ---------- photo stitch: the images the photo.* commands read ----------
+
+/// A small picture of fur, PNG, for mutation.
+fn fur_png() -> Vec<u8> {
+    vectorcraft_imageprep::encode_png(&vectorcraft_imageprep::synthetic_fur(40, 30, 7)).unwrap()
+}
+
+/// `bytes` given as the `image` of every photo stitch stage; whatever reads is then sewn.
+fn survive_photo(what: &str, bytes: &[u8], extra: &Value) -> Result<(), TestCaseError> {
+    catch_quiet(|| {
+        let mut s = vectorcraft_engine::Session::new();
+        let mut p = json!({"image": vectorcraft_format::base64_encode(bytes), "provider": "none", "widthMm": 20});
+        if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        for cmd in ["photo.palette", "photo.directionField", "photo.regions", "photo.toStitches"] {
+            if let Ok(r) = no_panic(s.execute(cmd, &p))
+                && cmd == "photo.toStitches"
+            {
+                assert!(r["stitches"].as_u64().is_some(), "{r}");
+                let _ = no_panic(s.execute("stitch.info", &json!({})));
+            }
+        }
+    })
+    .map_err(|msg| TestCaseError::fail(format!("{what}: {msg}")))
+}
+
+#[test]
+fn odd_pictures_are_sewn_or_refused() {
+    let png = |w: u32, h: u32, px: [u8; 4]| vectorcraft_imageprep::encode_png(&vectorcraft_imageprep::Raster::from_fn(w, h, |_, _| px)).unwrap();
+    for (what, bytes) in [
+        ("one pixel", png(1, 1, [200, 100, 50, 255])),
+        ("a line", png(1, 300, [20, 40, 60, 255])),
+        ("all transparent", png(30, 20, [0, 0, 0, 0])),
+        ("flat", png(50, 40, [128, 128, 128, 255])),
+        ("fur", fur_png()),
+    ] {
+        survive_photo(what, &bytes, &json!({})).unwrap();
+    }
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn photo_stitch_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..600)) {
+        survive_photo("garbage", &bytes, &json!({}))?;
+    }
+
+    #[test]
+    fn photo_stitch_mutated_pictures_never_panic(
+        cut in 0usize..4000, edits in prop::collection::vec((any::<usize>(), any::<u8>()), 0..8),
+        spacing in 0.2f64..2.0, cell in 0.5f64..10.0, feather in 0.0f64..10.0, colors in 7u32..17,
+    ) {
+        let mut bytes = fur_png();
+        bytes.truncate(cut.max(8));
+        let n = bytes.len();
+        for (at, b) in edits {
+            if let Some(x) = bytes.get_mut(at % n) {
+                *x = b;
+            }
+        }
+        survive_photo("mutated", &bytes, &json!({"spacing": spacing, "cell": cell, "feather": feather, "colors": colors}))?;
     }
 }

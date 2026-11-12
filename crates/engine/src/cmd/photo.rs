@@ -131,30 +131,26 @@ fn options(p: &Value) -> Result<PrepareOptions> {
     })
 }
 
-/// The photo at `path`, decoded (scaled down to 64 megapixels when larger, up to 192).
-fn read_photo(path: &str) -> Result<Raster> {
+/// The photo at `path`, decoded (scaled down to 64 megapixels when larger, up to 192). Errors
+/// name `cmd`.
+pub(crate) fn read_photo(path: &str, cmd: &str) -> Result<Raster> {
     let bytes = super::fileio::read_file_head(path, MAX_PHOTO_BYTES + 1)?;
     if bytes.len() > MAX_PHOTO_BYTES {
-        return Err(bad(PREPARE, format!("{path} is larger than {} MB", MAX_PHOTO_BYTES >> 20)));
+        return Err(bad(cmd, format!("{path} is larger than {} MB", MAX_PHOTO_BYTES >> 20)));
     }
-    Raster::decode_to_fit(&bytes).map_err(|e| bad(PREPARE, format!("{path}: {e}")))
+    Raster::decode_to_fit(&bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
-fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
-    let file = text_param(p, "file", PREPARE)?.ok_or_else(|| bad(PREPARE, "file: the photo to prepare"))?;
-    // `path`, as in stitch.preview and the exports: where the result is written.
-    let out_path = text_param(p, "path", PREPARE)?;
-    let o = options(p)?;
-    let threshold = number_or(p, "likenessThreshold", LIKENESS_THRESHOLD, PREPARE)?;
-    if !(0.0..=1.0).contains(&threshold) {
-        return Err(bad(PREPARE, format!("likenessThreshold must be 0–1, not {threshold}")));
-    }
+/// The provider `p`'s `provider` names, or the preference's ([`default_provider`]), with the
+/// warnings photo.prepare gives about the choice. A provider that isn't installed or can't run is
+/// an error naming `cmd`.
+pub(crate) fn chosen_provider(s: &Session, p: &Value, cmd: &str) -> Result<(Arc<dyn ImageProvider>, Vec<String>)> {
     let mut warnings = Vec::new();
-    let provider = match text_param(p, "provider", PREPARE)? {
+    let provider = match text_param(p, "provider", cmd)? {
         Some(name) => {
             let names: Vec<String> = s.photo.all().iter().map(|p| p.name().to_string()).collect();
-            let found = s.photo.find(name).ok_or_else(|| bad(PREPARE, format!("provider `{name}`: {}", names.join(" or "))))?;
-            found.ready().map_err(|why| bad(PREPARE, why))?;
+            let found = s.photo.find(name).ok_or_else(|| bad(cmd, format!("provider `{name}`: {}", names.join(" or "))))?;
+            found.ready().map_err(|why| bad(cmd, why))?;
             found
         }
         None => {
@@ -166,7 +162,20 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if provider.name() == NO_MODEL && s.photo.all().iter().any(|q| q.sends_off_machine() && q.ready().is_ok()) {
         warnings.push("prepared without a model, so the background is still there: pass provider: gemini, or set photoProvider to gemini, to have it removed (the photo is then sent to Google's Gemini API)".to_string());
     }
-    let photo = read_photo(file)?;
+    Ok((provider, warnings))
+}
+
+fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
+    let file = text_param(p, "file", PREPARE)?.ok_or_else(|| bad(PREPARE, "file: the photo to prepare"))?;
+    // `path`, as in stitch.preview and the exports: where the result is written.
+    let out_path = text_param(p, "path", PREPARE)?;
+    let o = options(p)?;
+    let threshold = number_or(p, "likenessThreshold", LIKENESS_THRESHOLD, PREPARE)?;
+    if !(0.0..=1.0).contains(&threshold) {
+        return Err(bad(PREPARE, format!("likenessThreshold must be 0–1, not {threshold}")));
+    }
+    let (provider, mut warnings) = chosen_provider(s, p, PREPARE)?;
+    let photo = read_photo(file, PREPARE)?;
     let prepared = provider.prepare(&photo, &o).map_err(|e| bad(PREPARE, e))?;
     let (w, h) = (prepared.image.width, prepared.image.height);
     if out_path.is_none() && u64::from(w) * u64::from(h) > MAX_INLINE_PIXELS {
@@ -199,6 +208,8 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     }
     Ok(out)
 }
+
+pub(crate) mod stitches;
 
 #[cfg(test)]
 mod tests;

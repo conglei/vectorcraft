@@ -257,6 +257,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
             }
             j(exec(b, "document.export", Value::Object(params))?)
         }
+        "photo_to_stitches" => j(photo_to_stitches(b, a)?),
         "add_text" => j(add_text(b, a)?),
         "apply_effect" => {
             let Some(effect) = a.get("effect").and_then(Value::as_str) else {
@@ -303,6 +304,36 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
 /// The named `export` arguments passed on to `document.export`. `scale` is raster pixels per
 /// point, so only a raster format gets it: DXF's own (drawing units per unit, given in `options`)
 /// would resize the drawing and leave its units unset.
+/// `photo_to_stitches`: `photo.toStitches`, then, with `path`, `document.export` of the stitch file
+/// (the format from `format`, else the path's extension: dsb or exp, else dst).
+fn photo_to_stitches(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
+    let mut params = a.clone();
+    let out = params.remove("path");
+    let format = params.remove("format");
+    if let Some(file) = a.get("file").and_then(Value::as_str) {
+        params.insert("file".into(), json!(absolute_path(b, file)?));
+    }
+    let mut r = exec(b, "photo.toStitches", Value::Object(params))?;
+    let Some(path) = out.as_ref().and_then(Value::as_str) else { return Ok(r) };
+    let path = absolute_path(b, path)?;
+    let format = match format.as_ref().and_then(Value::as_str) {
+        Some(f) => f.to_string(),
+        None => {
+            let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+            match ext.as_deref() {
+                Some("exp") => "exp".into(),
+                Some("dsb") => "dsb".into(),
+                _ => "dst".into(),
+            }
+        }
+    };
+    let written = exec(b, "document.export", json!({"path": path, "format": format}))?;
+    r["path"] = json!(path);
+    r["format"] = json!(format);
+    r["exportWarnings"] = written.get("warnings").cloned().unwrap_or(json!([]));
+    Ok(r)
+}
+
 fn named_export_params(a: &Args) -> &'static [&'static str] {
     let format = writable_format(a.get("format").and_then(Value::as_str), a.get("path").and_then(Value::as_str));
     if format.is_ok_and(|f| f.raster) {

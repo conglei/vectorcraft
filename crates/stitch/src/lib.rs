@@ -7,6 +7,7 @@
 
 mod calibration;
 mod fill;
+mod fill_field;
 mod from_doc;
 mod plan;
 mod prepare;
@@ -24,6 +25,7 @@ mod tests_props;
 
 pub use calibration::{CalibrationPart, calibration};
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
+pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
     DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, StrokeOptions, StrokeType, from_document,
 };

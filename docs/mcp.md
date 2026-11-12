@@ -245,6 +245,19 @@ and `path` (where it was written) or `pngBase64`; `run_command photo.providers` 
 only; `gemini` sends the photo to Google's Gemini API and runs only when named (`provider: "gemini"`) or chosen
 by the `photoProvider` preference, with `GEMINI_API_KEY` set where the server runs.
 
+`photo_to_stitches {file | image, provider?, colors?, chart?, widthMm?, heightMm?, fill?: field|tatami, spacing?,
+minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, detail?, blur?, cell?, smoothing?, maxStitches?,
+path?, format?}` turns a photo into a stitch design in a new document (the `photo.toStitches` command): thread
+colours, colour regions, a direction field from the photo and fills whose rows follow it, sewn colour by colour;
+with `path` it then writes the stitch file (`document.export`, the format from the extension unless `format` is
+given) and adds `path`, `format` and `exportWarnings`. It returns `{document, fill, provider, widthMm, heightMm,
+chart, colors: [{rgb, coverage, regions, brand, code, name, thread, deltaE}], regions, stitches, jumps, trims,
+colorChanges, warnings}`. The stages run alone through `run_command`: `photo.palette` (thread colours and coverage),
+`photo.regions` (editable filled regions set to sew as tatami at their direction, one undo step),
+`photo.directionField` (the field as JSON, `path` or `preview` for a PNG) and `photo.syntheticFur {path?}` (a test
+picture made in code). Only `provider: "gemini"` (or the `photoProvider` preference) sends the photo off the
+computer.
+
 Per object, `run_command stitch.setType {type: auto|none|run|satin|tatami|manual, ids?}`, `stitch.setParams
 {params: {fillAngle?, fillSpacing?, …}, ids?}` and `stitch.clear {ids?}` set how paths, compound paths and groups are
 sewn (one undo step each; groups pass theirs down), and `stitch.props {ids?, options?}` reads what each sews with.
@@ -490,6 +503,7 @@ opens the picker through `run_command` with the remote backend.
 | `text_wrap` | `{ids?, offset?, invert?, release?}` | Area type below the objects (same layer) flows around them. |
 | `stitch_info` | `{format?, machine?, mode?, stitchLength?, minStitch?, maxStitch?, locks?, jumpsPerTrim?, trimBeforeColorChange?, start?, returnToStart?, name?, selectedOnly?}` | The `stitch.info` command: what a DST or EXP export with the same options would write, without writing a file (see [Embroidery](#embroidery)). |
 | `export_stitch` | `{path?, format?, …the stitch_info options}` | A DST or EXP stitch file, by `document.export`; `format` defaults to the path's extension (`.exp` is EXP), else DST. Without `path` the bytes come back as `dataBase64`. See [Embroidery](#embroidery). |
+| `photo_to_stitches` | `{file? \| image?, provider?, colors?, chart?, widthMm?, heightMm?, fill?, spacing?, minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, detail?, blur?, cell?, smoothing?, maxStitches?, path?, format?}` | The `photo.toStitches` command: a photo to a stitch design in a new document whose fill rows follow the photo's direction field; with `path`, the stitch file written too. See [Embroidery](#embroidery). |
 | `undo` / `redo` | `{}` | Many calls that change nothing record no undo step, for example `object.align` with nothing to move, `object.move` by 0 without `copy` and `object.showAll` with nothing hidden. `undo` (`edit.undo`) after such a call undoes the step before it. `inspect_document` lists the undo steps as `history`. `run_command` with `edit.clearHistory` removes every undo and redo step of the active document and returns `{cleared}`, the number of steps removed; the document stays as it is, and the command records no undo step. `run_command` with `edit.newDocumentFromState` and `{index?, created?}` makes a new document holding the art as it was at that state and makes it the active document, and returns `{index, title}`. `index` is a row of the History panel, with 0 the oldest state kept, and an omitted `index` uses the current state. An `index` that names no state is an error and changes nothing. `created` is File Info's created date in Unix seconds or null, and defaults to now. The new document takes the next `Untitled-N` name, is marked unsaved, has nothing selected and has no steps to undo or redo. It is out of symbol, opacity-mask and pattern editing, and the art drawn in a pattern's tile is stored in the pattern, as `object.pattern.done` stores it. The source document and its steps stay as they are, except that typing or a drag in progress is first kept as a step. While the Type tool edits type, `undo` and `redo` put its caret, with no characters selected, at the end of the text the step changed: after the text it puts back or retypes, or where the text it takes out was. A step that changes no characters, such as a formatting change, leaves the caret and the selection where they are. |
 
 For example, create editable Japanese area type with the engine's vertical writing mode:
@@ -5467,6 +5481,7 @@ Calibration Design and Export Stitch File… (Export As on DST, then Stitch File
 |---|---|
 | `stitch_info` | The `stitch.info` command. Returns `{stitches, jumps, trims, colorChanges, records, widthMm, heightMm, threads: [{rgb, stitches, lengthMm}], warnings}` for the file an export with the same options would write; a document with no stroked paths is an error. |
 | `export_stitch` | Writes the file: `document.export` with `format` `dst`, `dsb` or `exp` (from the extension when not given) and the same options, so the bytes are those of `export` for that format. |
+| `photo_to_stitches` | `photo.toStitches`: a photo to a fill design in a new document, the rows following the photo's direction field (or tatami at each region's mean direction), and with `path` the stitch file. Its stages are `run_command photo.palette`, `photo.regions` and `photo.directionField`. |
 | `run_command stitch.calibration` | Adds a 100 mm test piece for a first stitch-out, as one group of paths in three thread colours; one undo step. `{x?, y?}` puts its top-left corner. |
 | `run_command stitch.preview` | Draws the stitch plan over the art. Added by another change: use it when `list_commands` with `filter: "stitch"` lists it. |
 | `run_command stitch.threads.import` / `.list` / `.use` | Thread charts: `import {path? \| data? \| dataBase64?, name?, user?}` reads a CSV (`code` and `hex` columns, optionally `brand`, `name`, `weight`) or JSON chart; `list {chart?}` shows the starter set and the imported charts; `use {name}` makes one active, so `stitch.info` names the nearest thread of it for each colour (`brand`, `code`, `name`, `deltaE`). |

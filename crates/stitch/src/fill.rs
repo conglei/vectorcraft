@@ -77,7 +77,7 @@ struct Span {
 }
 
 /// The region in row coordinates, with its edges indexed by band.
-struct Region {
+pub(crate) struct Region {
     rings: Vec<Vec<P>>,
     /// Cumulative edge lengths per ring: `cum[r][i]` is the length up to vertex `i`.
     cum: Vec<Vec<f64>>,
@@ -90,7 +90,7 @@ struct Region {
 }
 
 /// Row direction and row normal for `angle` degrees, in page coordinates (y down).
-fn frame(angle: f64) -> (P, P) {
+pub(crate) fn frame(angle: f64) -> (P, P) {
     let a = angle.to_radians();
     ((a.cos(), -a.sin()), (a.sin(), a.cos()))
 }
@@ -118,7 +118,7 @@ fn cross(a: P, b: P) -> f64 {
 }
 
 impl Region {
-    fn new(rings_mm: &[Vec<P>], rule: FillRule, f: (P, P), spacing: f64) -> Result<Option<Region>, String> {
+    pub(crate) fn new(rings_mm: &[Vec<P>], rule: FillRule, f: (P, P), spacing: f64) -> Result<Option<Region>, String> {
         let mut rings: Vec<Vec<P>> = vec![];
         for ring in rings_mm {
             let mut r: Vec<P> = Vec::with_capacity(ring.len());
@@ -203,7 +203,7 @@ impl Region {
     }
 
     /// Whether `q` lies inside the region or on its outline.
-    fn inside(&self, q: P) -> bool {
+    pub(crate) fn inside(&self, q: P) -> bool {
         let mut w = 0i64;
         for e in self.band(q.1) {
             if seg_dist(q, e.a, e.b) < 1e-6 {
@@ -221,7 +221,7 @@ impl Region {
     }
 
     /// Whether the straight run `p`–`q` stays inside: it crosses no edge and its middle is inside.
-    fn clear(&self, p: P, q: P) -> bool {
+    pub(crate) fn clear(&self, p: P, q: P) -> bool {
         let r = (q.0 - p.0, q.1 - p.1);
         let (lo, hi) = (p.1.min(q.1), p.1.max(q.1));
         let mut v = (lo / self.spacing).floor() * self.spacing;
@@ -353,7 +353,7 @@ fn unit_normal(a: P, b: P) -> P {
     if l < 1e-12 { (0.0, 0.0) } else { (-d.1 / l, d.0 / l) }
 }
 
-fn seg_dist(q: P, a: P, b: P) -> f64 {
+pub(crate) fn seg_dist(q: P, a: P, b: P) -> f64 {
     let d = (b.0 - a.0, b.1 - a.1);
     let l2 = d.0 * d.0 + d.1 * d.1;
     let t = if l2 > 0.0 { (((q.0 - a.0) * d.0 + (q.1 - a.1) * d.1) / l2).clamp(0.0, 1.0) } else { 0.0 };
@@ -361,7 +361,7 @@ fn seg_dist(q: P, a: P, b: P) -> f64 {
 }
 
 /// Points from `a` (exclusive) to `b` (inclusive), no step longer than `step`.
-fn straight(out: &mut Vec<P>, a: P, b: P, step: f64) {
+pub(crate) fn straight(out: &mut Vec<P>, a: P, b: P, step: f64) {
     let l = dist(a, b);
     let n = if step > 0.0 && l > step { (l / step).ceil().min(1e6) as usize } else { 1 };
     for i in 1..=n {

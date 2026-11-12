@@ -124,3 +124,29 @@ fn the_stitch_out_prompt_names_the_tools() {
     assert!(at("stitch_info with") < at("export_stitch with"), "{text}");
     assert!(crate::prompts::get("stitch-out", &json!({})).is_err(), "the design is required");
 }
+
+#[test]
+fn photo_to_stitches_runs_the_command_and_writes_the_file() {
+    let tools = tool_definitions();
+    let tool = tools.iter().find(|t| t["name"] == "photo_to_stitches").unwrap();
+    assert_eq!(tool["annotations"]["readOnlyHint"], false, "it opens a document and writes a file");
+    let props = tool["inputSchema"]["properties"].as_object().unwrap();
+    for key in ["file", "image", "provider", "colors", "widthMm", "fill", "spacing", "minLength", "maxLength", "feather", "seed", "path", "format"] {
+        assert!(props.contains_key(key), "{key}");
+    }
+    let mut h = Headless::new();
+    let fur = tmp("fur.png");
+    h.call("engine.execute", json!({"command": "photo.syntheticFur", "params": {"path": fur, "width": 160, "height": 120}})).unwrap();
+    let args = json!({"file": fur, "provider": "none", "widthMm": 50});
+    let direct = h.call("engine.execute", json!({"command": "photo.toStitches", "params": args})).unwrap();
+    let dst = tmp("fur.dst");
+    let mut with_path = args.clone();
+    with_path["path"] = json!(dst);
+    let r = text(&call_tool(&mut h, "photo_to_stitches", &with_path));
+    assert_eq!(r["stitches"], direct["stitches"], "{r}");
+    assert_eq!((r["format"].as_str(), r["path"].as_str()), (Some("dst"), Some(dst.as_str())));
+    assert!(std::fs::read(&dst).unwrap().starts_with(b"LA:"));
+    // A bad option is a tool error.
+    let r = call_tool(&mut h, "photo_to_stitches", &json!({"file": fur, "fill": "satin"}));
+    assert!(r.is_error && r.content[0]["text"].as_str().unwrap().contains("fill"), "{r:?}");
+}

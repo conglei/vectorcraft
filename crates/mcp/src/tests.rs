@@ -210,6 +210,7 @@ fn tool_schemas_are_valid() {
         "export",
         "stitch_info",
         "export_stitch",
+        "photo_to_stitches",
         "undo",
         "redo",
     ] {
