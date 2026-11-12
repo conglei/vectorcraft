@@ -119,7 +119,11 @@ pub(crate) fn fields(app: &VectorcraftApp, format: &str, params: &Value) -> Map<
 /// The `document.export` / `stitch.info` params the fields stand for: what is left to the engine
 /// (a null, and an empty name) is left out.
 pub(crate) fn export_params(d: &Dialog) -> Value {
-    let mut p = super::form::params(d);
+    export_params_of(super::form::params(d))
+}
+
+/// [`export_params`] for the fields as remembered (`UiState::stitch_options`).
+pub(crate) fn export_params_of(mut p: Value) -> Value {
     if let Some(o) = p.as_object_mut() {
         o.retain(|_, v| !v.is_null());
         if o.get("name").and_then(Value::as_str).is_some_and(|n| n.trim().is_empty()) {

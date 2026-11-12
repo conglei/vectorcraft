@@ -1430,6 +1430,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{path?, useArtboards?, range?, …document.exportEps options} open EPS Options (dialog `epsOptions`: fields = these options over the ones used last); OK checks them, remembers them and writes path (else asks). Export As… → EPS opens it too",
     ),
     (
+        "ui.stitchPreview",
+        "Stitch Preview",
+        "",
+        "{view?: realistic (lit thread) | density (cells coloured by thread coverage), needles?: (a dot at each needle point), jumps?: (jumps as dashed lines, rings at trims, colour changes and stops), speed?: 100 (playback, stitches per second, 1–100000), position?: (the stitches shown, a count from 0; null or \"end\": all of them), playing?: (play or pause the playback; playing from position, or from the start when it is at the end)} set the Stitch Preview panel (ui.inspect: ui.stitch_preview), show it and answer what it shows: the plan is built off the UI thread from the document and the Stitch File Options last used (machine generic when they name none), a quarter of a second after the last change, so the answer may be status `updating` first → {panel, status: ready|updating|error|none, view, needles, jumps, speed, position (null: all), playing, stitches, colorChanges, trims, jumpCount, widthMm, heightMm, blocks, warnings, image?: {width, height} (at most 4096 a side), message? (why there is no preview)}",
+    ),
+    (
         "ui.stitchInfo",
         "Stitch Info…",
         "",

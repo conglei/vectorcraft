@@ -513,6 +513,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
             "Embroidery",
             vec![
                 c("Stitch Info…", "ui.stitchInfo"),
+                panel("Stitch Preview", crate::panels::stitch_preview::ID),
                 panel("Stitch Properties", crate::panels::stitch_props::ID),
                 c("Calibration Design", "stitch.calibration"),
                 Sep,
@@ -678,6 +679,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 panel("Properties", "properties"),
                 panel("Separations Preview", "separations"),
                 panel("Stroke", "stroke"),
+                panel("Stitch Preview", crate::panels::stitch_preview::ID),
                 panel("Stitch Properties", crate::panels::stitch_props::ID),
                 panel("SVG Interactivity", crate::panels::svg_interactivity::ID),
                 panel("Swatches", "swatches"),

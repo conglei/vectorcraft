@@ -204,6 +204,7 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
     ("colorThemes", "Color Themes", "sun"),
     (crate::panels::color_wheel::ID, "Color Wheel", "circle"),
     (crate::panels::links::ID, "Links", "link"),
+    (crate::panels::stitch_preview::ID, "Stitch Preview", "eye"),
     (crate::panels::stitch_props::ID, "Stitch Properties", "pen-tool"),
     (crate::panels::asset_export::ID, "Asset Export", "share-2"),
     (crate::panels::css_properties::ID, "CSS Properties", "globe"),
@@ -626,6 +627,9 @@ pub struct UiState {
     /// Flattener Preview panel: highlight, overprints, preset and options (`ui.flattenerPreview`).
     #[serde(default)]
     pub flattener_preview: crate::panels::flattener_preview::Settings,
+    /// Stitch Preview panel: view, needle points, jumps and playback speed (`ui.stitchPreview`).
+    #[serde(default)]
+    pub stitch_preview: crate::panels::stitch_preview::Settings,
     /// Color Guide panel: Limit to Library, a swatch library id, "document" (the document's
     /// swatches) or "" (none) (`ui.colorGuideLimit`).
     #[serde(default)]
@@ -1092,6 +1096,7 @@ impl Default for UiState {
             color_guide: Default::default(),
             library_panels: vec![],
             flattener_preview: Default::default(),
+            stitch_preview: Default::default(),
             color_guide_limit: String::new(),
             color_guide_base: None,
             align_to: Default::default(),
