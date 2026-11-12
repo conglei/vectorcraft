@@ -21,8 +21,9 @@ const STITCHCRAFT: AppIdentity = AppIdentity {
     icon_macos_png: include_bytes!("../../../assets/app-icon/stitchcraft-macos-512.png"),
     icon_png: include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.stitchcraft.png"),
     brand_png: include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.stitchcraft.png"),
-    // The Stitch Properties panel (`vectorcraft_ui_egui::panels::stitch_props::ID`).
-    first_start_panels: &["stitchProps"],
+    // The Stitch Properties and Stitch Preview panels (`vectorcraft_ui_egui::panels::stitch_props::ID`
+    // and `panels::stitch_preview::ID`), each docked under Properties in that order.
+    first_start_panels: &["stitchProps", "stitchPreview"],
 };
 
 fn main() -> std::process::ExitCode {
@@ -42,14 +43,14 @@ mod tests {
         const { assert!(!STITCHCRAFT.update_check) };
     }
 
-    /// The window title and the app bar name StitchCraft, and every panel of its first start opens.
+    /// The window title and the app bar name StitchCraft, and the panels of its first start open in order.
     #[test]
     fn the_window_says_stitchcraft_and_its_first_start_panels_open() {
         vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand { name: STITCHCRAFT.name, mark_png: STITCHCRAFT.brand_png });
         let mut app = vectorcraft_ui_egui::VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
         assert_eq!(vectorcraft_ui_egui::chrome::window_title(&app), "StitchCraft");
         assert_eq!(vectorcraft_ui_egui::app_name(), "StitchCraft");
-        assert_eq!(STITCHCRAFT.first_start_panels, [vectorcraft_ui_egui::panels::stitch_props::ID]);
+        assert_eq!(STITCHCRAFT.first_start_panels, [vectorcraft_ui_egui::panels::stitch_props::ID, vectorcraft_ui_egui::panels::stitch_preview::ID]);
         vectorcraft_app::identity::dock_first_start_panels(&mut app, &STITCHCRAFT);
         // Docked beside the canvas, in a group of its own under Properties: not floating.
         let layout = serde_json::to_value(&app.ui.docking).unwrap();
@@ -57,6 +58,7 @@ mod tests {
         let dock = &layout["root"]["Split"]["second"]["Dock"]["columns"][0]["groups"];
         assert_eq!(dock[0]["panels"][0], "properties", "{layout}");
         assert_eq!(dock[1]["panels"], serde_json::json!(["stitchProps"]), "{layout}");
+        assert_eq!(dock[2]["panels"], serde_json::json!(["stitchPreview"]), "{layout}");
     }
 
     #[test]

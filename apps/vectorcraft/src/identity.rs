@@ -52,15 +52,18 @@ pub(crate) fn set(identity: &'static AppIdentity) {
     let _ = CURRENT.set(identity);
 }
 
-/// Show `app`'s first-start panels docked open: each as a group of its own under the Properties
-/// group, beside the canvas. `window.panel` alone would float a panel the default workspace has no
-/// place for. A panel this build lacks is logged and skipped, leaving the workspace as it is.
+/// Show `app`'s first-start panels docked open: each as a group of its own beside the canvas, the
+/// first under the Properties group and every next one under the one before it, so they read in
+/// the order listed. `window.panel` alone would float a panel the default workspace has no place
+/// for. A panel this build lacks is logged and skipped, leaving the workspace as it is.
 pub fn dock_first_start_panels(ui: &mut vectorcraft_ui_egui::VectorcraftApp, app: &AppIdentity) {
+    let mut below = "properties";
     for panel in app.first_start_panels {
         let shown = ui.run("window.panel", serde_json::json!({ "panel": panel }));
-        let docked = shown.and_then(|_| ui.run("window.panel.dock", serde_json::json!({ "panel": panel, "below": "properties" })));
-        if let Err(e) = docked {
-            log::warn!("first start: panel {panel} not docked: {e}");
+        let docked = shown.and_then(|_| ui.run("window.panel.dock", serde_json::json!({ "panel": panel, "below": below })));
+        match docked {
+            Ok(_) => below = panel,
+            Err(e) => log::warn!("first start: panel {panel} not docked: {e}"),
         }
     }
 }

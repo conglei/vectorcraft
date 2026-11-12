@@ -32,11 +32,10 @@ binary and bundle, the same features, its own name everywhere a person sees one.
    drawn with the vector tools before it is stitched, and nothing is hidden until the owner asks.
    The Embroidery menu (first pass of STI-22) is where the stitch commands live.
 4. **Default workspace.** On a first start (no saved preferences) StitchCraft shows the Stitch
-   Properties panel (`stitchProps`) docked open beside the canvas, in a group of its own under the
-   Properties group (`identity::dock_first_start_panels`); the rest of the layout is
-   VectorCraft's default. After that the saved layout comes back as the person left it. The Stitch
-   Preview panel (`panels/stitch_preview.rs`, Window › Embroidery › Stitch Preview) is being added
-   by STI-29; once it lands, its id joins `first_start_panels` so it docks open too. An id this
+   Properties panel (`stitchProps`) and the Stitch Preview panel (`stitchPreview`, STI-29) docked
+   open beside the canvas, each in a group of its own, under the Properties group in that order
+   (`identity::dock_first_start_panels`, `first_start_panels`); the rest of the layout is
+   VectorCraft's default. After that the saved layout comes back as the person left it. An id this
    build does not know is logged and skipped. The home screen heading names StitchCraft.
 5. **Home screen.** The same as VectorCraft's (new, open, recent files), under StitchCraft's name
    and mark ("Welcome to StitchCraft"). An embroidery-specific start (hoop sizes, open a machine file) is later work.
