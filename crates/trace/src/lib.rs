@@ -66,7 +66,7 @@ pub use contour::{Component, Loop, trace_mask};
 pub use field::{CELL_RANGE, DirectionField, FieldParams, MAX_CELLS, MAX_WORK_SIDE, SMOOTHING_RANGE, direction_field};
 pub use gradient::TracedGradient;
 pub use mosaic::mosaic;
-pub use quantize::{FULL_TONE_MAX, Quantized, TRANSPARENT, denoise, quantize};
+pub use quantize::{FULL_TONE_MAX, Quantized, TRANSPARENT, continuous_tone, denoise, quantize};
 pub use shapes::TracedShape;
 pub use smooth::smoothed;
 use subpixel::Crack;

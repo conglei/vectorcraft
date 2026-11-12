@@ -142,3 +142,77 @@ fn the_synthetic_fur_is_written_on_demand() {
     assert_eq!(img, synthetic_fur(64, 48, 1));
     assert!(run(&mut s, "photo.syntheticFur", json!({"width": 1e9})).is_err());
 }
+
+#[test]
+fn same_thread_regions_are_merged_and_trims_fall() {
+    let f = fur_file("merge", 240, 180);
+    let mut s = Session::new();
+    let r = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 80, "features": false})).unwrap();
+    // Each thread is one region, or nearly, on this picture: the halves and the eye.
+    let colors = r["colors"].as_array().unwrap();
+    assert!(colors.iter().all(|c| c["regions"].as_u64().unwrap() <= 2), "{r}");
+    assert!(r["merged"].as_u64().unwrap() > 0 && r["regionsBefore"].as_u64().unwrap() > r["regions"].as_u64().unwrap(), "{r}");
+    // Trims per block add up to at most the plan's, and joining by travel takes off more than half.
+    let blocks = r["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), colors.len());
+    let per_block: u64 = blocks.iter().map(|b| b["trims"].as_u64().unwrap()).sum();
+    assert!(per_block <= r["trims"].as_u64().unwrap(), "{r}");
+    let no_travel = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 80, "features": false, "travelMm": 0})).unwrap();
+    assert!(r["trims"].as_u64().unwrap() * 2 < no_travel["trims"].as_u64().unwrap(), "{} vs {}", r["trims"], no_travel["trims"]);
+    // Travel costs few stitches.
+    let (a, b) = (r["stitches"].as_f64().unwrap(), no_travel["stitches"].as_f64().unwrap());
+    assert!(a < b * 1.1, "{a} vs {b}");
+    // photo.regions reports the same merging.
+    let regions = run(&mut s, "photo.regions", json!({"file": f, "widthMm": 80})).unwrap();
+    assert_eq!(regions["regions"], r["regions"]);
+    assert_eq!(regions["merged"], r["merged"]);
+}
+
+#[test]
+fn the_detail_pass_sews_over_the_eye() {
+    let (w, h) = (240, 180);
+    let f = fur_file("detail", w, h);
+    let mut s = Session::new();
+    let k = 80.0 / f64::from(w);
+    let ((ex, ey), er) = vectorcraft_imageprep::synthetic_fur_eye(w, h);
+    let (ex, ey, er) = (ex * k, ey * k, er * k);
+    // The features found on the picture lie within the eye's circle (half a millimetre's grace).
+    let img = synthetic_fur(w, h, 2);
+    let chart = vectorcraft_stitch::starter_chart();
+    let found = super::super::detail::features(&img, k, &chart, 1, 100_000).unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    let points: Vec<_> = found[0].runs.iter().flatten().collect();
+    assert!(points.len() > 50, "{}", points.len());
+    for p in points {
+        let (x, y) = p.to_mm();
+        assert!((x - ex).hypot(y - ey) <= er + 0.5, "({x}, {y}) is outside the eye at ({ex}, {ey}) r {er}");
+    }
+    // The command reports it, and features: false sews none.
+    let on = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 80})).unwrap();
+    let d = &on["details"][0];
+    assert!((d["x"].as_f64().unwrap() - ex).abs() < 0.5 && (d["y"].as_f64().unwrap() - ey).abs() < 0.5, "{on}");
+    let off = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 80, "features": false})).unwrap();
+    assert_eq!(off["details"], json!([]));
+    assert!(on["stitches"].as_u64() > off["stitches"].as_u64());
+}
+
+#[test]
+fn single_colour_rows_and_meander_sew_one_thread() {
+    let f = fur_file("mono", 200, 150);
+    let mut s = Session::new();
+    let darkest =
+        run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 60, "fill": "rows"})).unwrap()["colors"][0]["thread"]
+            .clone();
+    for fill in ["rows", "meander"] {
+        let r = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 60, "fill": fill})).unwrap();
+        assert_eq!(r["fill"], fill);
+        assert_eq!((r["colorChanges"].as_u64(), r["colors"].as_array().unwrap().len()), (Some(0), 1), "{r}");
+        assert!(r["stitches"].as_u64().unwrap() > 500, "{r}");
+        // An opaque picture is one run: no trims.
+        assert_eq!(r["trims"].as_u64(), Some(0), "{fill}: {r}");
+        assert_eq!(r["colors"][0]["thread"], darkest);
+    }
+    let red = run(&mut s, "photo.toStitches", json!({"file": f, "provider": "none", "widthMm": 60, "fill": "rows", "color": "#d01010"})).unwrap();
+    assert_ne!(red["colors"][0]["thread"], darkest);
+    assert!(run(&mut s, "photo.toStitches", json!({"file": f, "fill": "rows", "color": "red"})).unwrap_err().contains("color"));
+}

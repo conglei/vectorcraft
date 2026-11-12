@@ -70,7 +70,7 @@ pub(super) fn settled(mut q: Quantized, img: &Raster, own: &[bool]) -> Quantized
 /// colours and what noise and lighting make of them, and eight colours come within a few levels
 /// of every pixel; a photo's tones spread all through its range, and eight colours stay far from
 /// most of them (more than 6 levels, and more than a tenth of how far a single colour stays).
-pub(crate) fn continuous_tone(img: &Raster) -> bool {
+pub fn continuous_tone(img: &Raster) -> bool {
     let hk = HistKey::new(img);
     let mut bins = vec![Bin::default(); 1 << 15];
     for p in img.rgba.as_chunks::<4>().0 {

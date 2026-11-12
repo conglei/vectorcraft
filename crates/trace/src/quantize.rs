@@ -8,8 +8,9 @@ mod denoise;
 mod palette;
 mod rare;
 
+pub use cut_edge::continuous_tone;
+pub(crate) use cut_edge::settle_cut_edges;
 use cut_edge::{choosing_pixels, compact, settled};
-pub(crate) use cut_edge::{continuous_tone, settle_cut_edges};
 pub use denoise::denoise;
 pub(crate) use denoise::denoise_keeping;
 pub use palette::FULL_TONE_MAX;

@@ -185,6 +185,7 @@ fn the_embroidery_menu_reaches_the_embroidery_commands() {
             ("Sort Sequence by Colour", Some("stitch.sequence.sortByColor")),
             ("Closest Join", Some("stitch.join.closest")),
             ("Calibration Design", Some("stitch.calibration")),
+            ("Photo to Stitches…", Some("ui.photoStitchDialog")),
             ("Export Stitch File…", Some("file.exportAs"))
         ]
     );
@@ -255,4 +256,49 @@ fn export_as_dsb_shows_stitch_options_with_its_own_limit_then_writes_a_dsb_file(
     assert!(w[0].1.starts_with(b"LA:"), "a DSB file has the 512-byte header");
     assert_eq!(w[0].1.len() % 3, 512 % 3, "512 header bytes, then three-byte records");
     assert_eq!(w[0].1.get(w[0].1.len() - 3), Some(&0xF8), "ends with the DSB end record");
+}
+
+#[test]
+fn photo_to_stitches_runs_the_command_and_opens_the_design() {
+    let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+    // Off no document: the dialog needs none.
+    assert!(crate::menus::enabled(&app, "ui.photoStitchDialog"));
+    let dir = std::env::temp_dir().join(format!("vc-photostitch-dialog-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let photo = dir.join("fur.png");
+    app.run("photo.syntheticFur", json!({"path": photo, "width": 160, "height": 120})).unwrap();
+    crate::menus::invoke(&mut app, "ui.photoStitchDialog", json!({}));
+    assert_eq!(kind(&app), Some("photoStitch"));
+    frame(&mut app);
+    // No photo yet: the error stays in the dialog.
+    assert!(confirm(&mut app).is_err());
+    assert_eq!(kind(&app), Some("photoStitch"));
+    assert!(app.ui.dialog.as_ref().unwrap().str("__error").contains("photo"));
+    frame(&mut app);
+    // A bad file: the command's error, still in the dialog.
+    set(&mut app, "file", json!(dir.join("missing.png")));
+    assert!(confirm(&mut app).is_err());
+    assert!(!app.ui.dialog.as_ref().unwrap().str("__error").is_empty());
+    // The fields reach the command; OK opens the design and closes the dialog.
+    for (k, v) in [
+        ("file", json!(photo)),
+        ("provider", json!("none")),
+        ("widthMm", json!(50)),
+        ("fill", json!("meander")),
+        ("spacing", json!(1.5)),
+        ("seed", json!(3)),
+    ] {
+        set(&mut app, k, v);
+    }
+    frame(&mut app);
+    let params = photo_stitch::command_params(app.ui.dialog.as_ref().unwrap());
+    assert_eq!((params["fill"].as_str(), params["provider"].as_str(), params["widthMm"].as_f64()), (Some("meander"), Some("none"), Some(50.0)));
+    let r = confirm(&mut app).unwrap();
+    assert!(app.ui.dialog.is_none());
+    assert_eq!(r["fill"], "meander");
+    assert_eq!(app.session.documents().len(), 1);
+    assert!(r["stitches"].as_u64().unwrap() > 100, "{r}");
+    // The preference's provider is left to the command.
+    photo_stitch::open(&mut app, &json!({}));
+    assert!(photo_stitch::command_params(app.ui.dialog.as_ref().unwrap()).get("provider").is_none());
 }
