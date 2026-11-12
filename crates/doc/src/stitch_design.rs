@@ -1,6 +1,6 @@
 //! Embroidery › Sequence: the document-wide sewing settings: the order objects are sewn in and
-//! where the design starts and ends. Saved in the native file; a file without them (every file
-//! before they existed) sews in document order, bottom to top, as before.
+//! where the design starts and ends, and the hoop it is sewn in. Saved in the native file; a file
+//! without them (every file before they existed) sews in document order, bottom to top, as before.
 //!
 //! Each object's own entry and exit points are its stitch properties
 //! ([`crate::StitchProps::entry`]).
@@ -14,8 +14,9 @@ use crate::stitch_props::lenient;
 /// The most ids a saved order keeps: more than any document sews.
 pub const MAX_ORDER: usize = 1_000_000;
 
-/// The sewing order and the design's start and end points. Read leniently: a field of another
-/// kind (a later version's, or damage) reads as unset and the rest of the document still opens.
+/// The sewing order, the design's start and end points and its hoop. Read leniently: a field of
+/// another kind (a later version's, or damage) reads as unset and the rest of the document still
+/// opens.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StitchDesign {
@@ -31,6 +32,127 @@ pub struct StitchDesign {
     /// Where the design should end, in document coordinates: the last object is left nearest it.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub end: Option<Point>,
+    /// Embroidery › Hoop: the hoop the design is sewn in (`stitch.hoop.set`). `None`: none chosen.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub hoop: Option<Hoop>,
+}
+
+/// The largest hoop side kept, in mm.
+pub const MAX_HOOP_MM: f64 = 2000.0;
+/// The longest hoop name or id kept, in characters.
+pub const MAX_HOOP_NAME: usize = 96;
+
+/// A hoop's outline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HoopShape {
+    /// A rectangle (a rounded rectangle's sewable area is taken as the full rectangle).
+    #[default]
+    Rectangle,
+    /// A circle or oval: the sewable area is the ellipse inside width × height.
+    Round,
+}
+
+impl HoopShape {
+    /// The id used in files and commands: `rectangle` or `round`.
+    pub fn id(self) -> &'static str {
+        match self {
+            HoopShape::Rectangle => "rectangle",
+            HoopShape::Round => "round",
+        }
+    }
+
+    /// The shape an id names (`rectangle` or `rect`; `round`, `oval` or `circle`).
+    pub fn parse(s: &str) -> Option<HoopShape> {
+        match s {
+            "rectangle" | "rect" => Some(HoopShape::Rectangle),
+            "round" | "oval" | "circle" => Some(HoopShape::Round),
+            _ => None,
+        }
+    }
+}
+
+/// A hoop or frame: its library id (`None` for a custom hoop), name, inner (sewable) size in mm
+/// with the width along the machine's x axis, shape, and whether it is a cap frame. The design is
+/// sewn centred in it: `stitch.hoop.fit` reports how far the design's centre is from the hoop's
+/// centre on the page (the first artboard's centre). Read leniently; [`Hoop::valid`] answers
+/// whether it can be used.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Hoop {
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient_id")]
+    pub id: Option<String>,
+    #[serde(deserialize_with = "lenient_string")]
+    pub name: String,
+    #[serde(deserialize_with = "lenient_number")]
+    pub width_mm: f64,
+    #[serde(deserialize_with = "lenient_number")]
+    pub height_mm: f64,
+    /// A shape this version doesn't know reads as a rectangle.
+    #[serde(deserialize_with = "lenient_shape")]
+    pub shape: HoopShape,
+    /// A cap frame: never chosen automatically.
+    #[serde(skip_serializing_if = "std::ops::Not::not", deserialize_with = "lenient_bool")]
+    pub cap: bool,
+}
+
+fn cap_chars(mut s: String) -> String {
+    if let Some((i, _)) = s.char_indices().nth(MAX_HOOP_NAME) {
+        s.truncate(i);
+    }
+    s
+}
+
+fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(cap_chars(lenient(d)?.unwrap_or_default()))
+}
+
+fn lenient_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(lenient::<D, String>(d)?.map(cap_chars))
+}
+
+fn lenient_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(lenient(d)?.unwrap_or(0.0))
+}
+
+fn lenient_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    Ok(lenient(d)?.unwrap_or(false))
+}
+
+fn lenient_shape<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HoopShape, D::Error> {
+    Ok(lenient(d)?.unwrap_or_default())
+}
+
+impl Hoop {
+    /// Whether the size is finite, positive and at most [`MAX_HOOP_MM`]: a damaged hoop is ignored
+    /// rather than used.
+    pub fn valid(&self) -> bool {
+        let side = |v: f64| v.is_finite() && v > 0.0 && v <= MAX_HOOP_MM;
+        side(self.width_mm) && side(self.height_mm)
+    }
+
+    /// The sewable area in mm².
+    pub fn area(&self) -> f64 {
+        match self.shape {
+            HoopShape::Rectangle => self.width_mm * self.height_mm,
+            HoopShape::Round => std::f64::consts::FRAC_PI_4 * self.width_mm * self.height_mm,
+        }
+    }
+
+    /// Whether the box (`x0`, `y0`)–(`x1`, `y1`), in mm from the hoop's centre, lies inside the
+    /// hoop at least `margin` mm from its edge.
+    pub fn holds(&self, (x0, y0, x1, y1): (f64, f64, f64, f64), margin: f64) -> bool {
+        let (a, b) = (self.width_mm / 2.0 - margin, self.height_mm / 2.0 - margin);
+        if !(a > 0.0 && b > 0.0) {
+            return false;
+        }
+        let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)];
+        match self.shape {
+            HoopShape::Rectangle => corners.iter().all(|&(x, y)| x.abs() <= a + 1e-9 && y.abs() <= b + 1e-9),
+            // Every corner inside the ellipse shrunk by the margin: the box is inside it then too.
+            HoopShape::Round => corners.iter().all(|&(x, y)| (x / a).powi(2) + (y / b).powi(2) <= 1.0 + 1e-9),
+        }
+    }
 }
 
 fn lenient_order<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<NodeId>, D::Error> {
@@ -54,6 +176,11 @@ impl StitchDesign {
     pub fn end_point(&self) -> Option<Point> {
         self.end.filter(|p| p.x.is_finite() && p.y.is_finite())
     }
+
+    /// The chosen hoop, if set and valid.
+    pub fn hoop(&self) -> Option<&Hoop> {
+        self.hoop.as_ref().filter(|h| h.valid())
+    }
 }
 
 #[cfg(test)]
@@ -62,7 +189,7 @@ mod tests {
 
     #[test]
     fn round_trips_and_reads_leniently() {
-        let d = StitchDesign { order: vec![NodeId(3), NodeId(1)], start: Some(Point::new(1.0, 2.0)), end: None };
+        let d = StitchDesign { order: vec![NodeId(3), NodeId(1)], start: Some(Point::new(1.0, 2.0)), end: None, hoop: None };
         let v = serde_json::to_value(&d).unwrap();
         assert_eq!(v["order"], serde_json::json!([3, 1]));
         assert!(v.get("end").is_none());
@@ -74,5 +201,42 @@ mod tests {
         assert!(back.end.is_some());
         assert!(StitchDesign::default().is_empty());
         assert!(serde_json::to_value(StitchDesign::default()).unwrap().as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_hoop_round_trips_and_damage_reads_as_unusable() {
+        let h = Hoop { id: Some("square-100".into()), name: "Square".into(), width_mm: 100.0, height_mm: 100.0, shape: HoopShape::Round, cap: false };
+        let d = StitchDesign { hoop: Some(h.clone()), ..Default::default() };
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["hoop"]["widthMm"], 100.0);
+        assert_eq!(v["hoop"]["shape"], "round");
+        assert!(v["hoop"].get("cap").is_none());
+        assert_eq!(serde_json::from_value::<StitchDesign>(v).unwrap().hoop(), Some(&h));
+        let custom = Hoop { id: None, ..h };
+        assert!(serde_json::to_value(&custom).unwrap().get("id").is_none());
+        let bad: StitchDesign =
+            serde_json::from_value(serde_json::json!({"hoop": {"widthMm": "x", "heightMm": 1e9, "name": 5, "shape": "star"}})).unwrap();
+        assert!(bad.hoop.is_some() && bad.hoop().is_none());
+        assert_eq!(bad.hoop.map(|h| h.shape), Some(HoopShape::Rectangle));
+        let junk: StitchDesign = serde_json::from_value(serde_json::json!({"hoop": 7})).unwrap();
+        assert_eq!(junk.hoop, None);
+        let long: StitchDesign =
+            serde_json::from_value(serde_json::json!({"hoop": {"name": "n".repeat(500), "widthMm": 10, "heightMm": 10}})).unwrap();
+        assert_eq!(long.hoop().unwrap().name.len(), MAX_HOOP_NAME);
+    }
+
+    #[test]
+    fn hoops_hold_boxes_by_their_shape() {
+        let r = Hoop { name: "r".into(), width_mm: 150.0, height_mm: 150.0, shape: HoopShape::Round, ..Default::default() };
+        assert!(r.holds((-45.0, -45.0, 45.0, 45.0), 5.0));
+        assert!(!r.holds((-50.0, -50.0, 50.0, 50.0), 5.0));
+        let s = Hoop { width_mm: 100.0, height_mm: 100.0, shape: HoopShape::Rectangle, ..r };
+        assert!(s.holds((-40.0, -40.0, 40.0, 40.0), 10.0));
+        assert!(!s.holds((-30.0, -40.0, 50.0, 40.0), 10.0), "off centre");
+        assert!(!s.holds((-0.5, -0.5, 0.5, 0.5), 60.0), "a margin past the middle holds nothing");
+        assert!(!s.holds((f64::NAN, 0.0, 1.0, 1.0), 0.0));
+        assert_eq!(HoopShape::parse("oval"), Some(HoopShape::Round));
+        assert_eq!(HoopShape::parse("star"), None);
+        assert_eq!(HoopShape::Rectangle.id(), "rectangle");
     }
 }
