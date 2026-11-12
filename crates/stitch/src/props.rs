@@ -42,7 +42,10 @@ pub fn effective_number(props: &StitchProps, p: StitchParam, o: &FromDocOptions)
         StitchParam::SatinSpacing => Some(o.stroke.spacing),
         StitchParam::SatinWidth => o.stroke.width,
         StitchParam::RunLength => Some(f64::from(o.stitch_length) / crate::UNITS_PER_MM),
+        // By the stitch type: lettering's default, none for a two-rail column.
         StitchParam::Compensation => None,
+        StitchParam::MinColumn => Some(crate::MIN_COLUMN_MM),
+        StitchParam::RunUnder => Some(crate::RUN_UNDER_MM),
     })
 }
 
@@ -51,6 +54,16 @@ pub fn effective_number(props: &StitchProps, p: StitchParam, o: &FromDocOptions)
 /// automatic object's fill, then its outline), empty for nothing sewn or for an object of
 /// another kind.
 pub fn sewn_as(n: &Node, props: &StitchProps, marked: bool, o: &FromDocOptions) -> Vec<StitchType> {
+    if let NodeKind::Text(t) = &n.kind {
+        // Type is sewn as lettering, in one stitch type; not on an opened stitch file's layer.
+        let sews = !marked && !t.plain_text().trim().is_empty();
+        return match crate::from_doc::text_mode(props.kind) {
+            Some(None) if sews => vec![StitchType::Lettering],
+            Some(Some(crate::LetterMode::Run)) if sews => vec![StitchType::Run],
+            Some(Some(_)) if sews => vec![StitchType::Tatami],
+            _ => vec![],
+        };
+    }
     if !matches!(n.kind, NodeKind::Path { guide: false, clipping: false, .. } | NodeKind::Compound { .. }) {
         return vec![];
     }
@@ -64,7 +77,8 @@ pub fn sewn_as(n: &Node, props: &StitchProps, marked: bool, o: &FromDocOptions) 
     } else {
         StitchType::Run
     };
-    let kind = if marked { StitchType::Auto } else { props.kind };
+    // Lettering is for type: a path sews as automatic with it.
+    let kind = if marked || props.kind == StitchType::Lettering { StitchType::Auto } else { props.kind };
     match kind {
         StitchType::None => vec![],
         StitchType::Auto => {

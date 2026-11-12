@@ -11,6 +11,7 @@ mod fill;
 mod fill_field;
 mod from_doc;
 pub mod hoop;
+mod lettering;
 mod plan;
 mod prepare;
 mod preview;
@@ -31,10 +32,14 @@ pub use check::{CELL_RANGE, CheckLimits, DENSITY_RANGE, Finding, LONG_RANGE, Lev
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
 pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
-    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions, StrokeType,
-    from_document, outline_fraction, outline_point, sequence,
+    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Lettered, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions,
+    StrokeType, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_point, sequence, text_mode,
 };
 pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM};
+pub use lettering::{
+    COMPENSATION_MM, Column, Letter, LetterMode, LetterShape, LetteringParams, MAX_LETTERS, MAX_SATIN_MM, MIN_COLUMN_MM, NO_TRIM_GAP_MM,
+    RUN_LENGTH_MM, RUN_UNDER_MM, SewnLetter, UNDERLAY_LENGTH_MM, letter_height, mode_for, sew_letters, shape_letter,
+};
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
 pub use preview::{
@@ -45,7 +50,7 @@ pub use preview::{
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
-pub use satin::{SatinParams, satin};
+pub use satin::{RailsParams, SatinParams, rails_satin, satin};
 pub use stats::{Stats, ThreadStats, stats};
 pub use thread::{
     JSON_FORMAT, MAX_BRAND, MAX_CHART_BYTES, MAX_CHART_NAME, MAX_CHART_THREADS, MAX_CODE, MAX_NAME, MAX_WEIGHT, NeedleUse, Needles, STARTER_BRAND,

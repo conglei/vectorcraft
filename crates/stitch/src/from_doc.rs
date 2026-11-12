@@ -2,27 +2,37 @@
 //! ([`vectorcraft_doc::StitchProps`], set on it or inherited from what holds it), field by field
 //! over the document-wide [`FromDocOptions`]; an automatic object's fill becomes tatami and its
 //! stroke running stitch (or satin), as those options say. Stitches are made from the outlines
-//! each time, so an object moved, scaled or reshaped is sewn again at the same density.
+//! each time, so an object moved, scaled or reshaped is sewn again at the same density. Type is
+//! sewn as lettering ([`crate::lettering`]); a path of exactly two open subpaths with stitch type
+//! satin is a two-rail satin column.
 
 use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
 use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
+use crate::lettering::UNDERLAY_LENGTH_MM;
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
-use crate::satin::{SatinParams, satin};
+use crate::satin::{RailsParams, SatinParams, rails_satin, resample, satin};
 use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
 mod sequenced;
 #[cfg(test)]
+mod tests_lettering;
+#[cfg(test)]
 mod tests_sequence;
+mod text;
 
 use sequenced::{Run, Unit, points_of};
 pub use sequenced::{SequenceItem, Sequenced, outline_fraction, outline_point, sequence};
+pub use text::{Lettered, lettering_of, lettering_params, letters_of, text_mode};
+
+/// Letters closer than [`crate::NO_TRIM_GAP_MM`], in plan units, are joined by a stitch.
+const NO_TRIM_GAP: f64 = crate::lettering::NO_TRIM_GAP_MM * crate::UNITS_PER_MM;
 
 /// How far a flattened curve may stray from the true one, in millimetres.
 const FLATTEN_TOLERANCE_MM: f64 = 0.05;
@@ -218,6 +228,22 @@ enum Join {
     /// A run of an opened stitch file: a jump, preceded by a trim only where `trim` says the
     /// file had one.
     Opened { trim: bool },
+    /// The next letter (or part of a letter) of lettering: a trim and a jump where `trim` says
+    /// (between words, by default), else a stitch to it when it is closer than
+    /// [`crate::NO_TRIM_GAP_MM`] and a jump when further.
+    Letter { trim: bool },
+}
+
+impl Join {
+    /// Whether the join counts as a trim before a run that starts `d` plan units from the needle,
+    /// given the join distance `min_stitch` (for choosing how an object is turned).
+    pub(super) fn trims(self, d: f64, min_stitch: i32) -> bool {
+        d > f64::from(min_stitch)
+            && match self {
+                Join::Letter { trim } => trim,
+                Join::Drawn | Join::Opened { .. } => true,
+            }
+    }
 }
 
 /// What a node lies under.
@@ -299,8 +325,16 @@ impl<'o> Walk<'o> {
                 let own = n.stitch_props().filter(|_| !up.marked);
                 let pin = points_of(n, (own.and_then(|p| p.entry_at()), own.and_then(|p| p.exit_at())));
                 let prefer = points_of(n, (own.and_then(|p| p.join_entry_at()), own.and_then(|p| p.join_exit_at())));
-                self.units.push(Unit { id: n.id, runs: vec![], pin, prefer });
+                self.units.push(Unit { id: n.id, runs: vec![], pin, prefer, fixed: false });
                 self.shape(n, up)?;
+                if self.units.last().is_some_and(|u| u.runs.is_empty()) {
+                    self.units.pop();
+                }
+            }
+            NodeKind::Text(_) if !up.marked => {
+                // Lettering is sewn in its own order, letter by letter: never turned round.
+                self.units.push(Unit { id: n.id, runs: vec![], pin: (None, None), prefer: (None, None), fixed: true });
+                self.lettering(n, up)?;
                 if self.units.last().is_some_and(|u| u.runs.is_empty()) {
                     self.units.pop();
                 }
@@ -322,7 +356,8 @@ impl<'o> Walk<'o> {
         let run_length = |w: &Walk| props.number(StitchParam::RunLength).map_or(w.o.stitch_length, mm_units);
         match props.kind {
             StitchType::None => Ok(()),
-            StitchType::Auto => {
+            // Lettering is for type: a path set (or inheriting) it sews as automatic.
+            StitchType::Auto | StitchType::Lettering => {
                 let sew_fill = !up.marked && self.o.fill.kind == FillType::Tatami;
                 let fill = painted_fill.filter(|_| sew_fill);
                 if stroke.is_none() && fill.is_none() {
@@ -357,6 +392,11 @@ impl<'o> Walk<'o> {
                 // The stroke colour, else the fill's: one outline, whatever the object paints.
                 let Some(rgb) = self.colour(painted_fill.map(|f| &f.paint), stroke.map(|s| &s.paint), false) else { return Ok(()) };
                 collect_subpaths(n, &mut subpaths);
+                if props.kind == StitchType::Satin
+                    && let Some((a, b)) = two_rails(&subpaths)
+                {
+                    return self.sew_rails(a, b, rgb, &props, max_mm, up);
+                }
                 let outline = match props.kind {
                     StitchType::Satin => Outline::Satin(self.satin_params(&props, stroke.map(|s| s.width), max_mm)),
                     StitchType::Manual => Outline::Run(Mode::Manual, run_length(self)),
@@ -456,6 +496,79 @@ impl<'o> Walk<'o> {
         Ok(())
     }
 
+    /// Sew rails `a` and `b` (two open subpaths) as one satin column, in thread `rgb`: with the
+    /// object's underlay on, a centre run along it first and the satin back over it.
+    fn sew_rails(&mut self, a: &SubPath, b: &SubPath, rgb: [u8; 3], props: &StitchProps, max_mm: f64, up: Under) -> Result<(), String> {
+        self.part += 1;
+        let budget = MAX_STEPS.saturating_sub(self.steps);
+        let (left, right) = (flatten(a, budget)?.0, flatten(b, budget)?.0);
+        let n = left.len().max(right.len());
+        if n < 2 || n > budget {
+            return Ok(());
+        }
+        let (mut left, mut right) = (resample(&left, n), resample(&right, n));
+        // Rails drawn the opposite way round are turned to run together.
+        if let (Some(l0), Some(l1), Some(r0), Some(r1)) = (left.first(), left.last(), right.first(), right.last()) {
+            let d = |p: &(f64, f64), q: &(f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+            if d(l0, r1) + d(l1, r0) < d(l0, r0) + d(l1, r1) {
+                right.reverse();
+            }
+        }
+        let p = RailsParams {
+            spacing: props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing),
+            max_stitch: max_mm,
+            compensation: props.number(StitchParam::Compensation).unwrap_or(0.0),
+        };
+        let mut run: Vec<Pt> = vec![];
+        if props.underlay == Some(true) {
+            let centre: Vec<(f64, f64)> = left.iter().zip(&right).map(|(l, r)| ((l.0 + r.0) / 2.0, (l.1 + r.1) / 2.0)).collect();
+            run = run_stitches(&centre, &[], false, mm_units(UNDERLAY_LENGTH_MM));
+            left.reverse();
+            right.reverse();
+        }
+        for q in rails_satin(&left, &right, &p, budget)? {
+            if run.last() != Some(&q) {
+                run.push(q);
+            }
+        }
+        self.count_run(&run, up);
+        self.add_run(rgb, &run, Mode::Run, Join::Drawn)
+    }
+
+    /// Sew text node `n` as lettering, in its letters' threads.
+    fn lettering(&mut self, n: &Node, up: Under) -> Result<(), String> {
+        let props = up.props;
+        if text::text_mode(props.kind).is_none() {
+            if props.kind != StitchType::None {
+                self.other += 1;
+            }
+            return Ok(());
+        }
+        let budget = MAX_STEPS.saturating_sub(self.steps);
+        let Some(done) = text::lettering_of(n, &props, self.o, budget)? else { return Ok(()) };
+        self.part += 1;
+        let mut word: Option<usize> = None;
+        for letter in done.letters {
+            for (k, run) in letter.runs.iter().enumerate() {
+                let join = match word {
+                    None => Join::Drawn,
+                    Some(_) if k > 0 => Join::Letter { trim: false },
+                    Some(w) => Join::Letter {
+                        trim: match done.params.trims {
+                            LetterTrims::Letter => true,
+                            LetterTrims::Word => w != letter.word,
+                            LetterTrims::None => false,
+                        },
+                    },
+                };
+                self.count_run(run, up);
+                self.add_run(letter.rgb, run, Mode::Run, join)?;
+                word = Some(letter.word);
+            }
+        }
+        Ok(())
+    }
+
     /// Count `run` as marked or unmarked art, and note art inside a clip.
     fn count_run(&mut self, run: &[Pt], up: Under) {
         if run.is_empty() {
@@ -509,6 +622,12 @@ impl<'o> Walk<'o> {
                         // In run mode a first stitch where the needle already is would sew nothing.
                         skip_first = mode == Mode::Run && self.pos == Some(start);
                     }
+                    // Letters of a word: a stitch across a small gap, else a jump; no trim.
+                    Join::Letter { trim: false } => {
+                        if self.pos.is_none_or(|p| p.dist(start) > NO_TRIM_GAP) {
+                            lead.push(Step::Jump(start));
+                        }
+                    }
                     _ => lead = vec![Step::Trim, Step::Jump(start)],
                 }
             }
@@ -547,8 +666,17 @@ fn thread(paint: &Paint, patterned: &mut bool) -> [u8; 3] {
     }
 }
 
+/// The two rails of a satin column drawn as rails: exactly two open subpaths, each with a
+/// segment.
+pub(crate) fn two_rails<'a>(subpaths: &[&'a SubPath]) -> Option<(&'a SubPath, &'a SubPath)> {
+    match subpaths {
+        [a, b] if !a.closed && !b.closed && a.segment_count() > 0 && b.segment_count() > 0 => Some((a, b)),
+        _ => None,
+    }
+}
+
 /// The subpaths of a path, or of a compound path's member paths (in their order).
-fn collect_subpaths<'n>(n: &'n Node, out: &mut Vec<&'n SubPath>) {
+pub(crate) fn collect_subpaths<'n>(n: &'n Node, out: &mut Vec<&'n SubPath>) {
     match &n.kind {
         NodeKind::Path { path, .. } => out.extend(path.subpaths.iter()),
         NodeKind::Compound { children, .. } => {

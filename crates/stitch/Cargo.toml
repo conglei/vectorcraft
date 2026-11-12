@@ -12,8 +12,12 @@ workspace = true
 vectorcraft-geom = { workspace = true }
 vectorcraft-color = { workspace = true }
 vectorcraft-doc = { workspace = true }
+# Type is sewn as lettering from its laid-out glyphs (without the bundled fonts: the apps choose).
+vectorcraft-text = { workspace = true }
 kurbo = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Source Sans 3 for lettering tests of real glyphs.
+vectorcraft-text = { workspace = true, features = ["bundled-fonts"] }

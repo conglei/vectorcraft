@@ -33,11 +33,16 @@ pub enum StitchType {
     Tatami,
     /// One needle point per anchor, in the stroke colour (the fill colour without one).
     Manual,
+    /// Type sewn as lettering: satin columns along each letter's strokes (running stitch for
+    /// small letters, tatami for strokes too wide for satin), in the characters' colour. Type
+    /// that is automatic is sewn this way too; on a path it sews as automatic.
+    Lettering,
 }
 
 impl StitchType {
     /// Every type, in the order the Stitch Properties panel lists them.
-    pub const ALL: [StitchType; 6] = [StitchType::Auto, StitchType::None, StitchType::Run, StitchType::Satin, StitchType::Tatami, StitchType::Manual];
+    pub const ALL: [StitchType; 7] =
+        [StitchType::Auto, StitchType::None, StitchType::Run, StitchType::Satin, StitchType::Tatami, StitchType::Manual, StitchType::Lettering];
 
     /// The type's id in commands and files.
     pub fn id(self) -> &'static str {
@@ -48,6 +53,7 @@ impl StitchType {
             StitchType::Satin => "satin",
             StitchType::Tatami => "tatami",
             StitchType::Manual => "manual",
+            StitchType::Lettering => "lettering",
         }
     }
 
@@ -65,6 +71,47 @@ impl StitchType {
             StitchType::Satin => "Satin column",
             StitchType::Tatami => "Tatami fill",
             StitchType::Manual => "Manual (one point per anchor)",
+            StitchType::Lettering => "Lettering (type)",
+        }
+    }
+}
+
+/// Where lettering trims the thread between letters ([`StitchProps::letter_trims`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LetterTrims {
+    /// Between words and lines; letters of a word are joined by a jump (or a stitch when close).
+    #[default]
+    Word,
+    /// Between every two letters.
+    Letter,
+    /// Never: letters and words are joined by jumps.
+    None,
+}
+
+impl LetterTrims {
+    pub const ALL: [LetterTrims; 3] = [LetterTrims::Word, LetterTrims::Letter, LetterTrims::None];
+
+    /// The id in commands and files.
+    pub fn id(self) -> &'static str {
+        match self {
+            LetterTrims::Word => "word",
+            LetterTrims::Letter => "letter",
+            LetterTrims::None => "none",
+        }
+    }
+
+    /// The value named `id` ([`LetterTrims::id`]).
+    pub fn parse(id: &str) -> Option<LetterTrims> {
+        LetterTrims::ALL.into_iter().find(|t| t.id() == id)
+    }
+
+    /// The name in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            LetterTrims::Word => "Per word",
+            LetterTrims::Letter => "Per letter",
+            LetterTrims::None => "None",
         }
     }
 }
@@ -86,13 +133,18 @@ pub enum StitchParam {
     SatinWidth,
     /// Running stitch length, mm.
     RunLength,
-    /// Pull compensation, mm: kept and saved, not yet used by the stitch generators.
+    /// Pull compensation, mm each side: each satin needle point is pushed this far outward (two-rail
+    /// satin columns and lettering).
     Compensation,
+    /// Lettering: the narrowest satin column, mm; narrower strokes are sewn as running stitch.
+    MinColumn,
+    /// Lettering: letters shorter than this, mm, are sewn as running stitch along their strokes.
+    RunUnder,
 }
 
 impl StitchParam {
     /// Every number, in the order commands list them.
-    pub const ALL: [StitchParam; 8] = [
+    pub const ALL: [StitchParam; 10] = [
         StitchParam::FillAngle,
         StitchParam::FillSpacing,
         StitchParam::FillStitchLength,
@@ -101,6 +153,8 @@ impl StitchParam {
         StitchParam::SatinWidth,
         StitchParam::RunLength,
         StitchParam::Compensation,
+        StitchParam::MinColumn,
+        StitchParam::RunUnder,
     ];
 
     /// The number's key in commands and files.
@@ -114,6 +168,8 @@ impl StitchParam {
             StitchParam::SatinWidth => "satinWidth",
             StitchParam::RunLength => "runLength",
             StitchParam::Compensation => "compensation",
+            StitchParam::MinColumn => "minColumn",
+            StitchParam::RunUnder => "runUnder",
         }
     }
 
@@ -132,6 +188,8 @@ impl StitchParam {
             StitchParam::SatinWidth => (0.5, 20.0),
             StitchParam::RunLength => (0.5, 12.0),
             StitchParam::Compensation => (0.0, 2.0),
+            StitchParam::MinColumn => (0.3, 3.0),
+            StitchParam::RunUnder => (0.0, 20.0),
         }
     }
 
@@ -151,9 +209,11 @@ impl StitchParam {
             StitchParam::FillAngle | StitchParam::FillSpacing | StitchParam::FillStitchLength | StitchParam::Stagger => {
                 &[StitchType::Auto, StitchType::Tatami]
             }
-            StitchParam::SatinSpacing | StitchParam::SatinWidth => &[StitchType::Auto, StitchType::Satin],
-            StitchParam::RunLength => &[StitchType::Auto, StitchType::Run],
-            StitchParam::Compensation => &[StitchType::Auto, StitchType::Satin, StitchType::Tatami],
+            StitchParam::SatinSpacing => &[StitchType::Auto, StitchType::Satin, StitchType::Lettering],
+            StitchParam::SatinWidth => &[StitchType::Auto, StitchType::Satin],
+            StitchParam::RunLength => &[StitchType::Auto, StitchType::Run, StitchType::Lettering],
+            StitchParam::Compensation => &[StitchType::Auto, StitchType::Satin, StitchType::Lettering],
+            StitchParam::MinColumn | StitchParam::RunUnder => &[StitchType::Lettering],
         }
     }
 
@@ -186,12 +246,23 @@ pub struct StitchProps {
     pub satin_width: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub run_length: Option<f64>,
-    /// Underlay under satin and fills: kept and saved, not yet sewn.
+    /// Underlay: a centre run under two-rail satin columns and satin lettering (on by default for
+    /// lettering); not yet sewn under fills or single-path satin.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub underlay: Option<bool>,
-    /// Pull compensation in mm: kept and saved, not yet used.
+    /// Pull compensation in mm each side ([`StitchParam::Compensation`]).
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub compensation: Option<f64>,
+    /// Lettering: the narrowest satin column in mm ([`StitchParam::MinColumn`]).
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub min_column: Option<f64>,
+    /// Lettering: the letter height in mm under which letters are running stitch
+    /// ([`StitchParam::RunUnder`]).
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub run_under: Option<f64>,
+    /// Lettering: where the thread is trimmed between letters.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub letter_trims: Option<LetterTrims>,
     /// Embroidery › Sequence: where sewing enters the object, as a fraction 0–1 of the way along
     /// its outline (its subpaths one after another, by arc length), so the point moves with the
     /// object when it is moved, scaled or reshaped. Only the object's own: never inherited.
@@ -288,6 +359,8 @@ impl StitchProps {
             StitchParam::SatinWidth => self.satin_width,
             StitchParam::RunLength => self.run_length,
             StitchParam::Compensation => self.compensation,
+            StitchParam::MinColumn => self.min_column,
+            StitchParam::RunUnder => self.run_under,
         }
     }
 
@@ -308,6 +381,8 @@ impl StitchProps {
             StitchParam::SatinWidth => &mut self.satin_width,
             StitchParam::RunLength => &mut self.run_length,
             StitchParam::Compensation => &mut self.compensation,
+            StitchParam::MinColumn => &mut self.min_column,
+            StitchParam::RunUnder => &mut self.run_under,
         };
         *slot = v;
     }
@@ -319,6 +394,7 @@ impl StitchProps {
         let mut out = StitchProps {
             kind: if self.kind == StitchType::Auto { outer.kind } else { self.kind },
             underlay: self.underlay.or(outer.underlay),
+            letter_trims: self.letter_trims.or(outer.letter_trims),
             ..StitchProps::default()
         };
         for p in StitchParam::ALL {
@@ -405,6 +481,27 @@ mod tests {
         let joined = StitchProps { entry: Some(0.1), join_entry: Some(0.9), join_exit: Some(0.4), ..Default::default() };
         assert_eq!((joined.sewn_entry(), joined.sewn_exit()), (Some(0.1), Some(0.4)), "the user's point wins");
         assert_eq!(serde_json::to_value(joined).unwrap(), serde_json::json!({"entry": 0.1, "joinEntry": 0.9, "joinExit": 0.4}));
+    }
+
+    #[test]
+    fn lettering_fields_round_trip_and_inherit() {
+        let p = StitchProps {
+            kind: StitchType::Lettering,
+            min_column: Some(1.2),
+            run_under: Some(4.0),
+            letter_trims: Some(LetterTrims::Letter),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(p).unwrap();
+        assert_eq!(v, serde_json::json!({"type": "lettering", "minColumn": 1.2, "runUnder": 4.0, "letterTrims": "letter"}));
+        assert_eq!(serde_json::from_value::<StitchProps>(v).unwrap(), p);
+        let inner = StitchProps::default().inherit(&p);
+        assert_eq!((inner.kind, inner.letter_trims, inner.min_column), (StitchType::Lettering, Some(LetterTrims::Letter), Some(1.2)));
+        let odd: StitchProps = serde_json::from_value(serde_json::json!({"letterTrims": "sometimes", "minColumn": 9.0})).unwrap();
+        assert_eq!((odd.letter_trims, odd.number(StitchParam::MinColumn)), (None, None));
+        for t in LetterTrims::ALL {
+            assert_eq!(LetterTrims::parse(t.id()), Some(t));
+        }
     }
 
     #[test]

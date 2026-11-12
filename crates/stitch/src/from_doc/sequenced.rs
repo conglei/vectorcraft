@@ -29,6 +29,8 @@ pub(super) struct Unit {
     pub(super) pin: (Option<Pt>, Option<Pt>),
     /// The entry and exit closest join chose (preferred, chosen again by the next closest join).
     pub(super) prefer: (Option<Pt>, Option<Pt>),
+    /// Sewn forwards only (lettering, whose letters are in their own order).
+    pub(super) fixed: bool,
 }
 
 /// How a unit's runs are turned.
@@ -57,7 +59,7 @@ impl Unit {
     /// backwards and, for one closed run, from up to [`MAX_WAYS`] − 2 stitch points around it
     /// plus the one nearest each of its points.
     fn orients(&self) -> Vec<Orient> {
-        if self.opened() {
+        if self.opened() || self.fixed {
             return vec![Orient::Forward];
         }
         let mut v = vec![Orient::Forward, Orient::Reversed];
@@ -124,7 +126,7 @@ impl Unit {
             let (Some(&a), Some(&b)) = (r.pts.first(), r.pts.last()) else { continue };
             let d = exit.dist(a);
             travel += d;
-            if r.rgb == rgb && d > f64::from(min_stitch) {
+            if r.rgb == rgb && r.join.trims(d, min_stitch) {
                 trims += 1;
             }
             exit = b;
