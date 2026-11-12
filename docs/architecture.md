@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (the embroidery crates `stitch` and `embroidery`; the library crate count corrected to 24) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (StitchCraft, the embroidery app, in `apps/stitchcraft`; the desktop launcher as the `vectorcraft_app` library) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft is built today. The design rationale lives in the local, gitignored `plan/architecture.md`;
 this file describes what is committed. Day-to-day rules (clean-room, never crash, quality gates) are in
@@ -8,7 +8,7 @@ this file describes what is committed. Day-to-day rules (clean-room, never crash
 
 ## Shape
 
-A Cargo workspace of 24 library crates under `crates/`, three apps under `apps/` and `xtask`, ~354k lines of Rust,
+A Cargo workspace of 24 library crates under `crates/`, four apps under `apps/` and `xtask`, ~354k lines of Rust,
 pure Rust (no handwritten JS/TS). The same engine runs the desktop app, the browser build (WASM), the headless
 CLI and the MCP server.
 
@@ -26,7 +26,7 @@ nothing below L6 depends on a UI toolkit (egui, eframe, winit, rfd). Table: `xta
 | L4 | `tools` | tool state machines: pointer events in, commands and overlays out (Pen, Direct Selection, smart guides…) |
 | L5 | `engine` | sessions, history (unlimited undo by structural sharing), selection, the command registry (~710 commands), file I/O, the panic guard |
 | L6 | `ui-egui`, `mcp` | the egui front end (menus, panels, dialogs, canvas, i18n); the MCP server (JSON-RPC over stdio) |
-| L7 | `apps/vectorcraft`, `apps/vectorcraft-cli`, `apps/vectorcraft-web`, `xtask` | desktop app (eframe, wgpu), CLI (`run`, `convert`, `info`, `bench`, `perf`, `mcp`), browser runner (WebGPU, WebGL2 fallback), build tooling |
+| L7 | `apps/vectorcraft`, `apps/stitchcraft`, `apps/vectorcraft-cli`, `apps/vectorcraft-web`, `xtask` | desktop app (eframe, wgpu; its launcher is the `vectorcraft_app` library), StitchCraft (the embroidery app: the same launcher under its own name, settings and icon), CLI (`run`, `convert`, `info`, `bench`, `perf`, `mcp`), browser runner (WebGPU, WebGL2 fallback), build tooling |
 
 `testkit` holds test helpers (fixtures, generators, render comparison) and is only a dev-dependency.
 
@@ -93,6 +93,7 @@ saves copies in the background. See [development.md](development.md#robustness-v
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | Added `apps/stitchcraft` (StitchCraft, the embroidery app) to L7; the desktop app's launcher is now the `vectorcraft_app` library both desktop binaries run |
 | 2026-11-11 | minor | Library crate count corrected to 24, the crates in the layer table |
 | 2026-11-11 | minor | Added the embroidery crates `stitch` (L2) and `embroidery` (L3) |
 | 2026-10-13 | minor | Pinned PngSuite HTTPS files verified by SHA-256 before publication; bounded downloads replace archive extraction (#1729). Scores and hours unchanged. |

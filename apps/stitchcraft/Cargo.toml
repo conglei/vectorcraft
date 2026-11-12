@@ -1,0 +1,20 @@
+[package]
+name = "stitchcraft"
+description = "StitchCraft: the embroidery desktop app, VectorCraft's launcher and crates under its own name"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The whole desktop app: StitchCraft is VectorCraft's launcher started with StitchCraft's identity
+# (docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md).
+vectorcraft = { path = "../vectorcraft" }
+
+[dev-dependencies]
+vectorcraft-ui-egui = { workspace = true }
+vectorcraft-engine = { workspace = true }
+serde_json = { workspace = true }

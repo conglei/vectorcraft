@@ -15,6 +15,10 @@ pub(crate) struct Runtime {
     /// The desktop app turns the check at start on; tests and the web build leave it off.
     #[cfg(not(target_arch = "wasm32"))]
     startup_check: bool,
+    /// Off for an app with no release feed of its own (StitchCraft): VectorCraft's feed would
+    /// replace it with VectorCraft, so neither the check at start nor Help › Check for Updates asks.
+    #[cfg(not(target_arch = "wasm32"))]
+    no_feed: bool,
     #[cfg(not(target_arch = "wasm32"))]
     check_requested: bool,
     /// The context of the last frame, to wake the UI when a check is queued from a menu callback.
@@ -38,6 +42,8 @@ impl Default for Runtime {
             #[cfg(not(target_arch = "wasm32"))]
             startup_check: false,
             #[cfg(not(target_arch = "wasm32"))]
+            no_feed: false,
+            #[cfg(not(target_arch = "wasm32"))]
             check_requested: false,
             #[cfg(not(target_arch = "wasm32"))]
             repaint: None,
@@ -58,6 +64,15 @@ impl VectorcraftApp {
         self.updates_rt.startup_check = on;
     }
 
+    /// For an app built on these crates that has no release feed of its own yet (StitchCraft): no
+    /// check at start, and Help › Check for Updates says there is nothing to check instead of
+    /// offering VectorCraft's releases, which would replace the app.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn without_release_feed(&mut self) {
+        self.updates_rt.startup_check = false;
+        self.updates_rt.no_feed = true;
+    }
+
     /// Starts the install helper of an update that is ready, so it installs once the process has
     /// exited (does nothing when no update is ready). Call it in `on_exit` when the process ends
     /// there, since the app is then never dropped.
@@ -70,6 +85,9 @@ impl VectorcraftApp {
 pub(crate) fn check(app: &mut VectorcraftApp) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if app.updates_rt.no_feed {
+            return Err(format!("{} has no release feed to check yet: install new versions by hand", crate::brand::app_name()));
+        }
         app.updates_rt.check_requested = true;
         if let Some(ctx) = &app.updates_rt.repaint {
             ctx.request_repaint();
@@ -336,6 +354,20 @@ mod tests {
             assert!(!result_window_shows(status, true), "{status:?} waits for the prompt");
         }
         assert!(!result_window_shows(&Status::Idle, false));
+    }
+
+    /// An app without a release feed of its own (StitchCraft) neither checks at start nor queues a
+    /// check from Help › Check for Updates: the only feed is VectorCraft's, which would replace it.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn an_app_without_a_release_feed_never_checks() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.set_startup_update_check(true);
+        app.without_release_feed();
+        assert!(!app.updates_rt.startup_check);
+        let err = app.run("help.checkForUpdates", serde_json::json!({})).unwrap_err();
+        assert!(err.contains("no release feed"), "{err}");
+        assert!(!app.updates_rt.check_requested);
     }
 
     #[test]

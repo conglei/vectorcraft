@@ -1,5 +1,6 @@
 # Development
 
+> **Last updated:** 2026-11-11 · **Change:** Running StitchCraft, the embroidery app (`apps/stitchcraft`), and bundling it.
 > **Last updated:** 2026-11-11 · **Change:** Fuzzing covers DST and EXP stitch files; checking stitch files against another reader by hand (positions compared in one orientation).
 > **Last updated:** 2026-11-06 · **Change:** Hindi catalog and zero/one plural rule; desktop Devanagari fallback and optional craft-fonts UI face; native review pending.
 > **Last updated:** 2026-11-01 · **Change:** Linux: Automatic Linux Display Server opens the window through XWayland when a pen is attached on a Wayland session, so the pen draws (#4967); `VECTORCRAFT_NATIVE_WAYLAND=1` keeps Wayland.
@@ -12,6 +13,24 @@
 > **Last updated:** 2026-10-21 · **Change:** leaving out the bundled fonts with the egui panels (vectorcraft-ui-egui's and vectorcraft-mcp's `bundled-fonts` features).
 > **Last updated:** 2026-10-14 · **Change:** leaving out the bundled fonts (`bundled-fonts` feature).
 > **Last updated:** 2026-10-14 · **Change:** document-font registration for all explicitly supplied faces.
+
+## StitchCraft (the embroidery app)
+
+StitchCraft is VectorCraft's desktop launcher (`apps/vectorcraft/src/lib.rs`) started under its own
+name by `apps/stitchcraft`: the same crates, menus and tools, with its own window title, About,
+settings folder (`StitchCraft`, or `stitchcraft` on Linux), icon, no update check, and the Stitch
+Properties panel docked on its first start
+([spec](superpowers/specs/2026-11-11-stitchcraft-app-shell.md)). Agents drive it on port 7989 by
+convention (VectorCraft: 7979):
+
+```sh
+cargo run --release -p stitchcraft -- --control 7989 [file.dst|file.vectorcraft]
+cargo xtask bundle --app stitchcraft          # dist/StitchCraft.app (macOS)
+open dist/StitchCraft.app --args --control 7989
+```
+
+The `VECTORCRAFT_` environment variables below apply to both apps; give two runs different
+`VECTORCRAFT_CONFIG_DIR` folders to keep their settings apart.
 
 ## Web build
 
@@ -542,6 +561,7 @@ Scores and hour estimates are unchanged.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | minor | New section: StitchCraft, the embroidery app (running it, its control port 7989, `cargo xtask bundle --app stitchcraft`). |
 | 2026-11-11 | minor | Stitch file cross-check: compare positions after converting both to the same orientation. |
 | 2026-11-11 | minor | Fuzzing: DST and EXP stitch files. New section: checking stitch files against another reader (by hand, not in CI). |
 | 2026-11-06 | minor | Localisation: Hindi catalog, zero/one plurals, desktop and web font requirements; AI/MT draft, native review pending. |

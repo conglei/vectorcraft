@@ -1,30 +1,117 @@
-//! `cargo xtask bundle`: build the release app and wrap it as `dist/VectorCraft.app` (macOS), with the
-//! committed app icon `assets/app-icon/vectorcraft.icns` (regenerate it with `packaging/icons.sh`).
+//! `cargo xtask bundle [--app vectorcraft|stitchcraft]`: build the release app and wrap it as
+//! `dist/VectorCraft.app` (macOS, the default) or `dist/StitchCraft.app`, with the committed app icon
+//! `assets/app-icon/<app>.icns` (regenerate it with `packaging/icons.sh [<app>]`).
 
 use std::path::Path;
 use std::process::Command;
 
-pub fn run(root: &Path) -> Result<(), String> {
+/// A desktop app `cargo xtask bundle` wraps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum App {
+    VectorCraft,
+    /// The embroidery app: VectorCraft's launcher under its own name (`apps/stitchcraft`).
+    StitchCraft,
+}
+
+impl App {
+    /// The app named by `--app <name>` (or `--app=<name>`) in `args`; VectorCraft without one.
+    pub fn from_args(args: &[&str]) -> Result<App, String> {
+        let mut name = None;
+        let mut args = args.iter();
+        while let Some(a) = args.next() {
+            match a.strip_prefix("--app").map(|rest| (rest, rest.strip_prefix('='))) {
+                Some(("", _)) => name = Some(*args.next().ok_or("--app needs vectorcraft or stitchcraft")?),
+                Some((_, Some(value))) => name = Some(value),
+                _ => return Err(format!("bundle: unknown argument {a} (see cargo xtask --help)")),
+            }
+        }
+        match name.unwrap_or("vectorcraft") {
+            "vectorcraft" => Ok(App::VectorCraft),
+            "stitchcraft" => Ok(App::StitchCraft),
+            other => Err(format!("bundle: unknown app {other} (vectorcraft or stitchcraft)")),
+        }
+    }
+
+    /// The name of the bundle, its executable and its icon file.
+    fn name(self) -> &'static str {
+        match self {
+            App::VectorCraft => "VectorCraft",
+            App::StitchCraft => "StitchCraft",
+        }
+    }
+
+    /// The Cargo package, which is also the binary's name.
+    fn package(self) -> &'static str {
+        match self {
+            App::VectorCraft => "vectorcraft",
+            App::StitchCraft => "stitchcraft",
+        }
+    }
+}
+
+pub fn run(root: &Path, app_kind: App) -> Result<(), String> {
+    let (name, package) = (app_kind.name(), app_kind.package());
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .current_dir(root)
-        .args(["build", "--release", "-p", "vectorcraft", "-p", "vectorcraft-cli"])
+        .args(["build", "--release", "-p", package, "-p", "vectorcraft-cli"])
         .status()
         .map_err(|e| e.to_string())?;
     if !status.success() {
         return Err("release build failed".into());
     }
     let target = std::env::var("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| root.join("target"));
-    let app = root.join("dist/VectorCraft.app/Contents");
-    let _ = std::fs::remove_dir_all(root.join("dist/VectorCraft.app"));
+    let bundle = root.join(format!("dist/{name}.app"));
+    let app = bundle.join("Contents");
+    let _ = std::fs::remove_dir_all(&bundle);
     std::fs::create_dir_all(app.join("MacOS")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(app.join("Resources")).map_err(|e| e.to_string())?;
-    std::fs::copy(target.join("release/vectorcraft"), app.join("MacOS/VectorCraft")).map_err(|e| format!("copy app: {e}"))?;
+    std::fs::copy(target.join(format!("release/{package}")), app.join(format!("MacOS/{name}"))).map_err(|e| format!("copy app: {e}"))?;
     std::fs::copy(target.join("release/vectorcraft-cli"), app.join("MacOS/vectorcraft-cli")).map_err(|e| format!("copy cli: {e}"))?;
-    std::fs::copy(root.join("assets/app-icon/vectorcraft.icns"), app.join("Resources/VectorCraft.icns")).map_err(|e| format!("copy icon: {e}"))?;
+    std::fs::copy(root.join(format!("assets/app-icon/{package}.icns")), app.join(format!("Resources/{name}.icns")))
+        .map_err(|e| format!("copy icon: {e}"))?;
     let sha = std::env::var("VECTORCRAFT_BUILD_SHA").unwrap_or_else(|_| "unknown".into());
-    std::fs::write(app.join("Info.plist"), info_plist(env!("CARGO_PKG_VERSION"), &sha)).map_err(|e| e.to_string())?;
-    println!("built {}", root.join("dist/VectorCraft.app").display());
+    let plist = info_plist(env!("CARGO_PKG_VERSION"), &sha);
+    let plist = match app_kind {
+        App::VectorCraft => plist,
+        App::StitchCraft => stitchcraft_plist(&plist)?,
+    };
+    std::fs::write(app.join("Info.plist"), plist).map_err(|e| e.to_string())?;
+    println!("built {}", bundle.display());
     Ok(())
+}
+
+/// StitchCraft's `Info.plist`, made from VectorCraft's (`vectorcraft`): its own name, executable,
+/// icon and bundle identifier; VectorCraft's document types, but `.vectorcraft` documents and
+/// templates as an alternate (VectorCraft owns them, so StitchCraft imports their type instead of
+/// declaring it); and the embroidery machine files `.dst`, `.exp` and `.dsb` it opens, as their
+/// default app (never the owner: other programs use those names too). An error when the template
+/// no longer has what this replaces, so the two cannot drift apart unnoticed.
+fn stitchcraft_plist(vectorcraft: &str) -> Result<String, String> {
+    const EMBROIDERY: &str = "    <dict>
+      <key>CFBundleTypeName</key><string>Embroidery Machine File</string>
+      <key>CFBundleTypeExtensions</key><array><string>dst</string><string>exp</string><string>dsb</string></array>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Default</string>
+    </dict>
+  </array>
+
+  <!-- VectorCraft's own format";
+    let replacements: [(&str, &str, usize); 5] = [
+        ("<string>VectorCraft</string>", "<string>StitchCraft</string>", 5),
+        ("<string>ai.storyteller.vectorcraft</string>", "<string>ai.storyteller.stitchcraft</string>", 1),
+        ("<string>Owner</string>", "<string>Alternate</string>", 2),
+        ("<key>UTExportedTypeDeclarations</key>", "<key>UTImportedTypeDeclarations</key>", 1),
+        ("  </array>\n\n  <!-- VectorCraft's own format", EMBROIDERY, 1),
+    ];
+    let mut plist = vectorcraft.to_owned();
+    for (from, to, count) in replacements {
+        let found = plist.matches(from).count();
+        if found != count {
+            return Err(format!("Info.plist.in has {found} of `{from}`, StitchCraft's plist expects {count}"));
+        }
+        plist = plist.replace(from, to);
+    }
+    Ok(plist)
 }
 
 /// The release `Info.plist` template, which `packaging/macos/package.sh` fills in the same way: the
@@ -70,6 +157,41 @@ mod tests {
         assert!(plist.contains("<array><string>vectorcraft</string><string>drawcraft</string></array>"), "native format extensions");
         assert!(read("packaging/linux/ai.storyteller.vectorcraft.desktop").contains("Categories=Graphics;2DGraphics;VectorGraphics;"));
         assert!(read("packaging/linux/ai.storyteller.vectorcraft.metainfo.xml.in").contains("<category>VectorGraphics</category>"));
+    }
+
+    #[test]
+    fn bundle_takes_the_app_to_wrap() {
+        assert_eq!(App::from_args(&[]), Ok(App::VectorCraft));
+        assert_eq!(App::from_args(&["--app", "stitchcraft"]), Ok(App::StitchCraft));
+        assert_eq!(App::from_args(&["--app=vectorcraft"]), Ok(App::VectorCraft));
+        assert!(App::from_args(&["--app"]).is_err());
+        assert!(App::from_args(&["--app", "photo"]).is_err());
+        assert!(App::from_args(&["stitchcraft"]).is_err());
+    }
+
+    /// StitchCraft's bundle: its own name, executable, icon and identifier; VectorCraft's document
+    /// types, with `.vectorcraft` files left to VectorCraft; and the embroidery machine files.
+    #[test]
+    fn stitchcraft_plist_is_its_own_app() {
+        let vectorcraft = info_plist("1.2.3", "abc123");
+        let p = stitchcraft_plist(&vectorcraft).unwrap();
+        for key in ["CFBundleDisplayName", "CFBundleName", "CFBundleExecutable", "CFBundleIconFile"] {
+            assert!(p.contains(&format!("<key>{key}</key>\n  <string>StitchCraft</string>")), "{key}");
+        }
+        assert!(p.contains("<key>CFBundleIdentifier</key>\n  <string>ai.storyteller.stitchcraft</string>"));
+        assert!(!p.contains("<string>VectorCraft</string>") && !p.contains("<string>ai.storyteller.vectorcraft</string>"));
+        assert!(p.contains("<array><string>dst</string><string>exp</string><string>dsb</string></array>"), "embroidery files");
+        assert!(!p.contains("<string>Owner</string>"), "VectorCraft owns its documents");
+        assert!(p.contains("<key>UTImportedTypeDeclarations</key>") && !p.contains("UTExportedTypeDeclarations"));
+        assert!(p.contains("<string>ai.storyteller.vectorcraft.document</string>"), "opens .vectorcraft documents");
+        assert!(p.contains("<string>svg</string>") && p.contains("<string>1.2.3</string>"), "VectorCraft's types and version");
+        // Every document type keeps a role and a rank.
+        let types = p.matches("<key>CFBundleTypeName</key>").count();
+        assert_eq!(types, vectorcraft.matches("<key>CFBundleTypeName</key>").count() + 1);
+        assert_eq!(p.matches("<key>LSHandlerRank</key>").count(), types);
+        // VectorCraft's own bundle is unchanged.
+        assert_eq!(vectorcraft.matches("<string>Owner</string>").count(), 2);
+        assert!(stitchcraft_plist("<plist/>").is_err(), "a template it no longer fits is an error");
     }
 
     #[test]

@@ -1,7 +1,8 @@
 use super::{VectorcraftApp, fileio, prefs_dir};
 
 /// Where UI preferences live: ~/Library/Application Support/VectorCraft (macOS),
-/// %APPDATA%\VectorCraft (Windows), $XDG_CONFIG_HOME or ~/.config/vectorcraft (Linux).
+/// %APPDATA%\VectorCraft (Windows), $XDG_CONFIG_HOME or ~/.config/vectorcraft (Linux); StitchCraft's
+/// in its own StitchCraft (stitchcraft) folder ([`crate::identity`]).
 pub(crate) fn prefs_path() -> Option<std::path::PathBuf> {
     prefs_dir::prefs_path_for("VectorCraft", "vectorcraft")
 }
@@ -40,6 +41,11 @@ pub(crate) fn read_prefs() -> Option<vectorcraft_ui_egui::UiState> {
             keep_prefs_copy(&p, &bytes, "ui.before-layout-migration");
         }
         return read.map(|read| read.ui);
+    }
+    // Only VectorCraft had a former name: another app (StitchCraft) starts from its own defaults
+    // rather than from the old DrawCraft settings.
+    if crate::identity::current().name != crate::identity::VECTORCRAFT.name {
+        return None;
     }
     let bytes = legacy_prefs_path().and_then(|p| std::fs::read(p).ok())?;
     decode_saved_prefs(&bytes)

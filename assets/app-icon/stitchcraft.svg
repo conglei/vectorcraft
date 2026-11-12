@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- StitchCraft app icon: a needle threaded with a loop of running stitches. Drawn by hand for
+       StitchCraft in the VectorCraft icon's three-colour scheme (ink, paper, one field colour). -->
+  <defs>
+    <clipPath id="t"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#t)">
+    <rect width="512" height="512" fill="#2f7d78"/>
+    <!-- The thread from the eye: a loop of running stitches, each outlined in ink. -->
+    <path d="M338 160 C 430 96, 476 210, 404 286 C 330 364, 168 378, 120 300 C 78 232, 150 150, 236 170"
+          fill="none" stroke="#0b0b0c" stroke-width="30" stroke-linecap="round" stroke-dasharray="40 30"/>
+    <path d="M338 160 C 430 96, 476 210, 404 286 C 330 364, 168 378, 120 300 C 78 232, 150 150, 236 170"
+          fill="none" stroke="#efe9dc" stroke-width="16" stroke-linecap="round" stroke-dasharray="40 30"/>
+    <!-- The needle, eye up and to the right, point down and to the left. -->
+    <g transform="rotate(40 256 256)">
+      <path d="M234 112 A22 22 0 0 1 278 112 L278 352 L256 466 L234 352 Z"
+            fill="#efe9dc" stroke="#0b0b0c" stroke-width="12" stroke-linejoin="round"/>
+      <rect x="248" y="94" width="16" height="64" rx="8" fill="#2f7d78" stroke="#0b0b0c" stroke-width="8"/>
+    </g>
+  </g>
+</svg>

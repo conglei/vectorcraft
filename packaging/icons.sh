@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Regenerate every app icon from assets/app-icon/vectorcraft.svg (the canonical artwork).
+# Regenerate every app icon from assets/app-icon/vectorcraft.svg (the canonical artwork), or
+# StitchCraft's from assets/app-icon/stitchcraft.svg.
 #
 # Needs: resvg (brew install resvg / cargo install resvg). On macOS, iconutil also writes the
 # .icns. The outputs are committed, so building and packaging never need these tools.
 #
-#   packaging/icons.sh
+#   packaging/icons.sh               # VectorCraft
+#   packaging/icons.sh stitchcraft   # StitchCraft: its runtime icons and its .icns only
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="$ROOT/assets/app-icon"
-SVG="$DIR/vectorcraft.svg"
-ID="ai.storyteller.vectorcraft"
+APP="${1:-vectorcraft}"
+case "$APP" in
+  vectorcraft | stitchcraft) ;;
+  *) echo "error: unknown app $APP (vectorcraft or stitchcraft)" >&2; exit 1 ;;
+esac
+SVG="$DIR/$APP.svg"
+ID="ai.storyteller.$APP"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -23,9 +30,29 @@ grep -q 'viewBox="-62.136' "$MAC" || { echo "error: $SVG has no 512 viewBox" >&2
 
 render() { resvg -w "$2" -h "$2" "$1" "$3" </dev/null; }
 
-render "$SVG" 1024 "$DIR/vectorcraft-1024.png"
-# Runtime window/Dock icon on macOS (embedded by apps/vectorcraft/src/main.rs).
-render "$MAC" 512 "$DIR/vectorcraft-macos-512.png"
+render "$SVG" 1024 "$DIR/$APP-1024.png"
+# Runtime window/Dock icon on macOS (embedded by apps/vectorcraft/src/titlebar.rs; StitchCraft's
+# by apps/stitchcraft/src/main.rs).
+render "$MAC" 512 "$DIR/$APP-macos-512.png"
+
+# StitchCraft is packaged for macOS only so far: its runtime icons (the 256 px window icon on
+# Windows and Linux, the 128 px brand mark in the app bar and About box) and its .icns.
+if [ "$APP" = stitchcraft ]; then
+  for s in 128 256; do
+    mkdir -p "$DIR/hicolor/${s}x${s}/apps"
+    render "$SVG" "$s" "$DIR/hicolor/${s}x${s}/apps/$ID.png"
+  done
+  command -v iconutil >/dev/null || { echo "warning: iconutil not found (macOS only); $APP.icns not regenerated" >&2; exit 0; }
+  SET="$TMP/$APP.iconset"
+  mkdir -p "$SET"
+  for s in 16 32 128 256 512; do
+    render "$MAC" "$s" "$SET/icon_${s}x${s}.png"
+    render "$MAC" $((s * 2)) "$SET/icon_${s}x${s}@2x.png"
+  done
+  iconutil -c icns -o "$DIR/$APP.icns" "$SET"
+  echo "icons written to $DIR"
+  exit 0
+fi
 
 # Linux hicolor theme (the 256 one is also the runtime icon on Windows and Linux).
 for s in 16 24 32 48 64 128 256 512; do

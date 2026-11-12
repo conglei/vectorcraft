@@ -14,6 +14,10 @@
 //!    reads the old DrawCraft profile, and a run without preferences (`VECTORCRAFT_NO_PREFS`) never
 //!    looks for the marker.
 //! 3. The platform convention.
+//!
+//! The folder is VectorCraft's unless [`set_app`] names another app (StitchCraft keeps its own
+//! settings). Portable mode is VectorCraft's alone: no other app has a portable package, so another
+//! app never looks for the marker.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,6 +27,22 @@ use std::sync::OnceLock;
 pub const PORTABLE_MARKERS: [&str; 2] = ["portable.txt", "VectorCraft.portable"];
 /// The settings folder created in the install folder in portable mode.
 pub const PORTABLE_DATA_DIR: &str = "VectorCraftData";
+
+/// The app whose settings these are, as (name, lowercase name); VectorCraft until [`set_app`].
+static APP: OnceLock<(&'static str, &'static str)> = OnceLock::new();
+
+/// Keep the settings of the app `name` (`lower` on Linux and the BSDs) rather than VectorCraft's.
+/// The first call wins: one process is one app.
+#[allow(dead_code, reason = "vectorcraft-cli shares this file and keeps VectorCraft's settings")]
+pub fn set_app(name: &'static str, lower: &'static str) {
+    // A later call keeps the first app: its settings may already be in use.
+    let _ = APP.set((name, lower));
+}
+
+/// The app whose settings these are.
+fn app() -> (&'static str, &'static str) {
+    APP.get().copied().unwrap_or(("VectorCraft", "vectorcraft"))
+}
 
 pub fn prefs_path(legacy: bool) -> Option<PathBuf> {
     prefs_path_with(std::env::consts::OS, legacy, |key| std::env::var_os(key), portable_dir)
@@ -37,6 +57,7 @@ fn prefs_path_with(os: &str, legacy: bool, env: impl Fn(&str) -> Option<OsString
     }
     // A run without preferences reads and writes nothing, so it must not create the portable folder.
     if env("VECTORCRAFT_NO_PREFS").is_none()
+        && app().0 == "VectorCraft"
         && let Some(dir) = portable()
     {
         // A portable copy is self-contained: DrawCraft's old profile is not read into it.
@@ -45,9 +66,9 @@ fn prefs_path_with(os: &str, legacy: bool, env: impl Fn(&str) -> Option<OsString
     platform_dir(os, legacy, &env).map(|p| p.join("ui.json"))
 }
 
-/// The platform's settings folder of VectorCraft, or of DrawCraft (`legacy`).
+/// The platform's settings folder of the app ([`set_app`]), or of DrawCraft (`legacy`).
 fn platform_dir(os: &str, legacy: bool, env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let (name, lower) = if legacy { ("DrawCraft", "drawcraft") } else { ("VectorCraft", "vectorcraft") };
+    let (name, lower) = if legacy { ("DrawCraft", "drawcraft") } else { app() };
     match os {
         "macos" => env("HOME").map(|p| PathBuf::from(p).join("Library/Application Support").join(name)),
         "windows" => env("APPDATA").map(|p| PathBuf::from(p).join(name)),
