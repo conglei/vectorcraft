@@ -18,6 +18,8 @@ accessibility = ["eframe/accesskit"]
 vectorcraft-engine = { workspace = true, features = ["bundled-fonts", "heif"] }
 vectorcraft-ui-egui = { workspace = true }
 vectorcraft-text = { workspace = true }
+# Hosted image models for photo.prepare (Gemini over HTTPS), installed into the session.
+vectorcraft-imagemodel = { workspace = true }
 # Shared across the Craft suite: decides who draws the window frame per desktop (compositor vs app)
 # so VectorCraft matches the rest on Linux. `egui` adds `craft_window::decorate`. See #217.
 craft-window = { workspace = true }

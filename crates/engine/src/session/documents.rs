@@ -114,6 +114,7 @@ impl Session {
             package_hand_off: None,
             screens_hand_off: None,
             recovery: Default::default(),
+            photo: Default::default(),
             in_tool_actions: false,
             previewing: false,
             envelope_defaults: None,

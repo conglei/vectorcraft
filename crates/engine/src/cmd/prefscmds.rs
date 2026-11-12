@@ -371,6 +371,8 @@ pub const PREF_SPECS: &[PrefSpec] = &[
     p!("autosaveInterval", "File Handling", "Data Recovery", "Every (minutes)", int(1, 60)),
     p!("recoveryFolder", "File Handling", "Data Recovery", "Folder", text),
     p!("recoveryOffForComplex", "File Handling", "Data Recovery", "Turn off Data Recovery for complex documents", bool),
+    // Which provider photo.prepare uses; anything but `nomodel` sends the photo off the computer.
+    p!("photoProvider", "File Handling", "Photo Preparation", "Image Model", choice(super::photo::PROVIDER_CHOICES)),
     p!("recentFilesCount", "File Handling", "Files", "Number of Recent Files to Display", int(0, 30)),
     p!("lowResProxyEps", "File Handling", "Files", "Use Low Resolution Proxy for Linked EPS", bool),
     p!("antiAliasedBitmaps", "File Handling", "Files", "Display Bitmaps as Anti-aliased Images in Pixel Preview", bool),

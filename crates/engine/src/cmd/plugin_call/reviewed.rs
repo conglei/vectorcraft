@@ -667,7 +667,8 @@ pub(super) const ALLOWED: &[&str] = &[
 ];
 
 /// Commands a plug-in may not call although no rule refuses them, in order: they change the
-/// preferences, a tool's options, a drag's state or the font names the whole app knows.
+/// preferences, a tool's options, a drag's state or the font names the whole app knows, or say how
+/// this computer is set up (`photo.providers`: whether an image model's key is set).
 pub(super) const DENIED: &[&str] = &[
     "addon.cleanup.splitText",
     "addon.pathtools.movePointsTogether",
@@ -676,6 +677,7 @@ pub(super) const DENIED: &[&str] = &[
     "object.blend.options",
     "object.liquify",
     "object.pathfinder.options",
+    "photo.providers",
     "stitch.threads.use",
     "type.compositeFonts.set",
 ];

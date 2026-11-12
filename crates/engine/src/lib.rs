@@ -257,6 +257,9 @@ pub struct Session {
     pub(crate) screens_hand_off: Option<Option<cmd::fileio::ScreenExport>>,
     /// Where Data Recovery keeps its copies ([`cmd::recovery`]).
     pub recovery: cmd::recovery::Recovery,
+    /// The photo preparation providers the host installed besides the built-in `nomodel`
+    /// ([`cmd::photo`]): the desktop app and the CLI install Gemini; the web installs none.
+    pub photo: cmd::photo::Providers,
     /// The running script's job, while there is one: the mutation lease ([`script`]).
     pub(crate) script_key: Option<script::JobKey>,
     /// Stops the running script at its next instruction; the same flag for every run.

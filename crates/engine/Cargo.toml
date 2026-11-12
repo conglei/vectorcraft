@@ -38,6 +38,8 @@ vectorcraft-cad = { workspace = true }
 # Embroidery: stitch plans from documents, and DST and EXP files.
 vectorcraft-stitch = { workspace = true }
 vectorcraft-embroidery = { workspace = true }
+# Photo preparation for embroidery: the provider interface and the no-model path (offline).
+vectorcraft-imageprep = { workspace = true }
 vectorcraft-eps = { workspace = true }
 vectorcraft-metafile = { workspace = true }
 vectorcraft-plugins = { workspace = true }

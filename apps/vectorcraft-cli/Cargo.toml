@@ -21,6 +21,8 @@ vectorcraft-format = { workspace = true }
 vectorcraft-geom = { workspace = true }
 vectorcraft-svg = { workspace = true }
 vectorcraft-mcp = { workspace = true }
+# Hosted image models for photo.prepare (Gemini over HTTPS), installed into the session.
+vectorcraft-imagemodel = { workspace = true }
 vectorcraft-render = { workspace = true }
 vectorcraft-text = { workspace = true }
 serde_json = { workspace = true }

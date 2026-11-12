@@ -1,0 +1,14 @@
+[package]
+name = "vectorcraft-imageprep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VectorCraft photo preparation: the image provider interface, the no-model path and the likeness check"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The RGBA raster, its capped decoding and the edge-preserving smoothing of Image Trace.
+vectorcraft-trace = { workspace = true }
+image = { workspace = true }

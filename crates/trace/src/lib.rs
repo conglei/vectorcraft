@@ -66,6 +66,7 @@ pub use gradient::TracedGradient;
 pub use mosaic::mosaic;
 pub use quantize::{FULL_TONE_MAX, Quantized, TRANSPARENT, denoise, quantize};
 pub use shapes::TracedShape;
+pub use smooth::smoothed;
 use subpixel::Crack;
 
 mod layers;

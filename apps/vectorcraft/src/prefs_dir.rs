@@ -73,6 +73,14 @@ pub fn attach_custom_dictionary(session: &mut vectorcraft_engine::Session) {
     }
 }
 
+/// Install the hosted image models photo preparation can use (`photo.prepare`): Gemini, which reads
+/// its key from `GEMINI_API_KEY` at each call. Installing sends nothing: a photo leaves the computer
+/// only when `photo.prepare` names Gemini or the `photoProvider` preference chooses it.
+pub fn attach_image_providers(session: &mut vectorcraft_engine::Session) {
+    let agent = concat!("VectorCraft/", env!("CARGO_PKG_VERSION"));
+    session.photo.install(std::sync::Arc::new(vectorcraft_imagemodel::Gemini::from_env(agent)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
