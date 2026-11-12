@@ -175,15 +175,14 @@ fn readout(p: &Player) -> String {
 /// The design's figures: "3,203 stitches · 3 colours · 49.4 × 75.9 mm · 3 trims".
 fn figures(p: &Player) -> String {
     let colours = p.blocks.iter().filter(|b| b.stitches > 0).count();
+    let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { tl!(one) } else { tl!(many) });
     format!(
-        "{} {} · {colours} {} · {:.1} × {:.1} mm · {} {}",
-        p.total,
-        tl!("stitches"),
-        tl!("colours"),
+        "{} · {} · {:.1} × {:.1} mm · {}",
+        count(p.total, "stitch", "stitches"),
+        count(colours, "colour", "colours"),
         p.size_mm.0,
         p.size_mm.1,
-        p.trims,
-        tl!("trims")
+        count(p.trims, "trim", "trims")
     )
 }
 
@@ -391,7 +390,11 @@ mod tests {
         assert!(texts.iter().any(|t| t == "1") && texts.iter().any(|t| t == "2"), "{texts:?}");
         let line = figures(&p);
         assert!(texts.contains(&line), "{line:?} in {texts:?}");
-        assert!(line.starts_with(&format!("{} stitches · 2 colours · ", p.total)) && line.contains(" mm · ") && line.ends_with("trims"), "{line}");
+        assert!(line.starts_with(&format!("{} stitches · 2 colours · ", p.total)) && line.contains(" mm · ") && line.contains(" trim"), "{line}");
+        let block = vectorcraft_engine::stitch_preview::BlockInfo { stitches: 1, ..p.blocks[0].clone() };
+        let one =
+            Player { total: 1, trims: 1, blocks: vec![block], position: None, playing: false, marks: vec![], size_mm: (0.0, 0.0), needle_mm: None };
+        assert!(figures(&one).starts_with("1 stitch · 1 colour · ") && figures(&one).ends_with(" · 1 trim"), "{}", figures(&one));
         // The rectangle is 100 × 50 pt and the ellipse reaches 120 pt down: about 35.3 × 42.3 mm.
         assert!((p.size_mm.0 - 35.3).abs() < 0.3 && (p.size_mm.1 - 42.3).abs() < 0.3, "{:?}", p.size_mm);
         assert_eq!(thread_tip(1, &p.blocks[0]), format!("1. #ff0000 · {} stitches · {:.1} m", p.blocks[0].stitches, p.blocks[0].length_mm / 1000.0));

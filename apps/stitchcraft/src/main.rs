@@ -1,7 +1,7 @@
 //! StitchCraft desktop app: the embroidery sibling of VectorCraft. It is VectorCraft's launcher
 //! (`apps/vectorcraft/src/lib.rs`) on the same crates, started under StitchCraft's name, with its
-//! own settings folder and icon, no update check, and the Stitch Properties panel docked on its
-//! first start. See `docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md`.
+//! own settings folder and icon, no update check, documents that open showing their stitches, and
+//! the Embroidery workspace in millimetres on its first start. See `docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md`.
 //!
 //! Usage: as `vectorcraft` (`stitchcraft --help`).
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
