@@ -1448,6 +1448,18 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{file?, provider?: none | nomodel | gemini (null: the photoProvider preference), colors?: 8, widthMm?: 100, fill?: field | tatami | rows | meander, spacing?: 0.4, feather?: 0, features?: true, seed?: 1} open Photo to Stitches (dialog `photoStitch`: fields = these, the params of photo.toStitches); OK runs photo.toStitches, which opens the design as a new document, and closes; an error stays in the dialog as `__error`",
     ),
     (
+        "ui.stitchWorksheet",
+        "Production Worksheet…",
+        "",
+        "{path?, machine?, spm?, …stitch.info options} open Production Worksheet (dialog `stitchWorksheet`: fields `path`, `machine`, `spm`), over the options the last stitch export used; Save runs stitch.worksheet and writes the PDF; off without a document",
+    ),
+    (
+        "ui.stitchProduction",
+        "Export for Production…",
+        "",
+        "{dir?, name?, formats?, worksheet?, machine?, …stitch.info options} open Export for Production (dialog `stitchProduction`: fields `dir`, `name`, `machine`, `dst`, `dsb`, `exp`, `worksheet`), over the options the last stitch export used; Export runs stitch.exportProduction into the folder; off without a document",
+    ),
+    (
         "ui.stitchOptionsDialog",
         "Stitch File Options Dialog",
         "",

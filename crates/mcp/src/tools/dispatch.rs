@@ -257,6 +257,14 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
             }
             j(exec(b, "document.export", Value::Object(params))?)
         }
+        "stitch_worksheet" | "export_production" => {
+            let (cmd, key) = if name == "stitch_worksheet" { ("stitch.worksheet", "path") } else { ("stitch.exportProduction", "dir") };
+            let mut params = a.clone();
+            if let Some(path) = a.get(key).and_then(Value::as_str) {
+                params.insert(key.into(), json!(absolute_path(b, path)?));
+            }
+            j(exec(b, cmd, Value::Object(params))?)
+        }
         "photo_to_stitches" => j(photo_to_stitches(b, a)?),
         "add_text" => j(add_text(b, a)?),
         "apply_effect" => {
