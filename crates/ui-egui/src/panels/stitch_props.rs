@@ -166,6 +166,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         });
     }
     letter_trims(app, ui, &objects);
+    sequencing(app, ui, &objects);
     ui.add_space(6.0);
     let own = objects.iter().any(|o| o["own"].as_object().is_some_and(|m| !m.is_empty()));
     ui.horizontal(|ui| {
@@ -195,6 +196,36 @@ fn letter_trims(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
             app.run("stitch.setParams", json!({ "params": { "letterTrims": t.id() } })).ok();
         }
     });
+}
+
+/// Embroidery › Remove Overlaps and Route Within Colors, when the selection has them: a line each
+/// with a Clear button (`stitch.overlap.clear`, `stitch.route {maxTravelMm: 0}`).
+fn sequencing(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
+    let ids = |key: &str| -> Vec<u64> { objects.iter().filter(|o| o[key].is_number()).filter_map(|o| o["id"].as_u64()).collect() };
+    let mm = |key: &str| -> String {
+        match shared(objects, |o| &o[key]).and_then(Value::as_f64) {
+            Some(v) => format!("{v:.1} mm"),
+            None => tl!("mixed").to_string(),
+        }
+    };
+    for (key, label, tip, cmd, params) in [
+        ("overlapMm", tl!("Overlaps removed"), tl!("Sew the fill whole again, under the fills sewn after it"), "stitch.overlap.clear", json!({})),
+        ("routeMm", tl!("Routed travel"), tl!("Enter it by a trim again, not by travel"), "stitch.route", json!({"maxTravelMm": 0})),
+    ] {
+        let listed = ids(key);
+        if listed.is_empty() {
+            continue;
+        }
+        let text = format!("{label} ({})", mm(key));
+        ui.horizontal(|ui| {
+            widgets::dim_label(ui, &text);
+            if widgets::flat_button(ui, tl!("Clear"), 56.0).on_hover_text(tip).clicked() {
+                let mut p = params.clone();
+                p["ids"] = json!(listed);
+                app.run(cmd, p).ok();
+            }
+        });
+    }
 }
 
 /// Where the defaults come from.
@@ -248,6 +279,23 @@ mod tests {
         let a = app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 50, "height": 50})).unwrap()["id"].as_u64().unwrap();
         let b = app.run("shape.rectangle", json!({"x": 100, "y": 0, "width": 50, "height": 50})).unwrap()["id"].as_u64().unwrap();
         (app, a, b)
+    }
+
+    #[test]
+    fn removed_overlaps_show_a_line_with_clear() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+        app.run("paint.setStroke", json!({"none": true})).unwrap();
+        app.run("paint.setFill", json!({"color": "#0000ff"})).unwrap();
+        let a = app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 60, "height": 60})).unwrap()["id"].as_u64().unwrap();
+        app.run("select.none", json!({})).unwrap();
+        app.run("shape.rectangle", json!({"x": 30, "y": 30, "width": 60, "height": 60})).unwrap();
+        app.run("stitch.overlap.remove", json!({})).unwrap();
+        app.run("select.set", json!({"ids": [a]})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Overlaps removed (0.7 mm)") && t.iter().any(|s| s == "Clear"), "{t:?}");
+        app.run("stitch.overlap.clear", json!({"ids": [a]})).unwrap();
+        assert!(!frame(&mut app).iter().any(|s| s.starts_with("Overlaps removed")));
     }
 
     #[test]

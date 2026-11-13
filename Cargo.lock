@@ -6778,6 +6778,7 @@ dependencies = [
  "vectorcraft-color",
  "vectorcraft-doc",
  "vectorcraft-geom",
+ "vectorcraft-pathops",
  "vectorcraft-text",
 ]
 
@@ -6869,6 +6870,7 @@ dependencies = [
  "vectorcraft-effects",
  "vectorcraft-geom",
  "vectorcraft-pathops",
+ "vectorcraft-stitch",
  "vectorcraft-text",
 ]
 

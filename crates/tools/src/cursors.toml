@@ -804,6 +804,12 @@ group = "Symbolism tools"
 shown_when = ["The Symbol Styler: a drag applies the chosen graphic style to instances; Alt reverses it."]
 hotspot = "The brush centre."
 
+[[cursor]]
+id = "StitchEntryExit"
+group = "Drawing and editing tools"
+shown_when = ["The Entry and Exit tool (Embroidery) over a selected object's entry or exit point: a drag moves that point along the object's outline, where sewing starts or ends; with Shift both move together."]
+hotspot = "Exact: the point the drag moves."
+
 # ── Not needed ────────────────────────────────────────────────────────────────────────────────────
 # Tools that deliberately have no cursor of their own (listed for designers so nobody draws one).
 

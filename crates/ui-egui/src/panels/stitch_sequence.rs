@@ -1,6 +1,6 @@
 //! Stitch Sequence panel (Window › Stitch Sequence, Embroidery › Stitch Sequence): the order the
-//! objects are sewn in, one row per object (its thread colours, name, stitch types and stitch
-//! count), with Move Up, Move Down, Sort by Colour and Closest Join. It reads
+//! objects are sewn in, one row per object (its thread colours, name, stitch types, stitch count
+//! and trims, from the plan the export writes, so they add up to `stitch.info`'s), with Move Up, Move Down, Sort by Colour and Closest Join. It reads
 //! `stitch.sequence.list` and acts through `stitch.sequence.move`, `stitch.sequence.sortByColor`,
 //! `stitch.join.closest` and `select.set`; a row click selects its object, and the selected
 //! objects' rows are highlighted.
@@ -87,7 +87,12 @@ fn rows(ui: &mut Ui, t: &Tokens, objects: &[Value], selected: &[NodeId]) -> Opti
             let pin = if o["pinned"] == true { tl!(" (fixed entry)") } else { "" };
             ui.painter().text(row.left_center() + vec2(x + 4.0, 0.0), egui::Align2::LEFT_CENTER, format!("{name}{pin}"), font.clone(), t.text);
             let stitches = o["stitches"].as_u64().unwrap_or(0);
-            let detail = format!("{} · {}", sews_text(o), crate::i18n::tn(stitches, "{n} stitch", "{n} stitches"));
+            let mut detail = format!("{} · {}", sews_text(o), crate::i18n::tn(stitches, "{n} stitch", "{n} stitches"));
+            // The trims sewing it takes (the one leading to it included), as the export has them.
+            let trims = o["trims"].as_u64().unwrap_or(0);
+            if trims > 0 {
+                detail = format!("{detail} · {}", crate::i18n::tn(trims, "{n} trim", "{n} trims"));
+            }
             ui.painter().text(row.right_center() - vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, detail, font, t.text_dim);
             if resp.clicked() {
                 clicked = Some(id);

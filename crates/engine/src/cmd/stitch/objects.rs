@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Properties",
             [],
             None,
-            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; for a group or layer, what the objects in it sew, each type once; [] when nothing is sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay, compensation (null: none)} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there)}]}; objects of other kinds are left out",
+            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; for a group or layer, what the objects in it sew, each type once; [] when nothing is sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay, compensation (null: none)} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there), overlapMm: the allowance stitch.overlap.remove left on it (null: sewn whole), routeMm: the longest travel stitch.route lets it be entered by (null: a trim)}]}; objects of other kinds are left out",
             has_doc,
             props
         ),
@@ -261,6 +261,8 @@ fn props(s: &mut Session, p: &Value) -> Result<Value> {
             "sews": sews,
             "params": props_json(&inherited, |param| effective_number(&inherited, param, &o), true),
             "opened": opened,
+            "overlapMm": own.overlap_mm(),
+            "routeMm": own.route_mm(),
         }));
     }
     Ok(json!({ "objects": objects }))

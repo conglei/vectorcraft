@@ -18,6 +18,7 @@ pub mod dimension;
 pub mod direct;
 pub mod distort;
 pub mod draw2;
+pub mod entry_exit;
 pub mod extra;
 pub mod guides;
 pub mod intertwine;

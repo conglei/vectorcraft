@@ -16,6 +16,7 @@ vectorcraft-brush = { workspace = true }
 vectorcraft-pathops = { workspace = true }
 vectorcraft-effects = { workspace = true }
 vectorcraft-text = { workspace = true }
+vectorcraft-stitch = { workspace = true }
 kurbo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

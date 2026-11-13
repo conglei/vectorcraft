@@ -14,6 +14,7 @@ vectorcraft-color = { workspace = true }
 vectorcraft-doc = { workspace = true }
 # Type is sewn as lettering from its laid-out glyphs (without the bundled fonts: the apps choose).
 vectorcraft-text = { workspace = true }
+vectorcraft-pathops = { workspace = true }
 kurbo = { workspace = true }
 serde_json = { workspace = true }
 

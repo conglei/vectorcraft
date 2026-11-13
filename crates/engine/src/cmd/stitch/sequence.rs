@@ -4,11 +4,15 @@
 //! is one undo step. Exports, `stitch.info` and the stitch preview sew by them
 //! ([`vectorcraft_stitch::from_document`]).
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, MAX_COORD, NodeId, NodeKind, StitchType};
+use vectorcraft_doc::{Document, MAX_COORD, NodeId, NodeKind, OVERLAP_RANGE, ROUTE_RANGE, StitchType};
 use vectorcraft_geom::Point;
 use vectorcraft_stitch::sequence::{Cost, Item, closest_join, colour_changes, colour_sort, cost};
-use vectorcraft_stitch::{FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, inherited_props, outline_fraction, sequence, sewn_as};
+use vectorcraft_stitch::{
+    FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, covered_fills, inherited_props, outline_fraction, sequence, sewn_as, stats, stats_by_tag,
+};
 
 use super::super::fileio::stitchfile;
 use super::super::{CommandSpec, Result, Session, bad, cmd, has_doc, targets};
@@ -28,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Sequence",
             [],
             None,
-            "{options?: {…the stitch options of stitch.info (stitchLength, minStitch, mode, fill, stroke…); default: the export's}} the order the objects are sewn in (the order set with stitch.sequence.set, move or sortByColor, then every other sewn path and compound path in document order, bottom to top) → {objects: [{id, name, colors: [\"#rrggbb\"…] (the threads it sews in, in order), sews: [tatami|run|satin|manual…], stitches (needle points, before lock stitches), entry: {x, y}, exit: {x, y} (where it is entered and left, document units), own: {entry?, exit?, joinEntry?, joinExit?} (the points stored on it: fractions 0–1 along its outline, set by stitch.entryExit.set and stitch.join.closest), pinned (the user set its entry or exit), opened (on the layer an opened stitch file made: sewn as the file had it)}], colorBlocks: [{rgb: \"#rrggbb\", objects: [id…]}] (consecutive objects in one thread), colorChanges, trims, travelMm (of joining the objects in this order; stitch.info has the machine file's own), ordered (an order is set), start: {x, y}|null, end: {x, y}|null (the design's start and end)}",
+            "{options?: {…the stitch options of stitch.info (stitchLength, minStitch, mode, fill, stroke…); default: the export's}} the order the objects are sewn in (the order set with stitch.sequence.set, move or sortByColor, then every other sewn path and compound path in document order, bottom to top) → {objects: [{id, name, colors: [\"#rrggbb\"…] (the threads it sews in, in order), sews: [tatami|run|satin|manual…], stitches, trims, jumps, travelMm (what the plan the export writes sews for it, lock stitches and the machine's trims included; the jump and trim leading to an object count to it, so they add up to the totals), entry: {x, y}, exit: {x, y} (where it is entered and left, document units), own: {entry?, exit?, joinEntry?, joinExit?} (the points stored on it: fractions 0–1 along its outline, set by stitch.entryExit.set and stitch.join.closest), pinned (the user set its entry or exit), opened (on the layer an opened stitch file made: sewn as the file had it)}], colorBlocks: [{rgb: \"#rrggbb\", objects: [id…]}] (consecutive objects in one thread), colorChanges, stitches, trims, travelMm (the plan's, as stitch.info counts them with the same options), ordered (an order is set), start: {x, y}|null, end: {x, y}|null (the design's start and end)}",
             has_doc,
             list
         ),
@@ -86,17 +90,48 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             start_end
         ),
+        cmd!(
+            "stitch.overlap.remove",
+            "Remove Overlaps",
+            ["Embroidery"],
+            None,
+            "{ids?: [id…] (default: every sewn object), allowanceMm?: 0.7 (0–5), options?} for each listed tatami fill that a fill sewn after it overlaps, sew it without what the later fills cover, each inset by the allowance so they still overlap its cut edge and no fabric shows; stored on the object (its overlap property), so it is cut again when either object moves; stitch.overlap.clear undoes it; one undo step → {changed: [id…], stitches: {before, after}}",
+            has_doc,
+            overlap_remove
+        ),
+        cmd!(
+            "stitch.overlap.clear",
+            "Restore Overlaps",
+            [],
+            None,
+            "{ids?: [id…] (default: every object whose overlaps are removed)} sew these fills whole again; one undo step → {changed: [id…]}",
+            has_doc,
+            overlap_clear
+        ),
+        cmd!(
+            "stitch.route",
+            "Route Within Colors",
+            ["Embroidery"],
+            None,
+            "{ids?: [id…] (default: every sewn object), maxTravelMm?: 3 (0.1–20; 0: trims again), options?} enter each listed object from the one before it (in the same thread) by running stitch instead of a trim and a jump, when its entry is within maxTravelMm of the needle and the straight way lies under a fill of that thread sewn from it on, or along such a fill's edge; else the trim stays. Stored on the object (its route property), which every export, stitch.info and the preview follow; one undo step → {changed: [id…], trims: {before, after}}",
+            has_doc,
+            route_cmd
+        ),
     ]
 }
 
 /// The stitch options in `p`'s `options` (the export's when not given).
 fn options(p: &Value, cmd: &str) -> Result<FromDocOptions> {
-    let options = match p.get("options") {
-        None | Some(Value::Null) => json!({}),
-        Some(o) if o.is_object() => o.clone(),
-        Some(o) => return Err(bad(cmd, format!("options must be an object of stitch options, not {o}"))),
-    };
-    stitchfile::from_doc_options(cmd, &options)
+    stitchfile::from_doc_options(cmd, &options_value(p, cmd)?)
+}
+
+/// The stitch options object in `p` (`{}` when not given).
+fn options_value(p: &Value, cmd: &str) -> Result<Value> {
+    match p.get("options") {
+        None | Some(Value::Null) => Ok(json!({})),
+        Some(o) if o.is_object() => Ok(o.clone()),
+        Some(o) => Err(bad(cmd, format!("options must be an object of stitch options, not {o}"))),
+    }
 }
 
 /// The document's sewing order with options `p`.
@@ -134,6 +169,13 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let o = options(p, LIST)?;
     let seq = sequenced(s, p, LIST)?;
     let d = &s.doc()?.doc;
+    // Each object's stitches, trims and travel come from the plan the export writes and
+    // stitch.info counts (lock stitches, travel joins and the machine's trims included), so the
+    // panel, the player and the file agree.
+    let made = if seq.items.is_empty() { None } else { Some(stitchfile::accounted(LIST, d, &options_value(p, LIST)?)?) };
+    let by_tag = made.as_ref().map(|m| stats_by_tag(&m.plan, &m.tags, m.owners.len())).unwrap_or_default();
+    let tag_of: HashMap<NodeId, usize> = made.as_ref().map(|m| m.owners.iter().enumerate().map(|(i, id)| (*id, i)).collect()).unwrap_or_default();
+    let totals = made.as_ref().map(|m| stats(&m.plan));
     let mut objects = vec![];
     let mut blocks: Vec<([u8; 3], Vec<u64>)> = vec![];
     for it in &seq.items {
@@ -150,12 +192,16 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         let (entry, exit) = it.ends().map_or((Value::Null, Value::Null), |(a, b)| (doc_xy(a), doc_xy(b)));
+        let counted = tag_of.get(&it.id).and_then(|&i| by_tag.get(i)).copied().unwrap_or_default();
         objects.push(json!({
             "id": it.id.0,
             "name": name_of(d, it.id),
             "colors": it.colours.iter().map(|c| hex(*c)).collect::<Vec<_>>(),
             "sews": sews,
-            "stitches": it.stitches,
+            "stitches": counted.stitches,
+            "trims": counted.trims,
+            "jumps": counted.jumps,
+            "travelMm": (counted.travel_mm * 10.0).round() / 10.0,
             "entry": entry,
             "exit": exit,
             "own": points,
@@ -173,16 +219,15 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let all = items(&seq);
-    let ways: Vec<usize> = seq.items.iter().map(|i| i.way).collect();
-    let c = cost(&all, &ways, &seq.ends);
     let pt = |p: Option<Point>| p.map_or(Value::Null, |p| json!({"x": p.x, "y": p.y}));
+    let (changes, trims, travel) = totals.as_ref().map_or((0, 0, 0.0), |t| (t.color_changes, t.trims, t.travel_mm));
     Ok(json!({
         "objects": objects,
         "colorBlocks": blocks.into_iter().map(|(rgb, ids)| json!({"rgb": hex(rgb), "objects": ids})).collect::<Vec<_>>(),
-        "colorChanges": c.changes,
-        "trims": c.trims,
-        "travelMm": (c.travel / UNITS_PER_MM * 10.0).round() / 10.0,
+        "colorChanges": changes,
+        "stitches": totals.as_ref().map_or(0, |t| t.stitches),
+        "trims": trims,
+        "travelMm": (travel * 10.0).round() / 10.0,
         "ordered": !d.stitch.order.is_empty(),
         "start": pt(d.stitch.start_point()),
         "end": pt(d.stitch.end_point()),
@@ -428,6 +473,117 @@ fn start_end(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "start": pt(next.start), "end": pt(next.end) }))
 }
 
+/// The objects `ids` names (each must exist), or `None` when not given.
+fn listed(s: &Session, p: &Value, cmd: &str) -> Result<Option<Vec<NodeId>>> {
+    let Some(v) = p.get("ids").filter(|v| !v.is_null()) else { return Ok(None) };
+    let ids = v.as_array().ok_or_else(|| bad(cmd, format!("ids must be an array of object ids, not {v}")))?;
+    let d = &s.doc()?.doc;
+    let mut out = Vec::with_capacity(ids.len());
+    for v in ids {
+        let id = id_of(v, cmd, "each of ids")?;
+        if d.node(id).is_none() {
+            return Err(bad(cmd, format!("no object {}", id.0)));
+        }
+        out.push(id);
+    }
+    Ok(Some(out))
+}
+
+/// A number in `p[key]`, `default` when not given, within `lo..=hi` (or exactly `zero`).
+fn mm_param(p: &Value, key: &str, default: f64, (lo, hi): (f64, f64), zero: bool, cmd: &str) -> Result<f64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => match v.as_f64() {
+            Some(x) if x.is_finite() && ((lo..=hi).contains(&x) || (zero && x == 0.0)) => Ok(x),
+            _ => Err(bad(cmd, format!("{key} must be a number of mm, {lo}–{hi}{}, not {v}", if zero { " (or 0)" } else { "" }))),
+        },
+    }
+}
+
+/// Set each object's stitch properties to `f` of them, as one undo step `label` (none when nothing
+/// changes); the ids changed.
+fn update_props(s: &mut Session, label: &str, ids: &[NodeId], f: impl Fn(&mut vectorcraft_doc::StitchProps)) -> Result<Vec<u64>> {
+    let d = &s.doc()?.doc;
+    let mut updates = vec![];
+    for &id in ids {
+        let Some(n) = d.node(id) else { continue };
+        let before = n.stitch_props().copied().unwrap_or_default();
+        let mut after = before;
+        f(&mut after);
+        if after != before {
+            updates.push((id, after));
+        }
+    }
+    let changed: Vec<u64> = updates.iter().map(|(id, _)| id.0).collect();
+    if !updates.is_empty() {
+        s.edit(label, |d, _| {
+            for (id, props) in updates {
+                if let Some(n) = d.node_mut(id) {
+                    n.set_stitch_props(props);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    Ok(changed)
+}
+
+/// The plan `stitch.info` counts, with options `p.options`.
+fn counted(s: &Session, p: &Value, cmd: &str) -> Result<vectorcraft_stitch::Stats> {
+    let made = stitchfile::accounted(cmd, &s.doc()?.doc, &options_value(p, cmd)?)?;
+    Ok(stats(&made.plan))
+}
+
+fn overlap_remove(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.overlap.remove";
+    let allowance = mm_param(p, "allowanceMm", DEFAULT_OVERLAP_MM, OVERLAP_RANGE, false, C)?;
+    let only = listed(s, p, C)?;
+    let o = options(p, C)?;
+    let covered = covered_fills(&s.doc()?.doc, &o).map_err(|e| bad(C, e))?;
+    let ids: Vec<NodeId> = covered.into_iter().filter(|id| only.as_ref().is_none_or(|l| l.contains(id))).collect();
+    let before = counted(s, p, C)?.stitches;
+    let changed = update_props(s, "Remove Overlaps", &ids, |props| props.overlap = Some(allowance))?;
+    let after = if changed.is_empty() { before } else { counted(s, p, C)?.stitches };
+    Ok(json!({ "changed": changed, "stitches": {"before": before, "after": after} }))
+}
+
+fn overlap_clear(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.overlap.clear";
+    let ids = match listed(s, p, C)? {
+        Some(ids) => ids,
+        None => {
+            let mut all = vec![];
+            s.doc()?.doc.walk(|n| {
+                if n.stitch_props().is_some_and(|p| p.overlap.is_some()) {
+                    all.push(n.id);
+                }
+            });
+            all
+        }
+    };
+    let changed = update_props(s, "Restore Overlaps", &ids, |props| props.overlap = None)?;
+    Ok(json!({ "changed": changed }))
+}
+
+fn route_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.route";
+    let max = mm_param(p, "maxTravelMm", DEFAULT_ROUTE_MM, ROUTE_RANGE, true, C)?;
+    let ids = match listed(s, p, C)? {
+        Some(ids) => ids,
+        None => sequenced(s, p, C)?.items.iter().map(|i| i.id).collect(),
+    };
+    let before = counted(s, p, C)?.trims;
+    let value = (max > 0.0).then_some(max);
+    let changed = update_props(s, if value.is_some() { "Route Within Colors" } else { "Clear Routing" }, &ids, |props| props.route = value)?;
+    let after = if changed.is_empty() { before } else { counted(s, p, C)?.trims };
+    Ok(json!({ "changed": changed, "trims": {"before": before, "after": after} }))
+}
+
+/// The overlap `stitch.overlap.remove` leaves under a later fill by default, mm.
+pub const DEFAULT_OVERLAP_MM: f64 = 0.7;
+/// The longest travel `stitch.route` stitches by default, mm.
+pub const DEFAULT_ROUTE_MM: f64 = 3.0;
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -532,6 +688,109 @@ mod tests {
         assert_eq!(s.execute("stitch.sequence.list", &json!({})).unwrap()["objects"][0]["own"], json!({}));
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.execute("stitch.sequence.list", &json!({})).unwrap()["objects"][0]["pinned"], json!(true));
+    }
+
+    /// `stitch.sequence.list`'s totals, and its objects' sums, are `stitch.info`'s.
+    fn assert_one_accounting(s: &mut Session) -> Value {
+        let info = s.execute("stitch.info", &json!({})).unwrap();
+        let l = s.execute("stitch.sequence.list", &json!({})).unwrap();
+        for k in ["stitches", "trims", "colorChanges", "travelMm"] {
+            assert_eq!(l[k], info[k], "{k}: list {} vs info {}", l[k], info[k]);
+        }
+        let objects = l["objects"].as_array().unwrap();
+        let sum = |k: &str| objects.iter().map(|o| o[k].as_u64().unwrap()).sum::<u64>();
+        assert_eq!(sum("stitches"), info["stitches"].as_u64().unwrap());
+        assert_eq!(sum("trims"), info["trims"].as_u64().unwrap());
+        assert_eq!(sum("jumps"), info["jumps"].as_u64().unwrap());
+        let travel: f64 = objects.iter().map(|o| o["travelMm"].as_f64().unwrap()).sum();
+        assert!((travel - info["travelMm"].as_f64().unwrap()).abs() < 0.05 * objects.len() as f64 + 0.1, "{travel} vs {}", info["travelMm"]);
+        l
+    }
+
+    #[test]
+    fn a_photo_designs_list_counts_what_stitch_info_counts() {
+        // STI-32: the list estimated a trim between every two objects of a colour, while the plan
+        // joins a photo's runs of one colour by travel.
+        let dir = std::env::temp_dir().join(format!("vc-seq-photo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("fur.png");
+        let mut s = Session::new();
+        s.execute("photo.syntheticFur", &json!({"path": f, "width": 160, "height": 120})).unwrap();
+        s.execute("photo.toStitches", &json!({"file": f, "provider": "none", "widthMm": 60})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert!(l["objects"].as_array().unwrap().len() > 3, "{l}");
+    }
+
+    #[test]
+    fn letterings_list_counts_its_lock_stitches() {
+        // STI-32: the panel said 637 stitches for lettering that stitch.info, the player and the
+        // status bar count as 652, lock stitches included.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 600, "height": 400})).unwrap();
+        s.execute("text.create", &json!({"x": 40, "y": 120, "text": "Hello", "size": 42.5})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert_eq!(l["objects"].as_array().unwrap().len(), 1);
+        // A line beside it: two objects, each with its own share.
+        s.execute("select.none", &json!({})).unwrap();
+        s.execute("shape.line", &json!({"x1": 40, "y1": 300, "x2": 300, "y2": 300})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert!(l["objects"].as_array().unwrap().iter().all(|o| o["stitches"].as_u64().unwrap() > 0), "{l}");
+    }
+
+    /// Filled squares with no stroke: `(x, y, side, colour)` each in mm; their ids.
+    fn squares(s: &mut Session, art: &[(f64, f64, f64, &str)]) -> Vec<u64> {
+        s.execute("file.new", &json!({"width": 600, "height": 600})).unwrap();
+        let pt = 72.0 / 25.4;
+        let mut ids = vec![];
+        for (x, y, side, c) in art {
+            s.execute("select.none", &json!({})).unwrap();
+            s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+            s.execute("paint.setFill", &json!({"color": c})).unwrap();
+            let r = s.execute("shape.rectangle", &json!({"x": x * pt, "y": y * pt, "width": side * pt, "height": side * pt})).unwrap();
+            ids.push(r["id"].as_u64().unwrap());
+        }
+        s.execute("select.none", &json!({})).unwrap();
+        ids
+    }
+
+    #[test]
+    fn remove_overlaps_cuts_the_earlier_fill_and_clears_in_one_step_each() {
+        let mut s = Session::new();
+        let ids = squares(&mut s, &[(10.0, 10.0, 20.0, "#c81e1e"), (20.0, 20.0, 20.0, "#1e1ec8")]);
+        let before = s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64().unwrap();
+        let r = s.execute("stitch.overlap.remove", &json!({})).unwrap();
+        assert_eq!(r["changed"], json!([ids[0]]), "only the earlier, covered fill: {r}");
+        let after = r["stitches"]["after"].as_u64().unwrap();
+        assert_eq!(r["stitches"]["before"].as_u64(), Some(before));
+        assert!(after < before, "{r}");
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(after));
+        // Stored: Stitch Properties shows it; moving the later square re-cuts.
+        let props = s.execute("stitch.props", &json!({"ids": [ids[0]]})).unwrap();
+        assert!(props.to_string().contains("overlap"), "{props}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(before));
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.execute("stitch.overlap.clear", &json!({})).unwrap()["changed"], json!([ids[0]]));
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(before));
+        for p in [json!({"allowanceMm": 9}), json!({"allowanceMm": "a"}), json!({"ids": [99999]}), json!({"ids": 3})] {
+            assert!(s.execute("stitch.overlap.remove", &p).is_err(), "{p}");
+        }
+        assert_one_accounting(&mut s);
+    }
+
+    #[test]
+    fn routing_joins_a_colour_under_its_later_fill() {
+        let mut s = Session::new();
+        // Two red squares side by side, a red square over both sewn last.
+        let ids = squares(&mut s, &[(10.0, 10.0, 10.0, "#c81e1e"), (22.0, 10.0, 10.0, "#c81e1e"), (9.0, 9.0, 24.0, "#c81e1e")]);
+        let r = s.execute("stitch.route", &json!({"ids": [ids[1]], "maxTravelMm": 20})).unwrap();
+        assert!(r["trims"]["after"].as_u64() < r["trims"]["before"].as_u64(), "{r}");
+        let l = assert_one_accounting(&mut s);
+        assert_eq!(l["trims"], r["trims"]["after"]);
+        // 0 routes no more.
+        let r = s.execute("stitch.route", &json!({"maxTravelMm": 0})).unwrap();
+        assert!(r["trims"]["after"].as_u64() > r["trims"]["before"].as_u64(), "{r}");
+        assert!(s.execute("stitch.route", &json!({"maxTravelMm": 50})).is_err());
     }
 
     #[test]

@@ -545,7 +545,8 @@ fn addon_tools_are_in_the_drawer_not_the_toolbars() {
             "smartPen",
             enclosing,
             contour,
-            box3d
+            box3d,
+            vectorcraft_tools::entry_exit::ID
         ]
     );
     for advanced in [false, true] {

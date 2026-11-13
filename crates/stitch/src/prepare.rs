@@ -2,7 +2,7 @@
 
 use crate::profile::MachineProfile;
 use crate::stats::stats;
-use crate::{Block, Pt, Step, StitchPlan};
+use crate::{Block, Pt, Step, StitchPlan, Thread};
 
 /// Length of a lock stitch, in units (0.6 mm).
 pub const LOCK_LENGTH: i32 = 6;
@@ -73,27 +73,58 @@ fn position(step: &Step) -> Option<Pt> {
     }
 }
 
-/// Applies `f` to every block's steps, giving it the position the needle is at on entry and
-/// updating that position afterwards.
-fn map_blocks(plan: &StitchPlan, mut f: impl FnMut(&[Step], &mut Option<Pt>) -> Result<Vec<Step>, String>) -> Result<StitchPlan, String> {
-    let mut pos = None;
-    let mut blocks = Vec::with_capacity(plan.blocks.len());
-    for b in &plan.blocks {
-        let steps = f(&b.steps, &mut pos)?;
-        blocks.push(Block { thread: b.thread.clone(), steps });
+/// A block's steps, each with a tag: what made it (an object's place in the sewing order, for
+/// [`prepare_tagged`]). A step a pass adds takes the tag of the step it is added for.
+#[derive(Clone, Debug, Default)]
+struct Tagged {
+    thread: Thread,
+    steps: Vec<Step>,
+    tags: Vec<u32>,
+}
+
+impl Tagged {
+    fn push(&mut self, s: Step, t: u32) {
+        self.steps.push(s);
+        self.tags.push(t);
     }
-    Ok(StitchPlan { name: plan.name.clone(), blocks })
+}
+
+/// The tag of step `i` (0 past the tags given).
+fn tag(tags: &[u32], i: usize) -> u32 {
+    tags.get(i).copied().unwrap_or(0)
+}
+
+fn steps_of(plan: &[Tagged]) -> usize {
+    plan.iter().map(|b| b.steps.len()).sum()
+}
+
+fn within_limit(plan: &[Tagged]) -> Result<(), String> {
+    if steps_of(plan) > crate::MAX_STEPS {
+        return Err(crate::TOO_MANY_STEPS.to_string());
+    }
+    Ok(())
+}
+
+/// Applies `f` to every block's steps and tags, giving it the position the needle is at on entry
+/// and updating that position afterwards.
+fn map_blocks(plan: &[Tagged], mut f: impl FnMut(&[Step], &[u32], &mut Option<Pt>) -> Result<Tagged, String>) -> Result<Vec<Tagged>, String> {
+    let mut pos = None;
+    let mut blocks = Vec::with_capacity(plan.len());
+    for b in plan {
+        let mut out = f(&b.steps, &b.tags, &mut pos)?;
+        out.thread = b.thread.clone();
+        blocks.push(out);
+    }
+    Ok(blocks)
 }
 
 /// Pass 1: drop stitches closer than `min_stitch` to the last kept point of their run, except
 /// the last stitch of the run.
-fn drop_small_stitches(plan: &StitchPlan, p: &MachineProfile) -> StitchPlan {
+fn drop_small_stitches(plan: &[Tagged], p: &MachineProfile) -> Vec<Tagged> {
     let min = f64::from(p.min_stitch);
-    let blocks = plan
-        .blocks
-        .iter()
+    plan.iter()
         .map(|b| {
-            let mut out = Vec::with_capacity(b.steps.len());
+            let mut out = Tagged { thread: b.thread.clone(), steps: Vec::with_capacity(b.steps.len()), tags: Vec::with_capacity(b.steps.len()) };
             let mut kept: Option<Pt> = None;
             for (i, s) in b.steps.iter().enumerate() {
                 if let Step::Stitch(pt) = s {
@@ -108,12 +139,11 @@ fn drop_small_stitches(plan: &StitchPlan, p: &MachineProfile) -> StitchPlan {
                 } else {
                     kept = None;
                 }
-                out.push(*s);
+                out.push(*s, tag(&b.tags, i));
             }
-            Block { thread: b.thread.clone(), steps: out }
+            out
         })
-        .collect();
-    StitchPlan { name: plan.name.clone(), blocks }
+        .collect()
 }
 
 /// Pass 4: a stitch longer than `max_stitch` becomes `k = ceil(d / max)` equal pieces, `d` its
@@ -123,13 +153,14 @@ fn drop_small_stitches(plan: &StitchPlan, p: &MachineProfile) -> StitchPlan {
 /// stitch is not travel: it gets no trim and no lock stitches (the thread stays attached).
 /// Returns the plan and how many stitches needed `jumps_per_trim` or more jumps, which a machine
 /// that trims after that many jump records cuts.
-fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<(StitchPlan, usize), String> {
+fn split_long_stitches(plan: &[Tagged], p: &MachineProfile) -> Result<(Vec<Tagged>, usize), String> {
     let max = p.max_stitch.min(p.max_jump).max(1);
-    let mut count = plan.steps();
+    let mut count = steps_of(plan);
     let mut cut = 0;
-    let plan = map_blocks(plan, |steps, pos| {
-        let mut out = Vec::with_capacity(steps.len());
-        for s in steps {
+    let plan = map_blocks(plan, |steps, tags, pos| {
+        let mut out = Tagged::default();
+        for (n, s) in steps.iter().enumerate() {
+            let t = tag(tags, n);
             if let Step::Stitch(b) = s
                 && let Some(a) = *pos
                 && cheb(a, *b) > i64::from(max)
@@ -142,12 +173,14 @@ fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<(StitchP
                 if p.jumps_per_trim > 0 && k > i64::from(p.jumps_per_trim) {
                     cut += 1;
                 }
-                out.extend((1..k).map(|i| Step::Jump(between(a, *b, i, k))));
+                for i in 1..k {
+                    out.push(Step::Jump(between(a, *b, i, k)), t);
+                }
             }
             if let Some(pt) = position(s) {
                 *pos = Some(pt);
             }
-            out.push(*s);
+            out.push(*s, t);
         }
         Ok(out)
     })?;
@@ -161,13 +194,13 @@ fn split_long_stitches(plan: &StitchPlan, p: &MachineProfile) -> Result<(StitchP
 /// travel on their own. Records are counted as passes 4 and 5 write them: when travel ends in a
 /// stitch in place and its last part folds into that stitch ([`folds`]), that part is not a jump;
 /// when it ends in a long stitch, that stitch's jumps continue the same run.
-fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
+fn trim_long_travel(plan: &[Tagged], p: &MachineProfile) -> Result<Vec<Tagged>, String> {
     let mut stitched = false;
     let mut prev_trim = false;
-    map_blocks(plan, |steps, pos| {
+    map_blocks(plan, |steps, tags, pos| {
         // A block boundary counts as a trim.
         prev_trim = true;
-        let mut out = Vec::with_capacity(steps.len());
+        let mut out = Tagged::default();
         let mut i = 0;
         while let Some(s) = steps.get(i) {
             if let Step::Jump(_) = s {
@@ -195,10 +228,10 @@ fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                     total += records(cheb(a, *b), max) - 1;
                 }
                 if p.jumps_per_trim > 0 && total >= i64::from(p.jumps_per_trim) && stitched && !prev_trim {
-                    out.push(Step::Trim);
+                    out.push(Step::Trim, tag(tags, i));
                 }
-                for j in steps.get(i..end).unwrap_or_default() {
-                    out.push(*j);
+                for (k, j) in steps.get(i..end).unwrap_or_default().iter().enumerate() {
+                    out.push(*j, tag(tags, i + k));
                 }
                 *pos = at;
                 prev_trim = false;
@@ -210,7 +243,7 @@ fn trim_long_travel(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                 *pos = Some(*pt);
             }
             prev_trim = matches!(s, Step::Trim);
-            out.push(*s);
+            out.push(*s, tag(tags, i));
             i += 1;
         }
         Ok(out)
@@ -231,37 +264,48 @@ fn toward(from: Pt, to: Pt, len: i32) -> Pt {
 }
 
 /// Pass 2: three back-and-forth stitches at each end of every run of two or more stitches.
-fn add_locks(plan: &StitchPlan) -> StitchPlan {
-    let blocks = plan.blocks.iter().map(|b| Block { thread: b.thread.clone(), steps: locked(&b.steps) }).collect();
-    StitchPlan { name: plan.name.clone(), blocks }
+fn add_locks(plan: &[Tagged]) -> Vec<Tagged> {
+    plan.iter()
+        .map(|b| {
+            let mut out = locked(&b.steps, &b.tags);
+            out.thread = b.thread.clone();
+            out
+        })
+        .collect()
 }
 
-/// `steps` with lock stitches at both ends of each run of two or more stitches.
-fn locked(steps: &[Step]) -> Vec<Step> {
-    let mut out = Vec::with_capacity(steps.len());
+/// `steps` with lock stitches at both ends of each run of two or more stitches; a lock takes the
+/// tag of the stitch it locks.
+fn locked(steps: &[Step], tags: &[u32]) -> Tagged {
+    let mut out = Tagged { thread: Thread::default(), steps: Vec::with_capacity(steps.len()), tags: Vec::with_capacity(steps.len()) };
     let mut i = 0;
     while let Some(s) = steps.get(i) {
         let Step::Stitch(_) = s else {
-            out.push(*s);
+            out.push(*s, tag(tags, i));
             i += 1;
             continue;
         };
         let end = steps.iter().skip(i).take_while(|s| matches!(s, Step::Stitch(_))).count() + i;
-        let pts: Vec<Pt> = steps.get(i..end).unwrap_or_default().iter().filter_map(position).collect();
+        let pts: Vec<(Pt, u32)> =
+            steps.get(i..end).unwrap_or_default().iter().enumerate().filter_map(|(k, s)| position(s).map(|p| (p, tag(tags, i + k)))).collect();
         let lock = pts.len() >= 2;
-        for (n, pt) in pts.iter().enumerate() {
-            out.push(Step::Stitch(*pt));
+        for (n, (pt, t)) in pts.iter().enumerate() {
+            out.push(Step::Stitch(*pt), *t);
             if n == 0
                 && lock
-                && let Some(next) = pts.get(1)
+                && let Some((next, _)) = pts.get(1)
             {
                 let q = toward(*pt, *next, LOCK_LENGTH);
-                out.extend([Step::Stitch(q), Step::Stitch(*pt), Step::Stitch(q)]);
+                for s in [Step::Stitch(q), Step::Stitch(*pt), Step::Stitch(q)] {
+                    out.push(s, *t);
+                }
             }
         }
-        if lock && let [.., prev, last] = pts.as_slice() {
+        if lock && let [.., (prev, _), (last, t)] = pts.as_slice() {
             let q = toward(*last, *prev, LOCK_LENGTH);
-            out.extend([Step::Stitch(q), Step::Stitch(*last), Step::Stitch(q)]);
+            for s in [Step::Stitch(q), Step::Stitch(*last), Step::Stitch(q)] {
+                out.push(s, *t);
+            }
         }
         i = end;
     }
@@ -272,11 +316,12 @@ fn locked(steps: &[Step]) -> Vec<Step> {
 /// in place, its last part is sewn by that stitch ([`folds`]): `k − 1` jumps and a stitch, not `k`
 /// jumps and a stitch of zero length. The pieces of a split stitch (pass 4) are no longer than
 /// `max_jump` and are left alone.
-fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan, String> {
-    let mut count = plan.steps();
-    map_blocks(plan, |steps, pos| {
-        let mut out = Vec::with_capacity(steps.len());
+fn split_long_jumps(plan: &[Tagged], p: &MachineProfile) -> Result<Vec<Tagged>, String> {
+    let mut count = steps_of(plan);
+    map_blocks(plan, |steps, tags, pos| {
+        let mut out = Tagged::default();
         for (n, s) in steps.iter().enumerate() {
+            let t = tag(tags, n);
             if let (Step::Jump(b), Some(a)) = (s, *pos) {
                 let d = cheb(a, *b);
                 if d > i64::from(p.max_jump) {
@@ -285,7 +330,9 @@ fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
                     if count > crate::MAX_STEPS {
                         return Err(crate::TOO_MANY_STEPS.to_string());
                     }
-                    out.extend((1..k).map(|i| Step::Jump(between(a, *b, i, k))));
+                    for i in 1..k {
+                        out.push(Step::Jump(between(a, *b, i, k)), t);
+                    }
                     if folds(a, *b, steps.get(n + 1), p) {
                         *pos = Some(*b);
                         continue;
@@ -295,7 +342,7 @@ fn split_long_jumps(plan: &StitchPlan, p: &MachineProfile) -> Result<StitchPlan,
             if let Some(pt) = position(s) {
                 *pos = Some(pt);
             }
-            out.push(*s);
+            out.push(*s, t);
         }
         Ok(out)
     })
@@ -334,16 +381,45 @@ fn check(plan: &StitchPlan, p: &MachineProfile, cut: usize) -> Vec<String> {
 /// (measured after the locks), long stitches and jumps split, and what remains wrong reported as
 /// warnings.
 pub fn prepare(plan: &StitchPlan, profile: &MachineProfile, o: &PrepareOptions) -> Result<Prepared, String> {
+    prepare_tagged(plan, &[], profile, o).map(|(p, _)| p)
+}
+
+/// [`prepare`], with a tag for each step of `plan` (`tags[block][step]`; a step without one is
+/// tagged 0), returned for each step of the prepared plan: a step [`prepare`] adds (a lock stitch,
+/// a trim before travel, a piece of a split stitch or jump) takes the tag of the step it is added
+/// for. The tags say which object made each step ([`crate::Planned::owners`]).
+pub fn prepare_tagged(
+    plan: &StitchPlan,
+    tags: &[Vec<u32>],
+    profile: &MachineProfile,
+    o: &PrepareOptions,
+) -> Result<(Prepared, Vec<Vec<u32>>), String> {
     plan.check()?;
-    let plan = drop_small_stitches(plan, profile);
-    let plan = if o.locks { add_locks(&plan) } else { plan };
-    plan.check()?;
-    let plan = if o.travel_trims { trim_long_travel(&plan, profile)? } else { plan };
-    plan.check()?;
-    let (plan, cut) = split_long_stitches(&plan, profile)?;
-    let plan = split_long_jumps(&plan, profile)?;
+    let input: Vec<Tagged> = plan
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let given = tags.get(i).map(Vec::as_slice).unwrap_or_default();
+            Tagged { thread: b.thread.clone(), steps: b.steps.clone(), tags: (0..b.steps.len()).map(|k| tag(given, k)).collect() }
+        })
+        .collect();
+    let t = drop_small_stitches(&input, profile);
+    let t = if o.locks { add_locks(&t) } else { t };
+    within_limit(&t)?;
+    let t = if o.travel_trims { trim_long_travel(&t, profile)? } else { t };
+    within_limit(&t)?;
+    let (t, cut) = split_long_stitches(&t, profile)?;
+    let t = split_long_jumps(&t, profile)?;
+    let mut blocks = Vec::with_capacity(t.len());
+    let mut out_tags = Vec::with_capacity(t.len());
+    for b in t {
+        blocks.push(Block { thread: b.thread, steps: b.steps });
+        out_tags.push(b.tags);
+    }
+    let plan = StitchPlan { name: plan.name.clone(), blocks };
     let warnings = check(&plan, profile, cut);
-    Ok(Prepared { plan, warnings })
+    Ok((Prepared { plan, warnings }, out_tags))
 }
 
 #[cfg(test)]

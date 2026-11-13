@@ -16,7 +16,7 @@ use vectorcraft_geom::{Affine, FillRule, PathData, PathEl, Rect};
 use vectorcraft_imageprep::{FUR_ANGLES, PrepareOptions, Raster, downscale, encode_png, synthetic_fur, synthetic_fur_eye};
 use vectorcraft_stitch::{
     Block, DirectionGrid, FeatherEdges, FieldFillParams, PT_PER_MM, Step, StitchPlan, ThreadChart, field_fill, hex, prepare, profile, stats,
-    to_document,
+    to_document, travel,
 };
 use vectorcraft_trace::{
     DirectionField, FieldParams, Method, Mode, Palette, TraceParams, TraceResult, continuous_tone, denoise, direction_field, quantize, smoothed,
@@ -960,16 +960,9 @@ pub(super) fn join_runs(mut runs: Vec<Vec<vectorcraft_stitch::Pt>>, rings: &[Vec
         if let Some(from) = last {
             let gap = from.dist(start) / 10.0;
             if gap <= travel {
-                if inside_all_the_way(from, start, rings) {
+                if travel::hidden(from, start, &[(rings, FillRule::NonZero)], 0.0) {
                     // Stitched travel, in stitches no longer than `stitch`.
-                    let n = (gap / stitch.max(0.5)).ceil().clamp(1.0, 1_000.0) as i32;
-                    for s in 1..n {
-                        let t = f64::from(s) / f64::from(n);
-                        let (a, b) = (from.to_mm(), start.to_mm());
-                        if let Some(q) = vectorcraft_stitch::Pt::from_mm(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t) {
-                            steps.push(Step::Stitch(q));
-                        }
-                    }
+                    steps.extend(travel::stitched(from, start, stitch).into_iter().map(Step::Stitch));
                 } else {
                     steps.push(Step::Jump(start));
                 }
@@ -1017,36 +1010,8 @@ fn nearest_first(runs: Vec<Vec<vectorcraft_stitch::Pt>>) -> Vec<Vec<vectorcraft_
     out
 }
 
-/// Whether the straight way from `a` to `b` stays inside `rings` (mm, non-zero), checked every
-/// quarter of a millimetre.
-fn inside_all_the_way(a: vectorcraft_stitch::Pt, b: vectorcraft_stitch::Pt, rings: &[Vec<(f64, f64)>]) -> bool {
-    let (a, b) = (a.to_mm(), b.to_mm());
-    let n = ((b.0 - a.0).hypot(b.1 - a.1) / 0.25).ceil().clamp(1.0, 400.0) as usize;
-    (0..=n).all(|s| {
-        let t = s as f64 / n as f64;
-        winding(rings, (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)) != 0
-    })
-}
-
-/// The winding number of `rings` around `p`.
-pub(super) fn winding(rings: &[Vec<(f64, f64)>], p: (f64, f64)) -> i32 {
-    let mut w = 0;
-    for ring in rings {
-        let n = ring.len();
-        for i in 0..n {
-            let (Some(&a), Some(&b)) = (ring.get(i), ring.get((i + 1) % n)) else { continue };
-            let cross = (b.0 - a.0) * (p.1 - a.1) - (p.0 - a.0) * (b.1 - a.1);
-            if a.1 <= p.1 {
-                if b.1 > p.1 && cross > 0.0 {
-                    w += 1;
-                }
-            } else if b.1 <= p.1 && cross < 0.0 {
-                w -= 1;
-            }
-        }
-    }
-    w
-}
+/// The winding number of `rings` around `p` (the travel code's, shared with sewing documents).
+pub(super) use vectorcraft_stitch::travel::winding;
 
 fn synthetic_cmd(_: &mut Session, p: &Value) -> Result<Value> {
     let w = ranged(p, "width", 480.0, (16.0, 2048.0), SYNTHETIC)?.round() as u32;
