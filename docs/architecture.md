@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** minor (StitchCraft, the embroidery app, in `apps/stitchcraft`; the desktop launcher as the `vectorcraft_app` library) · **Target:** Adobe Illustrator 2026 (30.x)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-13 · **Change:** minor (`stitch` on `pathops` for overlap removal, `tools` on `stitch`; previously minor: StitchCraft, the embroidery app, in `apps/stitchcraft`; the desktop launcher as the `vectorcraft_app` library) · **Target:** Adobe Illustrator 2026 (30.x)
 
 How VectorCraft is built today. The design rationale lives in the local, gitignored `plan/architecture.md`;
 this file describes what is committed. Day-to-day rules (clean-room, never crash, quality gates) are in
@@ -32,7 +32,7 @@ nothing below L6 depends on a UI toolkit (egui, eframe, winit, rfd). Table: `xta
 
 The two embroidery crates (see [embroidery-parity.md](embroidery-parity.md)):
 
-- `stitch` (L2): the stitch plan in 0.1 mm units, machine profiles, preparing a plan for a machine, statistics, running stitch along a path, a plan from a document and a document from a plan, and the calibration design.
+- `stitch` (L2): the stitch plan in 0.1 mm units, machine profiles, preparing a plan for a machine, statistics, running stitch along a path, a plan from a document and a document from a plan, and the calibration design. It uses `pathops` (same layer, ordered before it) to cut a fill by the fills sewn after it (overlap removal). `tools` uses it for the Entry and Exit tool's sewing order.
 - `embroidery` (L3, on `stitch` only): DST and EXP readers and writers, with no document types; the engine's `stitch.*` commands and `document.open`/`document.export` reach them.
 
 ## Everything is a command
@@ -93,6 +93,7 @@ saves copies in the background. See [development.md](development.md#robustness-v
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | `stitch` may use `pathops` (an intra-layer order in `xtask layers`), for overlap removal; `tools` uses `stitch` |
 | 2026-11-11 | minor | Added `apps/stitchcraft` (StitchCraft, the embroidery app) to L7; the desktop app's launcher is now the `vectorcraft_app` library both desktop binaries run |
 | 2026-11-11 | minor | Library crate count corrected to 24, the crates in the layer table |
 | 2026-11-11 | minor | Added the embroidery crates `stitch` (L2) and `embroidery` (L3) |
