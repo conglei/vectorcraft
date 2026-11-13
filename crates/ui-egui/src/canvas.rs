@@ -23,6 +23,7 @@ mod drag;
 mod fill;
 mod grid;
 mod home;
+mod hoop;
 mod input;
 mod outline;
 mod overlays;
@@ -383,6 +384,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         if app.ui.view.pixel_preview && v.zoom >= PIXEL_GRID_ZOOM && app.session.prefs.show_pixel_grid {
             grid(&painter, &xf, 1.0, 1, LineLook { color: PIXEL_GRID, dots: false });
         }
+        hoop::draw(app, &painter, &xf, rect, &doc, &t);
         artboard_outlines(app, ui, &painter, &xf, &t);
         if app.ui.view.guides {
             guide_lines(app, &painter, &xf, rect, &t);
@@ -854,7 +856,7 @@ fn paint_paper(
         // View › Hide Artboards: no edges and no pasteboard, the whole canvas paper (#4038).
         let setup = &doc.setup;
         let paper = if setup.simulate_paper { crate::panels::c32(&setup.paper()) } else { Color32::WHITE };
-        painter.rect_filled(rect, 0.0, if stitches { stitches::FABRIC_COLOR } else { paper });
+        painter.rect_filled(rect, 0.0, if stitches { stitches::fabric_color(doc) } else { paper });
     } else {
         let setup = &doc.setup;
         // In the stitch view the artboards are fabric: no transparency grid, paper or artboard colour.
@@ -870,7 +872,7 @@ fn paint_paper(
             match &grid {
                 Some((tex, cell)) => checker(painter, &q, ab.rect, xf.zoom, tex.id(), *cell),
                 None => {
-                    let fill = if stitches { stitches::FABRIC_COLOR } else { ab.color.map_or(paper, |c| crate::panels::c32(&c) * paper) };
+                    let fill = if stitches { stitches::fabric_color(doc) } else { ab.color.map_or(paper, |c| crate::panels::c32(&c) * paper) };
                     painter.add(Shape::convex_polygon(q, fill, Stroke::NONE));
                 }
             }

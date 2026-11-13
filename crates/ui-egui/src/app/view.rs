@@ -108,6 +108,13 @@ impl VectorcraftApp {
         self.view().is_some_and(|v| v.stitches)
     }
 
+    /// Whether this app's work is embroidery (StitchCraft): set from the app's identity through
+    /// [`Self::open_in_stitch_view`]. New Document and Document Setup then offer a hoop and the
+    /// fabric, and Properties shows the Hoop row.
+    pub fn embroidery(&self) -> bool {
+        self.stitch_view_default
+    }
+
     /// For an app whose work is embroidery (StitchCraft): documents open in the stitch view, and
     /// the ones already open switch to it.
     pub fn open_in_stitch_view(&mut self) {

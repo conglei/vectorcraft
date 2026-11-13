@@ -1,5 +1,5 @@
 //! View › Stitches: the canvas shows the stitches an export would sew, where the art is and at the
-//! canvas's zoom, on the fabric colour, instead of the art. The plan, the view settings and the
+//! canvas's zoom, on the design's fabric colour (`stitch.setup`), instead of the art. The plan, the view settings and the
 //! playback position are the Stitch Preview panel's ([`crate::panels::stitch_preview`]); this
 //! draws the part of the plan the canvas shows, on a worker thread, each time the view, the
 //! settings, the position or the plan change. Until the new picture arrives the one before it
@@ -9,15 +9,18 @@ use std::cell::RefCell;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use egui::{Color32, Rect, TextureHandle, Ui, pos2};
-use vectorcraft_engine::stitch_preview::{FABRIC, Frame, MAX_REGION_SIDE, MM_PER_PT, REGION_SCALES, RegionOptions};
+use vectorcraft_engine::stitch_preview::{Frame, MAX_REGION_SIDE, MM_PER_PT, REGION_SCALES, RegionOptions};
 use vectorcraft_geom::Point;
 
 use super::{Xf, textured_quad};
 use crate::VectorcraftApp;
 use crate::panels::stitch_preview::{self, OnCanvas};
 
-/// The fabric the artboards are drawn in.
-pub(super) const FABRIC_COLOR: Color32 = Color32::from_rgb(FABRIC[0], FABRIC[1], FABRIC[2]);
+/// The fabric the artboards are drawn in: the design's.
+pub(super) fn fabric_color(doc: &vectorcraft_doc::Document) -> Color32 {
+    let [r, g, b] = doc.stitch.fabric();
+    Color32::from_rgb(r, g, b)
+}
 /// How much of the fabric colour covers the art shown as an underlay.
 const UNDERLAY_WASH: u8 = 200;
 
@@ -115,7 +118,7 @@ pub(super) fn draw(
 /// The fabric colour over the artboards, thin enough to see the art through: drawn over the art
 /// when it shows as an underlay.
 fn wash(painter: &egui::Painter, xf: &Xf, doc: &vectorcraft_doc::Document) {
-    let [r, g, b] = FABRIC;
+    let [r, g, b] = doc.stitch.fabric();
     for ab in &doc.artboards {
         painter.add(egui::Shape::convex_polygon(xf.quad(ab.rect), Color32::from_rgba_unmultiplied(r, g, b, UNDERLAY_WASH), egui::Stroke::NONE));
     }
@@ -139,7 +142,14 @@ fn paint(app: &VectorcraftApp, ui: &Ui, painter: &egui::Painter, xf: &Xf, rect: 
     let want = region_of(xf, rect, ctx.pixels_per_point()).map(|(left_mm, top_mm, scale, width, height)| Key {
         uid,
         generation,
-        region: RegionOptions { frame: stitch_preview::frame_options(&app.ui.stitch_preview, on.position), left_mm, top_mm, scale, width, height },
+        region: RegionOptions {
+            frame: stitch_preview::frame_options(&app.ui.stitch_preview, on.position, None),
+            left_mm,
+            top_mm,
+            scale,
+            width,
+            height,
+        },
     });
     RT.with(|rt| {
         let mut rt = rt.borrow_mut();

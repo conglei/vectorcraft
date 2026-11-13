@@ -1,7 +1,7 @@
 //! File → New: category tabs (Recent, Saved and the built-in categories of `file.newPresets`)
 //! over a grid of preset cards, and a Preset Details column (name and Save Preset, size and
-//! units, orientation, artboards, bleed, background contents, Advanced Options, More Settings);
-//! Close and Create. More Settings opens a pop-up over the dialog with the artboard layout, spacing
+//! units, orientation, artboards, bleed, background contents, in an embroidery app the hoop and
+//! the fabric, Advanced Options, More Settings); Close and Create. More Settings opens a pop-up over the dialog with the artboard layout, spacing
 //! and columns, editing the same fields. Save Preset turns the top of Preset Details into the
 //! preset's name, Cancel and Save, and hides Close and Create until the preset is saved or canceled;
 //! the rows under it stay editable and are what the preset stores.
@@ -10,7 +10,9 @@
 //! `artboardLayout`, `bleed`, `backgroundContents`, `colorMode`, `rasterEffectsPpi`,
 //! `previewMode`), plus `category` (the tab), `advanced` (Advanced Options open), `bleedLinked` and
 //! `presetName` (Save Preset's name). Setting `preset` fills the fields from that preset; changing
-//! any of them afterwards makes the settings custom.
+//! any of them afterwards makes the settings custom. In an embroidery app
+//! ([`VectorcraftApp::embroidery`]) also `hoop` and `fabric` (as `file.new` takes them) and
+//! `__hoops` (the library): choosing a hoop sets the width and height to its size.
 
 use serde_json::{Map, Value, json};
 use vectorcraft_doc::Unit;
@@ -43,6 +45,10 @@ const PARAMS: [&str; 12] = [
     "rasterEffectsPpi",
     "previewMode",
 ];
+/// The embroidery fields `file.new` takes, present only in an embroidery app.
+const EMBROIDERY: [&str; 2] = ["hoop", "fabric"];
+/// The hoop library, kept with the fields of an embroidery app's dialog.
+const HOOPS: &str = "__hoops";
 /// The preset the fields were last filled from, as `apply` set them; a Recent or Saved card keeps
 /// its own units here, which the units chosen in Preset Details don't change.
 const APPLIED: &str = "__applied";
@@ -82,7 +88,23 @@ pub fn open(app: &mut VectorcraftApp) {
     let first = newdoc::category(&app.session, category).and_then(|v| v.into_iter().next()).unwrap_or_default();
     let mut d = Dialog::new(KIND, json!({ "category": category, "name": app.session.peek_untitled(), "advanced": false }));
     apply(&mut d, &first);
+    if app.embroidery() {
+        let list = super::hoop_setup::library(app);
+        let hoop = list.iter().find(|h| h.get("id").and_then(Value::as_str) == Some(super::hoop_setup::NEW_DESIGN_HOOP)).cloned();
+        d.fields.insert(HOOPS.into(), json!(list));
+        d.fields.insert("fabric".into(), json!(super::hoop_setup::hex_of(vectorcraft_doc::stitch_design::DEFAULT_FABRIC)));
+        set_hoop(&mut d, hoop.unwrap_or(Value::Null));
+    }
     app.ui.dialog = Some(d);
+}
+
+/// Choose `hoop` (as `file.new` takes it): the width and height become its size.
+fn set_hoop(d: &mut Dialog, hoop: Value) {
+    if let Some((w, h)) = super::hoop_setup::size_pt(&hoop) {
+        d.fields.insert("width".into(), json!(w));
+        d.fields.insert("height".into(), json!(h));
+    }
+    d.fields.insert("hoop".into(), hoop);
 }
 
 /// Fill the fields from a preset.
@@ -157,7 +179,7 @@ pub fn create_without_dialog(app: &mut VectorcraftApp) -> Result<Value, String> 
 
 /// The `file.new` params of the fields.
 fn params(app: &VectorcraftApp, d: &Dialog) -> Map<String, Value> {
-    let mut p: Map<String, Value> = PARAMS.iter().filter_map(|k| Some((k.to_string(), d.fields.get(*k)?.clone()))).collect();
+    let mut p: Map<String, Value> = PARAMS.iter().chain(&EMBROIDERY).filter_map(|k| Some((k.to_string(), d.fields.get(*k)?.clone()))).collect();
     // Recent entries such as "Custom" aren't presets file.new knows.
     if newdoc::find(&app.session, &d.str("preset")).is_none() {
         p.remove("preset");
@@ -453,6 +475,7 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
     ui.add_space(8.0);
     let caption = form::caption(ui, tl!("Background Contents"));
     ui.label_inputs_by(caption.id, |ui| background(ui, d, DETAILS - 34.0));
+    embroidery(ui, d);
     ui.add_space(8.0);
     advanced(ui, d, 110.0, DETAILS - 116.0);
     ui.add_space(12.0);
@@ -467,6 +490,20 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
         ui.add_space(8.0);
         b.close = widgets::secondary_button(ui, tl!("Close")).clicked();
     });
+}
+
+/// An embroidery app's hoop and fabric (nothing in other apps): a hoop chosen sets the size.
+fn embroidery(ui: &mut egui::Ui, d: &mut Dialog) {
+    let Some(list) = d.fields.get(HOOPS).and_then(Value::as_array).cloned() else { return };
+    ui.add_space(8.0);
+    let mut hoop = d.fields.get("hoop").cloned().unwrap_or(Value::Null);
+    if super::hoop_setup::hoop_fields(ui, "newdoc", &list, &mut hoop, (54.0, DETAILS - 60.0)) {
+        set_hoop(d, hoop);
+    }
+    let mut fabric = d.str("fabric");
+    if super::hoop_setup::fabric_field(ui, "newdoc", &mut fabric, 54.0) {
+        d.fields.insert("fabric".into(), json!(fabric));
+    }
 }
 
 /// The key under which a layer remembers that its first field should take the keyboard focus.

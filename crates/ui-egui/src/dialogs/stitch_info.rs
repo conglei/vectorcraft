@@ -193,28 +193,15 @@ fn run_time(v: &Value) -> String {
 fn hoop_row(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
     let Some(list) = d.fields.get("__hoops").and_then(|h| h.get("hoops")).and_then(Value::as_array).cloned() else { return };
     let chosen = d.fields.get("__hoops").and_then(|h| h.get("chosen")).cloned().unwrap_or(Value::Null);
-    let mut labels: Vec<String> = vec![tl!("Automatic (smallest that fits)").to_string()];
-    labels.extend(list.iter().map(|h| h.get("name").and_then(Value::as_str).unwrap_or("").to_string()));
-    let current = match chosen.get("id").and_then(Value::as_str) {
-        Some(id) => list.iter().position(|h| h.get("id").and_then(Value::as_str) == Some(id)).map_or(0, |i| i + 1),
-        None if chosen.is_object() => {
-            labels.push(chosen.get("name").and_then(Value::as_str).unwrap_or("").to_string());
-            labels.len() - 1
-        }
-        None => 0,
-    };
-    let names: Vec<&str> = labels.iter().map(String::as_str).collect();
     ui.add_space(10.0);
-    let mut picked = None;
+    let mut pick = None;
     widgets::label_row(ui, tl!("Hoop:"), 70.0, |ui| {
-        picked = widgets::dropdown(ui, "stitch-info-hoop", names.get(current).copied().unwrap_or(""), &names, 260.0);
+        pick = super::hoop_setup::hoop_dropdown(ui, "stitch-info-hoop", (&list, &chosen), tl!("Automatic (smallest that fits)"), false, 260.0);
     });
-    let Some(i) = picked.filter(|i| *i != current) else { return };
-    let params = match i.checked_sub(1).and_then(|k| list.get(k)) {
-        Some(h) => json!({"id": h.get("id").cloned().unwrap_or(Value::Null)}),
-        None if i == 0 => json!({"clear": true}),
-        // The custom hoop itself: nothing to change.
-        None => return,
+    let params = match pick {
+        Some(super::hoop_setup::HoopPick::Library(i)) => json!({"id": list.get(i).and_then(|h| h.get("id")).cloned().unwrap_or(Value::Null)}),
+        Some(super::hoop_setup::HoopPick::None) => json!({"clear": true}),
+        _ => return,
     };
     if let Err(e) = app.run("stitch.hoop.set", params) {
         app.status(e);

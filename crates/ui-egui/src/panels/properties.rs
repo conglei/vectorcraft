@@ -725,6 +725,7 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     if artboards > 1 {
         rearrange_button(app, ui, artboards, w);
     }
+    hoop_rows(app, ui);
     divider(ui);
     section_header(ui, tl!("Appearance"));
     fill_stroke_rows(app, ui);
@@ -786,6 +787,45 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.run("edit.preferences", json!({})).ok();
         }
     });
+}
+
+/// The design's hoop (the dropdown Stitch Info shows) and fabric colour, in an embroidery app or
+/// for a design that has a hoop. A colour drag commits once, when the pointer is released.
+fn hoop_rows(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let Ok(now) = app.session.execute("stitch.hoop.get", &json!({})) else { return };
+    let hoop = now.get("hoop").cloned().unwrap_or_default();
+    if !(app.embroidery() || hoop.is_object()) {
+        return;
+    }
+    let list = crate::dialogs::hoop_setup::library(app);
+    let mut pick = None;
+    ui.horizontal(|ui| {
+        dim_label(ui, tl!("Hoop"));
+        pick = crate::dialogs::hoop_setup::hoop_dropdown(ui, "props-hoop", (&list, &hoop), tl!("None"), false, 180.0);
+    });
+    if let Some(p) = pick {
+        let hoop = crate::dialogs::hoop_setup::picked(&p, &list, &hoop);
+        if let Err(e) = app.run("stitch.setup", json!({ "hoop": hoop })) {
+            app.status(e);
+        }
+    }
+    let fabric = now.get("fabric").and_then(serde_json::Value::as_str).and_then(crate::dialogs::hoop_setup::rgb_of).unwrap_or_default();
+    let pending_id = egui::Id::unique("props-fabric-pending");
+    let mut rgb = ui.data(|d| d.get_temp::<[u8; 3]>(pending_id)).unwrap_or(fabric);
+    ui.horizontal(|ui| {
+        dim_label(ui, tl!("Fabric"));
+        if ui.color_edit_button_srgb(&mut rgb).on_hover_text(tl!("The fabric the stitches are previewed on")).changed() {
+            ui.data_mut(|d| d.insert_temp(pending_id, rgb));
+        }
+        ui.label(egui::RichText::new(crate::dialogs::hoop_setup::hex_of(rgb)).monospace().color(Tokens::get(ui.ctx()).text_dim));
+    });
+    if !ui.input(|i| i.pointer.any_down())
+        && let Some(c) = ui.data_mut(|d| d.remove_temp::<[u8; 3]>(pending_id))
+        && c != fabric
+        && let Err(e) = app.run("stitch.setup", json!({ "fabric": crate::dialogs::hoop_setup::hex_of(c) }))
+    {
+        app.status(e);
+    }
 }
 
 pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {

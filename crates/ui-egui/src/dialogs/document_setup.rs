@@ -1,9 +1,12 @@
 //! File → Document Setup: General (units, bleed, Edit Artboards, outline images, the substituted
 //! glyphs highlight), Transparency (grid size and colours, simulated paper, flattener preset, white
-//! overprint) and Type (language, quotes, superscript/subscript/small caps, text export) tabs.
+//! overprint) and Type (language, quotes, superscript/subscript/small caps, text export) tabs, and
+//! an Embroidery tab (the hoop, the fabric, Resize the Artboard to the Hoop) in an embroidery app or
+//! for a design that has a hoop.
 //!
-//! Fields: what `document.setup` reports (and takes back), plus `tab` and `bleedLinked`. OK runs
-//! `document.setup` with them: one undo step. On an error the dialog stays open.
+//! Fields: what `document.setup` reports (and takes back, `embroidery` included), plus `tab`,
+//! `bleedLinked` and `__hoops` (the hoop library). OK runs `document.setup` with them: one undo
+//! step. On an error the dialog stays open.
 
 use serde_json::{Value, json};
 use vectorcraft_doc::setup::{GRID_COLOR_PRESETS, LANGUAGES};
@@ -15,9 +18,11 @@ use crate::theme::Tokens;
 use crate::{VectorcraftApp, widgets};
 
 pub(super) const KIND: &str = "documentSetup";
-const TABS: [&str; 3] = ["General", "Transparency", "Type"];
+const TABS: [&str; 4] = ["General", "Transparency", "Type", "Embroidery"];
 /// Dialog-only fields `document.setup` doesn't take.
-const UI_ONLY: [&str; 2] = ["tab", "bleedLinked"];
+const UI_ONLY: [&str; 3] = ["tab", "bleedLinked", HOOPS];
+/// The hoop library, kept with the fields while the Embroidery tab shows.
+const HOOPS: &str = "__hoops";
 pub(super) const LABEL: f32 = 130.0;
 
 pub(super) const SPEC: DialogSpec =
@@ -29,6 +34,10 @@ pub fn open(app: &mut VectorcraftApp) -> Result<Value, String> {
     let linked = fields["bleed"].as_array().is_some_and(|b| b.windows(2).all(|w| w[0] == w[1]));
     fields["bleedLinked"] = json!(linked);
     fields["tab"] = json!(TABS[0]);
+    // The Embroidery tab: in an embroidery app, or for a design that has a hoop.
+    if app.embroidery() || fields["embroidery"]["hoop"].is_object() {
+        fields[HOOPS] = json!(super::hoop_setup::library(app));
+    }
     app.ui.dialog = Some(Dialog::new(KIND, fields));
     Ok(Value::Null)
 }
@@ -43,9 +52,10 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
 }
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
-    let tab = TABS.iter().position(|t| *t == d.str("tab")).unwrap_or(0);
-    if let Some(i) = widgets::tab_bar(ui, &TABS, tab) {
-        d.fields.insert("tab".into(), json!(TABS[i]));
+    let tabs = if d.fields.contains_key(HOOPS) { &TABS[..] } else { &TABS[..3] };
+    let tab = tabs.iter().position(|t| *t == d.str("tab")).unwrap_or(0);
+    if let Some(i) = widgets::tab_bar(ui, tabs, tab) {
+        d.fields.insert("tab".into(), json!(tabs[i]));
     }
     ui.add_space(12.0);
     let mut close = false;
@@ -54,7 +64,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         match tab {
             0 => close = general(app, ui, d),
             1 => transparency(app, ui, d),
-            _ => typography(ui, d),
+            2 => typography(ui, d),
+            _ => embroidery(ui, d),
         }
     });
     close
@@ -100,6 +111,35 @@ fn general(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool 
     check(ui, d, "outlineImages", tl!("Show Images in Outline Mode"));
     check(ui, d, "highlightSubstitutedGlyphs", tl!("Highlight Substituted Glyphs"));
     close
+}
+
+/// The Embroidery tab: the hoop, the fabric, and whether the first artboard takes the hoop's size.
+fn embroidery(ui: &mut egui::Ui, d: &mut Dialog) {
+    let list = d.fields.get(HOOPS).and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut e = d.fields.get("embroidery").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut hoop = e.get("hoop").cloned().unwrap_or(Value::Null);
+    let mut changed = super::hoop_setup::hoop_fields(ui, "docsetup", &list, &mut hoop, (LABEL, 260.0));
+    e["hoop"] = hoop;
+    let mut fabric = e.get("fabric").and_then(Value::as_str).unwrap_or("").to_string();
+    if super::hoop_setup::fabric_field(ui, "docsetup", &mut fabric, LABEL) {
+        e["fabric"] = json!(fabric);
+        changed = true;
+    }
+    ui.add_space(6.0);
+    let resize = e.get("resizeArtboard").and_then(Value::as_bool).unwrap_or(false);
+    let has_hoop = e["hoop"].is_object();
+    widgets::label_row(ui, "", LABEL, |ui| {
+        if widgets::check(ui, tl!("Resize the Artboard to the Hoop"), resize && has_hoop, has_hoop) {
+            e["resizeArtboard"] = json!(!resize);
+            changed = true;
+        }
+    });
+    if changed || (resize && !has_hoop) {
+        if !has_hoop {
+            e["resizeArtboard"] = json!(false);
+        }
+        d.fields.insert("embroidery".into(), e);
+    }
 }
 
 fn transparency(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {

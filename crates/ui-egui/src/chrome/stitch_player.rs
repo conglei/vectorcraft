@@ -3,10 +3,11 @@
 //! or pause, to the end; the speed; a scrubber over the whole design with a segment per thread
 //! block in its colour and a tick at each trim and stop; what is shown; and where a playback
 //! pauses by itself. The playback itself is [`crate::panels::stitch_preview`]'s: the bar, the
-//! Stitch Preview panel and the canvas show one position.
+//! Stitch Preview panel and the canvas show one position. The thread bar under it warns when the
+//! stitches go outside the design's hoop or into its margin (`stitch.check`'s `outsideHoop`).
 
 use egui::{Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
-use vectorcraft_engine::stitch_preview::{MM_PER_PT, Mark};
+use vectorcraft_engine::stitch_preview::{HOOP_MARGIN_MM, MM_PER_PT, Mark, Placement, hoop_placement};
 use vectorcraft_geom::Point;
 
 use super::{Tokens, VectorcraftApp};
@@ -194,9 +195,38 @@ fn thread_tip(n: usize, b: &vectorcraft_engine::stitch_preview::BlockInfo) -> St
     format!("{n}. {name} · {} {} · {:.1} m", b.stitches, tl!("stitches"), b.length_mm / 1000.0)
 }
 
+/// The hoop warning of the thread bar for stitches spanning `bounds_mm` in `doc`: its text, the
+/// longer explanation and whether it is an error (over the hoop's edge) rather than a warning
+/// (into its margin). `None` inside the field, or without a hoop.
+pub(crate) fn hoop_warning(doc: &vectorcraft_doc::Document, bounds_mm: Option<(f64, f64, f64, f64)>) -> Option<(&'static str, String, bool)> {
+    let (hoop, at) = hoop_placement(doc, bounds_mm?)?;
+    let margin = HOOP_MARGIN_MM.to_string();
+    let vars = [("hoop", hoop.name.as_str()), ("margin", margin.as_str())];
+    match at {
+        Placement::Inside => None,
+        Placement::InMargin => Some((
+            tl!("Near the hoop's edge"),
+            crate::i18n::fmt(
+                tl!("The stitches come within {margin} mm of the edge of the {hoop}. Embroidery › Center Design in Hoop moves them."),
+                &vars,
+            ),
+            false,
+        )),
+        Placement::Outside => Some((
+            tl!("Outside the hoop"),
+            crate::i18n::fmt(
+                tl!("The stitches go outside the {hoop}: the needle would strike the frame. Embroidery › Center Design in Hoop moves them."),
+                &vars,
+            ),
+            true,
+        )),
+    }
+}
+
 /// The thread bar, under the player: a swatch per thread block in sewing order (a click moves the
-/// playback to where it starts; the one being sewn is ringed), and the design's figures.
-fn thread_bar(ui: &mut Ui, t: &Tokens, player: Option<&Player>) {
+/// playback to where it starts; the one being sewn is ringed), the design's figures, and a warning
+/// when the stitches are not inside the hoop's sewing field ([`hoop_warning`]).
+fn thread_bar(ui: &mut Ui, t: &Tokens, player: Option<&Player>, warning: Option<(&str, String, bool)>) {
     egui::Panel::bottom("stitch_threads")
         .exact_size(26.0)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 0)).stroke(Stroke::new(1.0, t.border)))
@@ -228,6 +258,11 @@ fn thread_bar(ui: &mut Ui, t: &Tokens, player: Option<&Player>) {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(figures(p)).color(t.text).size(11.5));
+                    if let Some((text, why, error)) = &warning {
+                        ui.add_space(10.0);
+                        let colour = if *error { t.error } else { t.warning };
+                        ui.label(egui::RichText::new(format!("▲ {text}")).color(colour).size(11.5)).on_hover_text(why.as_str());
+                    }
                 });
             });
         });
@@ -241,7 +276,8 @@ pub fn stitch_player(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     let t = Tokens::get(ui.ctx());
     let player = stitch_preview::player();
-    thread_bar(ui, &t, player.as_ref());
+    let warning = app.session.active().and_then(|st| hoop_warning(&st.doc, player.as_ref().and_then(|p| p.bounds_mm)));
+    thread_bar(ui, &t, player.as_ref(), warning);
     if let Some(p) = &player {
         follow(app, p);
     }
@@ -392,14 +428,47 @@ mod tests {
         assert!(texts.contains(&line), "{line:?} in {texts:?}");
         assert!(line.starts_with(&format!("{} stitches · 2 colours · ", p.total)) && line.contains(" mm · ") && line.contains(" trim"), "{line}");
         let block = vectorcraft_engine::stitch_preview::BlockInfo { stitches: 1, ..p.blocks[0].clone() };
-        let one =
-            Player { total: 1, trims: 1, blocks: vec![block], position: None, playing: false, marks: vec![], size_mm: (0.0, 0.0), needle_mm: None };
+        let one = Player {
+            total: 1,
+            trims: 1,
+            blocks: vec![block],
+            position: None,
+            playing: false,
+            marks: vec![],
+            size_mm: (0.0, 0.0),
+            bounds_mm: None,
+            needle_mm: None,
+        };
         assert!(figures(&one).starts_with("1 stitch · 1 colour · ") && figures(&one).ends_with(" · 1 trim"), "{}", figures(&one));
         // The rectangle is 100 × 50 pt and the ellipse reaches 120 pt down: about 35.3 × 42.3 mm.
         assert!((p.size_mm.0 - 35.3).abs() < 0.3 && (p.size_mm.1 - 42.3).abs() < 0.3, "{:?}", p.size_mm);
         assert_eq!(thread_tip(1, &p.blocks[0]), format!("1. #ff0000 · {} stitches · {:.1} m", p.blocks[0].stitches, p.blocks[0].length_mm / 1000.0));
         let named = vectorcraft_engine::stitch_preview::BlockInfo { thread: Some("Acme 1001 Red".into()), ..p.blocks[0].clone() };
         assert!(thread_tip(3, &named).starts_with("3. Acme 1001 Red · "));
+    }
+
+    #[test]
+    fn the_thread_bar_warns_while_the_stitches_leave_the_hoop() {
+        let mut app = app_with_art();
+        let (ctx, mut clock) = (egui::Context::default(), 0.0);
+        // A 100 mm hoop centred on the 600 × 400 pt artboard; the art is at its top-left corner.
+        run(&mut app, "stitch.setup", json!({"hoop": "square-100"}));
+        run(&mut app, "view.stitches", json!({}));
+        frames(&mut app, &ctx, &mut clock, 0.05, |_| stitch_preview::player().is_some());
+        let texts = frames(&mut app, &ctx, &mut clock, 0.05, |_| true);
+        assert!(texts.iter().any(|t| t == "▲ Outside the hoop"), "{texts:?}");
+        let doc = app.session.active().unwrap().doc.clone();
+        let (_, why, error) = hoop_warning(&doc, stitch_preview::player().unwrap().bounds_mm).unwrap();
+        assert!(error && why.contains("Square 100 × 100 mm"), "{why}");
+        // Centred, the warning goes once the plan is rebuilt.
+        run(&mut app, "stitch.hoop.center", json!({}));
+        frames(&mut app, &ctx, &mut clock, 0.05, |a| {
+            hoop_warning(&a.session.active().unwrap().doc, stitch_preview::player().and_then(|p| p.bounds_mm)).is_none()
+        });
+        let texts = frames(&mut app, &ctx, &mut clock, 0.05, |_| true);
+        assert!(!texts.iter().any(|t| t.contains("hoop")), "{texts:?}");
+        // Without a hoop there is nothing to warn of.
+        assert_eq!(hoop_warning(&vectorcraft_doc::Document::new(100.0, 100.0), Some((0.0, 0.0, 1e6, 1e6))), None);
     }
 
     #[test]

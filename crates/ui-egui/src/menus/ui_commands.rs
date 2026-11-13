@@ -199,6 +199,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "Alt+Y",
         "{on?: (not given: toggle)} the stitch view of the active document: the canvas shows the stitches an export would sew (the plan of stitch.preview, with the view, needle point and jump settings of ui.stitchPreview) at the art's own place and the canvas's zoom, on the fabric colour, instead of the art; selection marks and tools work as in Preview. On turns Outline off, and Outline turns it off → on",
     ),
+    (
+        "view.hoop",
+        "Hoop",
+        "",
+        "{on?: (not given: toggle)} the embroidery hoop on the canvas, in every view: a design's hoop (stitch.setup, stitch.hoop.set) drawn at its inner edge in its shape, centred on the first artboard as stitch.hoop.center centres, with the sewing field 10 mm inside it dashed and the canvas outside the field dimmed; nothing for a design without a hoop. On by default; kept in the preferences → on",
+    ),
     ("view.pixelPreview", "Pixel Preview", "Cmd+Alt+Y", "{}"),
     ("view.trimView", "Trim View", "", "{} toggle: hide everything outside the artboards"),
     ("view.cornerWidget", "Hide Corner Widget", "", "{} toggle the live corner widgets"),
