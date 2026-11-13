@@ -202,6 +202,9 @@ pub enum Cursor {
     /// The Smart Pen Tool (Smart Pen add-on) away from paths, where a click starts a new path (over
     /// a path or while drawing it shows the Pen's and Direct Selection's cursors).
     SmartPen,
+    /// The Entry and Exit tool (Embroidery) over a selected object's entry or exit point: a drag
+    /// moves it along the object's outline.
+    StitchEntryExit,
 }
 
 impl Cursor {
@@ -300,7 +303,8 @@ impl Cursor {
             | Cursor::CornerTool
             | Cursor::SlideAnchor
             | Cursor::SharedEdge
-            | Cursor::SmartPen => Cursor::Crosshair,
+            | Cursor::SmartPen
+            | Cursor::StitchEntryExit => Cursor::Crosshair,
             c => c,
         }
     }
@@ -344,6 +348,7 @@ impl Cursor {
             Cursor::MeshAdd | Cursor::PuppetPin => Some(Cursor::PenAdd),
             Cursor::SmartPen => Some(Cursor::Pen),
             Cursor::ScissorsNotAllowed => Some(Cursor::NotAllowed),
+            Cursor::StitchEntryExit => Some(Cursor::Crosshair),
             _ => None,
         }
     }

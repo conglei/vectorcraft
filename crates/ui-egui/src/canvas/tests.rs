@@ -11354,3 +11354,38 @@ fn auto_spell_check_is_a_toggle_of_the_canvas_lines() {
     assert_eq!(count(&mut app), 0, "off");
     assert!(app.canvas.spelling.lines.is_empty(), "no node is kept");
 }
+
+/// The Entry and Exit tool draws the selected object's entry and exit as rings on the canvas, and
+/// pointing at one shows the tool's cursor.
+#[test]
+fn the_entry_and_exit_tool_shows_the_points_and_its_cursor() {
+    use vectorcraft_tools::Cursor;
+
+    fn rings(s: &Shape, color: Color32, out: &mut Vec<Pos2>) {
+        match s {
+            Shape::Circle(c) if c.stroke.color == color => out.push(c.center),
+            Shape::Vec(v) => v.iter().for_each(|s| rings(s, color, out)),
+            _ => {}
+        }
+    }
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+    app.run("paint.setFill", json!({"none": true})).unwrap();
+    app.run("paint.setStroke", json!({"color": "#ff0000"})).unwrap();
+    let id = app.run("shape.line", json!({"x1": 50, "y1": 150, "x2": 350, "y2": 150})).unwrap()["id"].clone();
+    app.run("select.set", json!({"ids": [id]})).unwrap();
+    app.select_tool(vectorcraft_tools::entry_exit::ID);
+    let ctx = egui::Context::default();
+    frame(&mut app, &ctx, vec![]);
+    let (mut entry, mut exit) = (vec![], vec![]);
+    for s in shapes(&mut app, &ctx) {
+        rings(&s, Color32::from_rgb(0x2e, 0xb8, 0x6a), &mut entry);
+        rings(&s, Color32::from_rgb(0xd8, 0x3a, 0x3a), &mut exit);
+    }
+    assert_eq!((entry.len(), exit.len()), (1, 1), "{entry:?} {exit:?}");
+    // A line is entered at one end and left at the other: the rings are apart, on one row.
+    assert!((entry[0].y - exit[0].y).abs() < 1.0 && (entry[0].x - exit[0].x).abs() > 100.0, "{entry:?} {exit:?}");
+    frame(&mut app, &ctx, vec![egui::Event::PointerMoved(entry[0])]);
+    frame(&mut app, &ctx, vec![]);
+    assert_eq!(app.canvas.hover_cursor.map(|(_, _, c)| c), Some(Cursor::StitchEntryExit));
+}

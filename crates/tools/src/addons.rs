@@ -36,13 +36,22 @@ pub const ENCLOSING_LASSO: &[ToolInfo] = &[ToolInfo { id: enclosing_lasso::ID, l
 
 pub const BOX_3D: &[ToolInfo] = &[ToolInfo { id: box3d::ID, label: "3D Box Tool", shortcut: None, icon: "box" }];
 
+/// Embroidery's tools (Embroidery › Entry and Exit Tool), listed the same way.
+pub const EMBROIDERY: &[ToolInfo] = &[ToolInfo { id: crate::entry_exit::ID, label: "Entry and Exit Tool", shortcut: None, icon: "pin" }];
+
 /// The add-ons' tool groups, after the toolbar's own ([`crate::TOOL_GROUPS`]), each with the
 /// heading the All Tools drawer lists it under (its add-on's name).
-const HEADED: &[(&[ToolInfo], &str)] =
-    &[(PATH_TOOLS, "Path Precision Tools"), (SMART_PEN, "Smart Pen"), (ENCLOSING_LASSO, "Enclosing Lasso"), (CONTOUR, "Contour"), (BOX_3D, "3D Box")];
+const HEADED: &[(&[ToolInfo], &str)] = &[
+    (PATH_TOOLS, "Path Precision Tools"),
+    (SMART_PEN, "Smart Pen"),
+    (ENCLOSING_LASSO, "Enclosing Lasso"),
+    (CONTOUR, "Contour"),
+    (BOX_3D, "3D Box"),
+    (EMBROIDERY, "Embroidery"),
+];
 
 /// The add-ons' tool groups, after the toolbar's own ([`crate::TOOL_GROUPS`]).
-pub const GROUPS: &[&[ToolInfo]] = &[PATH_TOOLS, SMART_PEN, ENCLOSING_LASSO, CONTOUR, BOX_3D];
+pub const GROUPS: &[&[ToolInfo]] = &[PATH_TOOLS, SMART_PEN, ENCLOSING_LASSO, CONTOUR, BOX_3D, EMBROIDERY];
 
 /// The heading the All Tools drawer lists tool `id` under: its add-on's name.
 pub fn heading(id: &str) -> Option<&'static str> {
@@ -63,6 +72,7 @@ pub fn create(id: &str) -> Option<Box<dyn Tool>> {
         enclosing_lasso::ID => Box::new(enclosing_lasso::EnclosingLassoTool::default()),
         contour::ID => Box::new(contour::ContourTool::default()),
         box3d::ID => Box::new(box3d::Box3dTool::default()),
+        crate::entry_exit::ID => Box::new(crate::entry_exit::EntryExitTool::default()),
         _ => return None,
     })
 }
