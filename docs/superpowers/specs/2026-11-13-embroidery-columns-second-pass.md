@@ -119,6 +119,19 @@ shortened where the line bends, so a curve keeps within 0.1 mm of its centre lin
 (*estimated*). `StitchProps.bean` (lettering): a bean run (each stitch sewn three times) for
 legibility, off by default.
 
+## Connectors between letters
+
+Review of the first screenshots: the walk from the T to the E of "TEXT" ran 8 mm down from the
+T's bar to the E's middle bar, because joining the E's corner into one stroke took away the node
+closest join had entered it by. Strokes are now split at their corners for routing only (the
+column still turns the corner as one), so a letter is entered and left at a corner too; of the
+points within 1 mm of the nearest, the one nearest the baseline is taken. A connector between
+two letters of a word that would show more than 3 mm outside both letters' ink
+(`MAX_CONNECTOR_MM`, *estimated*: the reference suite's help describes closest join as keeping
+connectors short but gives no length) is a trim and a jump instead; letters never trimmed
+(`letterTrims: none`) still walk. "Hello you" now trims three times (between the words, and
+round the y's tail), where it trimmed once.
+
 ## Junctions
 
 Looked at in StitchCraft: a 25 mm H's legs bulged into its bar (4.2 mm on a 3.2 mm leg), where a
@@ -131,8 +144,9 @@ it covers that side.
 | Design | Stitches | Columns | Trims | Lone jumps after the first stitch |
 |---|---|---|---|---|
 | "TEXT", 15 mm type (cap 9.8 mm) | 502 | 13 | 0 | 0 |
-| "Hello", 15 mm, live | 607 | 10 | 0 | 0 |
-| "Hello", converted | 606 | 10 | 0 | 0 |
+| "TEXT", converted | 514 | 13 | 1 | 0 |
+| "Hello", 15 mm, live | 606 | 10 | 0 | 0 |
+| "Hello", converted | 622 | 10 | 0 | 0 |
 | "Hello", bottom join | 590 | 10 | 0 | 0 |
 | "H", 25 mm cap height | 417 | 5 | 0 | 0 |
 | "Test", 5 mm type (cap 3.3 mm), running stitch | 43 | 0 | 0 | 0 |
