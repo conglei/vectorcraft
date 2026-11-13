@@ -12,6 +12,11 @@ use crate::{MAX_STEPS, Pt, TOO_MANY_STEPS};
 
 /// How far a mitred rail corner may lie from the centre line, in half widths.
 const MITER_LIMIT: f64 = 2.0;
+/// A rail pierced again closer than this many spacings to its last piercing gets a short stitch
+/// (estimated; Ink/Stitch's documentation describes short stitches without a default).
+const SHORT_DISTANCE: f64 = 0.25;
+/// How far a short stitch stops short of its rail: this much of the rung (estimated).
+const SHORT_INSET: f64 = 0.25;
 
 /// Satin settings, in millimetres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -265,6 +270,8 @@ pub fn rails_satin(left: &[(f64, f64)], right: &[(f64, f64)], p: &RailsParams, b
     let max = (p.max_stitch - ROUNDING_SLACK_MM).max(0.3);
     let mut out: Vec<P> = Vec::with_capacity(stations + 1);
     let mut seg = 0usize;
+    // The last piercing of each rail (left, right), and whether it was a short stitch.
+    let (mut last_l, mut last_r): ((Option<P>, bool), (Option<P>, bool)) = ((None, false), (None, false));
     for k in 0..=stations {
         let target = total * k as f64 / stations as f64;
         while seg + 2 < left.len() && guide.get(seg + 1).is_some_and(|&v| v < target) {
@@ -278,7 +285,15 @@ pub fn rails_satin(left: &[(f64, f64)], right: &[(f64, f64)], p: &RailsParams, b
         let out_dir = if w > 1e-9 { ((a.0 - b.0) / w, (a.1 - b.1) / w) } else { (0.0, 0.0) };
         // A negative compensation never crosses the rails over.
         let c = p.compensation.max(-w / 2.0);
-        let q = if k % 2 == 0 { (a.0 + out_dir.0 * c, a.1 + out_dir.1 * c) } else { (b.0 - out_dir.0 * c, b.1 - out_dir.1 * c) };
+        let on_left = k % 2 == 0;
+        let (pierce, other) = if on_left { ((a.0 + out_dir.0 * c, a.1 + out_dir.1 * c), b) } else { ((b.0 - out_dir.0 * c, b.1 - out_dir.1 * c), a) };
+        // Short stitches: where this rail is pierced again almost in the same hole (the inside
+        // of a corner or a tight curve), every other stitch stops short of it.
+        let last = if on_left { &mut last_l } else { &mut last_r };
+        let crowded = last.0.is_some_and(|l| dist(l, pierce) < SHORT_DISTANCE * p.spacing);
+        let short = crowded && !last.1;
+        *last = (Some(pierce), short);
+        let q = if short { lerp(pierce, other, SHORT_INSET) } else { pierce };
         if let Some(&prev) = out.last() {
             let l = dist(prev, q);
             if l > max {
@@ -330,6 +345,26 @@ mod tests {
             rails_satin(&[(0.0, 1.0), (1000.0, 1.0)], &[(0.0, 0.0), (1000.0, 0.0)], &RailsParams::default(), 100).unwrap_err(),
             TOO_MANY_STEPS
         );
+    }
+
+    /// A fan round one point (the inside of a corner): every other piercing of that rail stops
+    /// short of it, so the needle doesn't go through one hole again and again.
+    #[test]
+    fn a_fan_gets_short_stitches_on_its_crowded_rail() {
+        let n = 40;
+        let outer: Vec<P> = (0..=n)
+            .map(|i| {
+                let a = std::f64::consts::FRAC_PI_2 * f64::from(i) / f64::from(n);
+                (5.0 * a.cos(), 5.0 * a.sin())
+            })
+            .collect();
+        let inner = vec![(0.0, 0.0); outer.len()];
+        let run = rails_satin(&inner, &outer, &RailsParams::default(), MAX_STEPS).unwrap();
+        let at_hub: Vec<f64> = run.iter().step_by(2).map(|q| q.to_mm().0.hypot(q.to_mm().1)).collect();
+        let short = at_hub.iter().filter(|r| **r > 1.0).count();
+        assert!(short * 3 >= at_hub.len() && short * 3 <= at_hub.len() * 2, "{at_hub:?}");
+        // The other rail is pierced as drawn.
+        assert!(run.iter().skip(1).step_by(2).all(|q| (q.to_mm().0.hypot(q.to_mm().1) - 5.0).abs() < 0.1));
     }
 
     #[test]

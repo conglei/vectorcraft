@@ -334,11 +334,12 @@ impl Router<'_> {
     /// Running stitch along stroke `i`'s centre, forwards or back, at `length` mm.
     fn travel(&mut self, i: usize, forward: bool, length: f64) -> Result<(), String> {
         let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
-        let mut c = s.centre.clone();
+        let (mut c, mut bend) = (s.centre.clone(), s.bend.clone());
         if !forward {
             c.reverse();
+            bend.reverse();
         }
-        let pts = run_stitches(&c, &[], false, units(length));
+        let pts = run_stitches(&c, &bend, false, units(length));
         self.out.add(&pts)
     }
 
@@ -363,11 +364,12 @@ impl Router<'_> {
             } else {
                 self.run_lines += 1;
                 let Some(c) = s.centre.get(from..=to) else { continue };
-                let mut c = c.to_vec();
+                let (mut c, mut bend) = (c.to_vec(), s.bend.get(from..=to).map(<[bool]>::to_vec).unwrap_or_default());
                 if !forward {
                     c.reverse();
+                    bend.reverse();
                 }
-                run_stitches(&c, &[], false, units(self.p.run_length.min(self.out.max)))
+                run_stitches(&c, &bend, false, units(self.p.run_length.min(self.out.max)))
             };
             self.out.add(&pts)?;
         }

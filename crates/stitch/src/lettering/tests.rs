@@ -89,7 +89,7 @@ fn an_o_ring_is_a_closed_column_round_the_hole() {
 fn an_l_and_a_t_meet_without_a_gap_and_sew_in_one_go() {
     let l = vec![rect(0.0, 0.0, 3.0, 15.0), rect(0.0, 12.0, 10.0, 15.0)];
     let s = shape(l.clone());
-    assert!(s.columns.len() >= 2, "{}", s.columns.len());
+    assert_eq!(s.columns.len(), 1, "the L turns its corner as one column");
     let cover = column_area(&s) / (45.0 + 21.0);
     assert!((0.9..1.3).contains(&cover), "{cover}");
     let sewn = sew(l, LetterMode::Satin);
@@ -187,6 +187,124 @@ proptest! {
             for w in r.windows(2) {
                 prop_assert!(w[0].dist(w[1]) / 10.0 <= max + 1e-9, "{:?} over {}", w, max);
             }
+        }
+    }
+}
+
+/// Whether segments `ab` and `cd` cross, each strictly inside the other.
+fn crosses(a: P, b: P, c: P, d: P) -> bool {
+    let side = |p: P, q: P, r: P| (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0);
+    let (d1, d2, d3, d4) = (side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d));
+    d1 * d2 < -1e-12 && d3 * d4 < -1e-12
+}
+
+/// The column's rails don't cross each other, and no two rungs cross.
+fn assert_rails_never_cross(c: &Column) {
+    let n = c.left.len();
+    for i in 0..n - 1 {
+        for j in 0..n - 1 {
+            assert!(!crosses(c.left[i], c.left[i + 1], c.right[j], c.right[j + 1]), "the rails cross at rungs {i} and {j}");
+            if j > i + 1 {
+                assert!(
+                    !crosses(c.left[i], c.right[i], c.left[j], c.right[j]),
+                    "rungs {i} and {j} cross: {:?}",
+                    (i.saturating_sub(2)..=j + 2).map(|k| (c.left[k], c.right[k])).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+}
+
+/// The distance from `q` to the nearest edge of `rings`.
+fn to_outline(rings: &[Vec<P>], q: P) -> f64 {
+    let mut best = f64::INFINITY;
+    for r in rings {
+        for i in 0..r.len() {
+            best = best.min(crate::fill::seg_dist(q, r[i], r[(i + 1) % r.len()]));
+        }
+    }
+    best
+}
+
+/// Every point of the outline at least `margin` inside it lies between two rungs of a column.
+fn assert_covered(rings: &[Vec<P>], columns: &[Column], margin: f64) {
+    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+    for q in rings.iter().flatten() {
+        lo = (lo.0.min(q.0), lo.1.min(q.1));
+        hi = (hi.0.max(q.0), hi.1.max(q.1));
+    }
+    let mut missed = vec![];
+    let step = 0.2;
+    // Off the round numbers, so no point lies on a rung shared by two quads.
+    let mut y = lo.1 + 0.013;
+    while y <= hi.1 {
+        let mut x = lo.0 + 0.017;
+        while x <= hi.0 {
+            let q = (x, y);
+            if inside_rings(rings, q) && to_outline(rings, q) >= margin {
+                let held = columns
+                    .iter()
+                    .any(|c| (0..c.left.len() - 1).any(|i| inside_rings(&[vec![c.left[i], c.left[i + 1], c.right[i + 1], c.right[i]]], q)));
+                if !held {
+                    missed.push(q);
+                }
+            }
+            x += step;
+        }
+        y += step;
+    }
+    assert!(missed.is_empty(), "{} points not covered, such as {:?}", missed.len(), &missed[..missed.len().min(6)]);
+}
+
+fn ring_15() -> Vec<Vec<P>> {
+    let mut hole = rect(3.0, 3.0, 12.0, 12.0);
+    hole.reverse();
+    vec![rect(0.0, 0.0, 15.0, 15.0), hole]
+}
+
+/// A V: two 3 mm bars from the top to the bottom middle, 46° apart, cut square at the top and
+/// flat at the bottom, as a letter's point is.
+fn v_letter() -> Vec<Vec<P>> {
+    let (a, b, t) = ((1.5, 0.0), (13.5, 0.0), (7.5, 14.0));
+    let unit = |p: P, q: P| {
+        let l = (q.0 - p.0).hypot(q.1 - p.1);
+        ((q.0 - p.0) / l, (q.1 - p.1) / l)
+    };
+    let (dl, dr) = (unit(a, t), unit(b, t));
+    // Outer normals: away from the middle.
+    let nl = (-dl.1, dl.0);
+    let nl = if nl.0 < 0.0 { nl } else { (-nl.0, -nl.1) };
+    let nr = (-dr.1, dr.0);
+    let nr = if nr.0 > 0.0 { nr } else { (-nr.0, -nr.1) };
+    let at = |p: P, n: P, s: f64| (p.0 + n.0 * s, p.1 + n.1 * s);
+    let (p1, p2, p3, p4) = (at(a, nl, 1.5), at(a, nl, -1.5), at(b, nr, -1.5), at(b, nr, 1.5));
+    // Where the inner edges meet, and the outer edges cross y = 15.5.
+    let meet = |p: P, d: P, q: P, e: P| {
+        let den = d.0 * e.1 - d.1 * e.0;
+        let s = ((q.0 - p.0) * e.1 - (q.1 - p.1) * e.0) / den;
+        (p.0 + d.0 * s, p.1 + d.1 * s)
+    };
+    let inner = meet(p2, dl, p3, dr);
+    let on_y = |p: P, d: P, y: f64| (p.0 + d.0 * (y - p.1) / d.1, y);
+    vec![vec![p1, p2, inner, p3, p4, on_y(p4, dr, 15.5), on_y(p1, dl, 15.5)]]
+}
+
+/// STI-38: a stroke turning a sharp corner is one column whose rails mitre round it, not two
+/// columns overlapping at the corner.
+#[test]
+fn an_l_a_v_and_a_square_ring_turn_their_corners_as_one_column() {
+    let l = vec![rect(0.0, 0.0, 3.0, 15.0), rect(0.0, 12.0, 10.0, 15.0)];
+    for (name, rings) in [("L", l), ("V", v_letter()), ("ring", ring_15())] {
+        let s = shape(rings.clone());
+        assert_eq!(s.columns.len(), 1, "{name}: {} columns", s.columns.len());
+        assert_rails_never_cross(&s.columns[0]);
+        assert_covered(&rings, &s.columns, 0.35);
+        // Sewn in one go, its stitches inside the letter.
+        let sewn = sew(rings.clone(), LetterMode::Satin);
+        assert_eq!((sewn.runs.len(), sewn.columns), (1, 1), "{name}");
+        for q in &sewn.runs[0] {
+            let p = q.to_mm();
+            assert!(inside_rings(&rings, p) || to_outline(&rings, p) < 0.45, "{name}: {p:?} outside");
         }
     }
 }

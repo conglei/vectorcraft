@@ -154,6 +154,7 @@ fn stretch(s: &Stroke, from: usize, to: usize) -> Option<Stroke> {
         left: s.left.get(from..=to)?.to_vec(),
         right: s.right.get(from..=to)?.to_vec(),
         column: s.column.get(from..=to)?.to_vec(),
+        bend: s.bend.get(from..=to)?.to_vec(),
     })
 }
 
