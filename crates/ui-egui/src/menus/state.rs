@@ -253,6 +253,8 @@ pub fn enabled(app: &VectorcraftApp, id: &str) -> bool {
         id if saved_view_slot(id).is_some() => saved_view(app, id).is_some(),
         "effect.dialog" | "ui.recolorDialog" | "ui.effectGalleryDialog" => app.session.active().is_some_and(|d| !d.selection.is_empty()),
         "ui.cropImage" => selected_image(app, |_| true),
+        "ui.autoDigitizeImageDialog" => selected_image(app, |_| true),
+        "ui.autoDigitizeTool" => app.session.active().is_some(),
         "effect.applyLast" | "effect.last" => app.last_effect.is_some() && app.session.active().is_some_and(|d| !d.selection.is_empty()),
         "pathfinder.repeat" => app.last_pathfinder.as_ref().is_some_and(|op| {
             let min = crate::panels::pathfinder::minimum_operands(op);

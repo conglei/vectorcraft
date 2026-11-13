@@ -954,6 +954,12 @@ fn run_ui_part12(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result
             crate::dialogs::photo_stitch::open(app, p);
             Ok(Value::Null)
         }
+        "ui.autoDigitizeImageDialog" => crate::dialogs::auto_digitize::open(app, p),
+        "ui.autoDigitizeTool" if app.session.active().is_none() => Err("no document".into()),
+        "ui.autoDigitizeTool" => {
+            app.select_tool(vectorcraft_tools::autodigitize::ID);
+            Ok(json!({"tool": app.session.tool_id()}))
+        }
         "ui.stitchWorksheet" => crate::dialogs::stitch_production::open_worksheet(app, p),
         "ui.stitchProduction" => crate::dialogs::stitch_production::open_production(app, p),
         "ui.stitchOptionsDialog" if app.session.active().is_none() => Err("no document".into()),

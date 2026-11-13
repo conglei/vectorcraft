@@ -30,7 +30,7 @@ mod tests_sequence;
 mod text;
 
 use sequenced::{FillSpec, Run, Unit, points_of};
-pub use sequenced::{SequenceItem, Sequenced, covered_fills, outline_fraction, outline_point, sequence};
+pub use sequenced::{SequenceItem, Sequenced, closest_join_ways, colour_sort_order, covered_fills, outline_fraction, outline_point, sequence};
 pub use text::{Lettered, lettering_of, lettering_params, letters_of, text_mode};
 
 /// Letters closer than [`crate::NO_TRIM_GAP_MM`], in plan units, are joined by a stitch.

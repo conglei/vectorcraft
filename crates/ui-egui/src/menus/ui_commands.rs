@@ -1460,6 +1460,18 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{file?, provider?: none | nomodel | gemini (null: the photoProvider preference), colors?: 8, widthMm?: 100, fill?: field | tatami | rows | meander, spacing?: 0.4, feather?: 0, features?: true, seed?: 1} open Photo to Stitches (dialog `photoStitch`: fields = these, the params of photo.toStitches); OK runs photo.toStitches, which opens the design as a new document, and closes; an error stays in the dialog as `__error`",
     ),
     (
+        "ui.autoDigitizeTool",
+        "Auto-Digitize Tool",
+        "",
+        "{} choose the Auto-Digitize tool (tool `autoDigitize`): a click on an object runs stitch.autoDigitize on it (the object under the pointer becomes satin columns, fills and runs by its width), Enter runs it on the selection; off without a document",
+    ),
+    (
+        "ui.autoDigitizeImageDialog",
+        "Auto-Digitize Image…",
+        "",
+        "{colors?: 6, minRegionMm2?: 2, maxSatin?: 8, keepImage?: true} open Auto-Digitize Image (dialog `autoDigitizeImage`: fields = these, the params of image.autoDigitize) for the selected image; OK runs image.autoDigitize and shows what it made (field `__result`), OK again closes; an error stays in the dialog as `__error`; an error without an image selected",
+    ),
+    (
         "ui.stitchWorksheet",
         "Production Worksheet…",
         "",
