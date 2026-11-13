@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
 use vectorcraft_doc::{Document, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
-use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathEl, SubPath};
+use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathData, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
 use crate::lettering::UNDERLAY_LENGTH_MM;
@@ -24,11 +24,13 @@ mod sequenced;
 #[cfg(test)]
 mod tests_lettering;
 #[cfg(test)]
+mod tests_overlap;
+#[cfg(test)]
 mod tests_sequence;
 mod text;
 
-use sequenced::{Run, Unit, points_of};
-pub use sequenced::{SequenceItem, Sequenced, outline_fraction, outline_point, sequence};
+use sequenced::{FillSpec, Run, Unit, points_of};
+pub use sequenced::{SequenceItem, Sequenced, covered_fills, outline_fraction, outline_point, sequence};
 pub use text::{Lettered, lettering_of, lettering_params, letters_of, text_mode};
 
 /// Letters closer than [`crate::NO_TRIM_GAP_MM`], in plan units, are joined by a stitch.
@@ -337,7 +339,10 @@ impl<'o> Walk<'o> {
                 let own = n.stitch_props().filter(|_| !up.marked);
                 let pin = points_of(n, (own.and_then(|p| p.entry_at()), own.and_then(|p| p.exit_at())));
                 let prefer = points_of(n, (own.and_then(|p| p.join_entry_at()), own.and_then(|p| p.join_exit_at())));
-                self.units.push(Unit { id: n.id, runs: vec![], pin, prefer, fixed: false });
+                let mut unit = Unit::new(n.id, pin, prefer, false);
+                unit.overlap = own.and_then(StitchProps::overlap_mm);
+                unit.route = own.and_then(StitchProps::route_mm);
+                self.units.push(unit);
                 self.shape(n, up)?;
                 if self.units.last().is_some_and(|u| u.runs.is_empty()) {
                     self.units.pop();
@@ -345,7 +350,9 @@ impl<'o> Walk<'o> {
             }
             NodeKind::Text(_) if !up.marked => {
                 // Lettering is sewn in its own order, letter by letter: never turned round.
-                self.units.push(Unit { id: n.id, runs: vec![], pin: (None, None), prefer: (None, None), fixed: true });
+                let mut unit = Unit::new(n.id, (None, None), (None, None), true);
+                unit.route = n.stitch_props().and_then(StitchProps::route_mm);
+                self.units.push(unit);
                 self.lettering(n, up)?;
                 if self.units.last().is_some_and(|u| u.runs.is_empty()) {
                     self.units.pop();
@@ -479,6 +486,12 @@ impl<'o> Walk<'o> {
             self.count_run(&run, up);
             // Fills are never on an opened stitch file's layer.
             self.add_run(rgb, &run, Mode::Run, Join::Drawn)?;
+        }
+        // Kept for overlap removal and routed travel, which need the fills sewn after it.
+        let path = PathData::new(subpaths.iter().map(|sp| (*sp).clone()).collect());
+        let part = self.part;
+        if let Some(u) = self.units.last_mut() {
+            u.fill = Some(FillSpec { part, rgb, params: *params, path, rule, rings });
         }
         Ok(())
     }

@@ -388,7 +388,12 @@ pub fn prepare(plan: &StitchPlan, profile: &MachineProfile, o: &PrepareOptions) 
 /// tagged 0), returned for each step of the prepared plan: a step [`prepare`] adds (a lock stitch,
 /// a trim before travel, a piece of a split stitch or jump) takes the tag of the step it is added
 /// for. The tags say which object made each step ([`crate::Planned::owners`]).
-pub fn prepare_tagged(plan: &StitchPlan, tags: &[Vec<u32>], profile: &MachineProfile, o: &PrepareOptions) -> Result<(Prepared, Vec<Vec<u32>>), String> {
+pub fn prepare_tagged(
+    plan: &StitchPlan,
+    tags: &[Vec<u32>],
+    profile: &MachineProfile,
+    o: &PrepareOptions,
+) -> Result<(Prepared, Vec<Vec<u32>>), String> {
     plan.check()?;
     let input: Vec<Tagged> = plan
         .blocks

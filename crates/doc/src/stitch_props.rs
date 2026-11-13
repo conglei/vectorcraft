@@ -279,6 +279,27 @@ pub struct StitchProps {
     /// The exit point Closest Join chose, as for [`StitchProps::join_entry`].
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub join_exit: Option<f64>,
+    /// Embroidery › Remove Overlaps: this fill is sewn without the area that fills sewn after it
+    /// cover, each inset by this allowance in mm ([`OVERLAP_RANGE`]) so they still overlap its cut
+    /// edge. Cut again at every export, so it follows the objects when they move. The object's own:
+    /// never inherited.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub overlap: Option<f64>,
+    /// Embroidery › Route: the object may be entered from the one before it (in the same thread)
+    /// by running stitch instead of a trim, over at most this many mm ([`ROUTE_RANGE`]), where a
+    /// fill sewn from it on hides the way. The object's own: never inherited.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub route: Option<f64>,
+}
+
+/// The overlap allowances [`StitchProps::overlap`] takes, mm.
+pub const OVERLAP_RANGE: (f64, f64) = (0.0, 5.0);
+/// The travel lengths [`StitchProps::route`] takes, mm.
+pub const ROUTE_RANGE: (f64, f64) = (0.1, 20.0);
+
+/// `v` if it is finite and within `(lo, hi)`.
+fn within(v: Option<f64>, (lo, hi): (f64, f64)) -> Option<f64> {
+    v.filter(|t| t.is_finite() && (lo..=hi).contains(t))
 }
 
 /// A fraction along an outline, if it is finite and within 0–1 (a value out of range, from a
@@ -332,6 +353,16 @@ impl StitchProps {
     /// The exit point Closest Join chose ([`StitchProps::join_exit`]), if it is in range.
     pub fn join_exit_at(&self) -> Option<f64> {
         fraction(self.join_exit)
+    }
+
+    /// The overlap allowance set here ([`StitchProps::overlap`]), if it is in range.
+    pub fn overlap_mm(&self) -> Option<f64> {
+        within(self.overlap, OVERLAP_RANGE)
+    }
+
+    /// The longest routed travel set here ([`StitchProps::route`]), if it is in range.
+    pub fn route_mm(&self) -> Option<f64> {
+        within(self.route, ROUTE_RANGE)
     }
 
     /// Where the object is entered: the user's point, else the one Closest Join chose.

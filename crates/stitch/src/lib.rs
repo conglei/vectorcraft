@@ -23,6 +23,7 @@ pub mod sequence;
 mod stats;
 mod thread;
 mod to_doc;
+pub mod travel;
 
 #[cfg(test)]
 mod tests_props;
@@ -33,7 +34,7 @@ pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
 pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
     DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Lettered, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions,
-    StrokeType, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_point, sequence, text_mode,
+    StrokeType, covered_fills, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_point, sequence, text_mode,
 };
 pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM, Placement};
 pub use lettering::{

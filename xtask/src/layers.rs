@@ -95,6 +95,8 @@ pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["pathops", "three-d"],
     // Embroidery sews type as lettering from its laid-out glyph outlines.
     &["text", "stitch"],
+    // Overlap removal cuts a fill by the fills sewn after it with Pathfinder's booleans.
+    &["pathops", "stitch"],
 ];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {

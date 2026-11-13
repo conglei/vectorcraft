@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, MAX_COORD, NodeId, NodeKind, StitchType};
+use vectorcraft_doc::{Document, MAX_COORD, NodeId, NodeKind, OVERLAP_RANGE, ROUTE_RANGE, StitchType};
 use vectorcraft_geom::Point;
 use vectorcraft_stitch::sequence::{Cost, Item, closest_join, colour_changes, colour_sort, cost};
 use vectorcraft_stitch::{
-    FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, inherited_props, outline_fraction, sequence, sewn_as, stats, stats_by_tag,
+    FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, covered_fills, inherited_props, outline_fraction, sequence, sewn_as, stats, stats_by_tag,
 };
 
 use super::super::fileio::stitchfile;
@@ -89,6 +89,33 @@ pub fn specs() -> Vec<CommandSpec> {
             "{start?: {x, y} | [x, y] (document units) | null (unset), end?: (the same)} where the machine starts (the first object is entered nearest it; a stitch file's origin, in place of the export's start option) and where the design ends (the last object is left nearest it); what is not given stays; one undo step → {start, end}",
             has_doc,
             start_end
+        ),
+        cmd!(
+            "stitch.overlap.remove",
+            "Remove Overlaps",
+            ["Embroidery"],
+            None,
+            "{ids?: [id…] (default: every sewn object), allowanceMm?: 0.7 (0–5), options?} for each listed tatami fill that a fill sewn after it overlaps, sew it without what the later fills cover, each inset by the allowance so they still overlap its cut edge and no fabric shows; stored on the object (its overlap property), so it is cut again when either object moves; stitch.overlap.clear undoes it; one undo step → {changed: [id…], stitches: {before, after}}",
+            has_doc,
+            overlap_remove
+        ),
+        cmd!(
+            "stitch.overlap.clear",
+            "Restore Overlaps",
+            [],
+            None,
+            "{ids?: [id…] (default: every object whose overlaps are removed)} sew these fills whole again; one undo step → {changed: [id…]}",
+            has_doc,
+            overlap_clear
+        ),
+        cmd!(
+            "stitch.route",
+            "Route Within Colors",
+            ["Embroidery"],
+            None,
+            "{ids?: [id…] (default: every sewn object), maxTravelMm?: 3 (0.1–20; 0: trims again), options?} enter each listed object from the one before it (in the same thread) by running stitch instead of a trim and a jump, when its entry is within maxTravelMm of the needle and the straight way lies under a fill of that thread sewn from it on, or along such a fill's edge; else the trim stays. Stored on the object (its route property), which every export, stitch.info and the preview follow; one undo step → {changed: [id…], trims: {before, after}}",
+            has_doc,
+            route_cmd
         ),
     ]
 }
@@ -446,6 +473,117 @@ fn start_end(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "start": pt(next.start), "end": pt(next.end) }))
 }
 
+/// The objects `ids` names (each must exist), or `None` when not given.
+fn listed(s: &Session, p: &Value, cmd: &str) -> Result<Option<Vec<NodeId>>> {
+    let Some(v) = p.get("ids").filter(|v| !v.is_null()) else { return Ok(None) };
+    let ids = v.as_array().ok_or_else(|| bad(cmd, format!("ids must be an array of object ids, not {v}")))?;
+    let d = &s.doc()?.doc;
+    let mut out = Vec::with_capacity(ids.len());
+    for v in ids {
+        let id = id_of(v, cmd, "each of ids")?;
+        if d.node(id).is_none() {
+            return Err(bad(cmd, format!("no object {}", id.0)));
+        }
+        out.push(id);
+    }
+    Ok(Some(out))
+}
+
+/// A number in `p[key]`, `default` when not given, within `lo..=hi` (or exactly `zero`).
+fn mm_param(p: &Value, key: &str, default: f64, (lo, hi): (f64, f64), zero: bool, cmd: &str) -> Result<f64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => match v.as_f64() {
+            Some(x) if x.is_finite() && ((lo..=hi).contains(&x) || (zero && x == 0.0)) => Ok(x),
+            _ => Err(bad(cmd, format!("{key} must be a number of mm, {lo}–{hi}{}, not {v}", if zero { " (or 0)" } else { "" }))),
+        },
+    }
+}
+
+/// Set each object's stitch properties to `f` of them, as one undo step `label` (none when nothing
+/// changes); the ids changed.
+fn update_props(s: &mut Session, label: &str, ids: &[NodeId], f: impl Fn(&mut vectorcraft_doc::StitchProps)) -> Result<Vec<u64>> {
+    let d = &s.doc()?.doc;
+    let mut updates = vec![];
+    for &id in ids {
+        let Some(n) = d.node(id) else { continue };
+        let before = n.stitch_props().copied().unwrap_or_default();
+        let mut after = before;
+        f(&mut after);
+        if after != before {
+            updates.push((id, after));
+        }
+    }
+    let changed: Vec<u64> = updates.iter().map(|(id, _)| id.0).collect();
+    if !updates.is_empty() {
+        s.edit(label, |d, _| {
+            for (id, props) in updates {
+                if let Some(n) = d.node_mut(id) {
+                    n.set_stitch_props(props);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    Ok(changed)
+}
+
+/// The plan `stitch.info` counts, with options `p.options`.
+fn counted(s: &Session, p: &Value, cmd: &str) -> Result<vectorcraft_stitch::Stats> {
+    let made = stitchfile::accounted(cmd, &s.doc()?.doc, &options_value(p, cmd)?)?;
+    Ok(stats(&made.plan))
+}
+
+fn overlap_remove(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.overlap.remove";
+    let allowance = mm_param(p, "allowanceMm", DEFAULT_OVERLAP_MM, OVERLAP_RANGE, false, C)?;
+    let only = listed(s, p, C)?;
+    let o = options(p, C)?;
+    let covered = covered_fills(&s.doc()?.doc, &o).map_err(|e| bad(C, e))?;
+    let ids: Vec<NodeId> = covered.into_iter().filter(|id| only.as_ref().is_none_or(|l| l.contains(id))).collect();
+    let before = counted(s, p, C)?.stitches;
+    let changed = update_props(s, "Remove Overlaps", &ids, |props| props.overlap = Some(allowance))?;
+    let after = if changed.is_empty() { before } else { counted(s, p, C)?.stitches };
+    Ok(json!({ "changed": changed, "stitches": {"before": before, "after": after} }))
+}
+
+fn overlap_clear(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.overlap.clear";
+    let ids = match listed(s, p, C)? {
+        Some(ids) => ids,
+        None => {
+            let mut all = vec![];
+            s.doc()?.doc.walk(|n| {
+                if n.stitch_props().is_some_and(|p| p.overlap.is_some()) {
+                    all.push(n.id);
+                }
+            });
+            all
+        }
+    };
+    let changed = update_props(s, "Restore Overlaps", &ids, |props| props.overlap = None)?;
+    Ok(json!({ "changed": changed }))
+}
+
+fn route_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "stitch.route";
+    let max = mm_param(p, "maxTravelMm", DEFAULT_ROUTE_MM, ROUTE_RANGE, true, C)?;
+    let ids = match listed(s, p, C)? {
+        Some(ids) => ids,
+        None => sequenced(s, p, C)?.items.iter().map(|i| i.id).collect(),
+    };
+    let before = counted(s, p, C)?.trims;
+    let value = (max > 0.0).then_some(max);
+    let changed = update_props(s, if value.is_some() { "Route Within Colors" } else { "Clear Routing" }, &ids, |props| props.route = value)?;
+    let after = if changed.is_empty() { before } else { counted(s, p, C)?.trims };
+    Ok(json!({ "changed": changed, "trims": {"before": before, "after": after} }))
+}
+
+/// The overlap `stitch.overlap.remove` leaves under a later fill by default, mm.
+pub const DEFAULT_OVERLAP_MM: f64 = 0.7;
+/// The longest travel `stitch.route` stitches by default, mm.
+pub const DEFAULT_ROUTE_MM: f64 = 3.0;
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -597,6 +735,62 @@ mod tests {
         s.execute("shape.line", &json!({"x1": 40, "y1": 300, "x2": 300, "y2": 300})).unwrap();
         let l = assert_one_accounting(&mut s);
         assert!(l["objects"].as_array().unwrap().iter().all(|o| o["stitches"].as_u64().unwrap() > 0), "{l}");
+    }
+
+    /// Filled squares with no stroke: `(x, y, side, colour)` each in mm; their ids.
+    fn squares(s: &mut Session, art: &[(f64, f64, f64, &str)]) -> Vec<u64> {
+        s.execute("file.new", &json!({"width": 600, "height": 600})).unwrap();
+        let pt = 72.0 / 25.4;
+        let mut ids = vec![];
+        for (x, y, side, c) in art {
+            s.execute("select.none", &json!({})).unwrap();
+            s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+            s.execute("paint.setFill", &json!({"color": c})).unwrap();
+            let r = s.execute("shape.rectangle", &json!({"x": x * pt, "y": y * pt, "width": side * pt, "height": side * pt})).unwrap();
+            ids.push(r["id"].as_u64().unwrap());
+        }
+        s.execute("select.none", &json!({})).unwrap();
+        ids
+    }
+
+    #[test]
+    fn remove_overlaps_cuts_the_earlier_fill_and_clears_in_one_step_each() {
+        let mut s = Session::new();
+        let ids = squares(&mut s, &[(10.0, 10.0, 20.0, "#c81e1e"), (20.0, 20.0, 20.0, "#1e1ec8")]);
+        let before = s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64().unwrap();
+        let r = s.execute("stitch.overlap.remove", &json!({})).unwrap();
+        assert_eq!(r["changed"], json!([ids[0]]), "only the earlier, covered fill: {r}");
+        let after = r["stitches"]["after"].as_u64().unwrap();
+        assert_eq!(r["stitches"]["before"].as_u64(), Some(before));
+        assert!(after < before, "{r}");
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(after));
+        // Stored: Stitch Properties shows it; moving the later square re-cuts.
+        let props = s.execute("stitch.props", &json!({"ids": [ids[0]]})).unwrap();
+        assert!(props.to_string().contains("overlap"), "{props}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(before));
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.execute("stitch.overlap.clear", &json!({})).unwrap()["changed"], json!([ids[0]]));
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"].as_u64(), Some(before));
+        for p in [json!({"allowanceMm": 9}), json!({"allowanceMm": "a"}), json!({"ids": [99999]}), json!({"ids": 3})] {
+            assert!(s.execute("stitch.overlap.remove", &p).is_err(), "{p}");
+        }
+        assert_one_accounting(&mut s);
+    }
+
+    #[test]
+    fn routing_joins_a_colour_under_its_later_fill() {
+        let mut s = Session::new();
+        // Two red squares side by side, a red square over both sewn last.
+        let ids = squares(&mut s, &[(10.0, 10.0, 10.0, "#c81e1e"), (22.0, 10.0, 10.0, "#c81e1e"), (9.0, 9.0, 24.0, "#c81e1e")]);
+        let r = s.execute("stitch.route", &json!({"ids": [ids[1]], "maxTravelMm": 20})).unwrap();
+        assert!(r["trims"]["after"].as_u64() < r["trims"]["before"].as_u64(), "{r}");
+        let l = assert_one_accounting(&mut s);
+        assert_eq!(l["trims"], r["trims"]["after"]);
+        // 0 routes no more.
+        let r = s.execute("stitch.route", &json!({"maxTravelMm": 0})).unwrap();
+        assert!(r["trims"]["after"].as_u64() > r["trims"]["before"].as_u64(), "{r}");
+        assert!(s.execute("stitch.route", &json!({"maxTravelMm": 50})).is_err());
     }
 
     #[test]

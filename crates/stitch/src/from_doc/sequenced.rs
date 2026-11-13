@@ -4,10 +4,13 @@
 //! enter and leave where its points say.
 
 use vectorcraft_doc::{Document, Node, NodeId};
+use vectorcraft_geom::{FillRule, PathData};
+use vectorcraft_pathops::{BoolOp, DEFAULT_PRECISION, Join as LineJoin, try_boolean, try_offset_path, try_unite_all};
 
 use super::{Join, Mode, Walk, collect_subpaths, flatten};
+use crate::fill::{FillParams, tatami};
 use crate::sequence::{Ends, Item, MAX_WAYS, Way, current_ways, nearest_way, resolve_order};
-use crate::{MAX_STEPS, Pt};
+use crate::{MAX_STEPS, PT_PER_MM, Pt, travel};
 
 /// One run an object sews.
 #[derive(Clone, Debug)]
@@ -31,6 +34,32 @@ pub(super) struct Unit {
     pub(super) prefer: (Option<Pt>, Option<Pt>),
     /// Sewn forwards only (lettering, whose letters are in their own order).
     pub(super) fixed: bool,
+    /// Its tatami fill, if it has one: what overlap removal cuts and routed travel hides under.
+    pub(super) fill: Option<FillSpec>,
+    /// Its own overlap allowance, mm ([`vectorcraft_doc::StitchProps::overlap`]).
+    pub(super) overlap: Option<f64>,
+    /// Its own longest routed travel, mm ([`vectorcraft_doc::StitchProps::route`]).
+    pub(super) route: Option<f64>,
+}
+
+/// An object's tatami fill, kept so it can be sewn again cut ([`cut_overlaps`]).
+#[derive(Clone, Debug)]
+pub(super) struct FillSpec {
+    /// The stitch type of the object the fill's runs are ([`Run::part`]).
+    pub(super) part: usize,
+    pub(super) rgb: [u8; 3],
+    pub(super) params: FillParams,
+    /// The region, in document points, and its fill rule.
+    pub(super) path: PathData,
+    pub(super) rule: FillRule,
+    /// The region sewn, flattened to mm (after any cut), by `rule`.
+    pub(super) rings: Vec<Vec<(f64, f64)>>,
+}
+
+impl Unit {
+    pub(super) fn new(id: NodeId, pin: (Option<Pt>, Option<Pt>), prefer: (Option<Pt>, Option<Pt>), fixed: bool) -> Unit {
+        Unit { id, runs: vec![], pin, prefer, fixed, fill: None, overlap: None, route: None }
+    }
 }
 
 /// How a unit's runs are turned.
@@ -238,10 +267,79 @@ fn order(doc: &Document, units: &[Unit], ends: &Ends) -> Ordered {
     Ordered { order, items, orients, ways }
 }
 
+/// How near the edge of a later fill routed travel may run and count as hidden (along a shared
+/// edge), mm.
+const SHARED_EDGE_MM: f64 = 0.3;
+
+/// A fill cut by `cover` inset by `allowance_mm`: its region, in document points, by its rule.
+/// `None` when the cut fails or leaves the fill as it was.
+fn cut_fill(spec: &FillSpec, cover: &[(&PathData, FillRule)], allowance_mm: f64) -> Option<PathData> {
+    let union = try_unite_all(cover).ok()?;
+    // Inset: the later fills still overlap the cut edge by the allowance.
+    let inset = if allowance_mm > 0.0 { try_offset_path(&union, -allowance_mm * PT_PER_MM, LineJoin::Miter, 4.0).ok()? } else { union };
+    if inset.subpaths.is_empty() {
+        return None;
+    }
+    let cut = try_boolean(&spec.path, spec.rule, &inset, FillRule::NonZero, BoolOp::Difference, DEFAULT_PRECISION).ok()?;
+    // Nothing covered: leave the fill alone (the same stitches, not a refit of them).
+    let before = vectorcraft_pathops::try_area(&spec.path, spec.rule).ok()?;
+    let after = vectorcraft_pathops::try_area(&cut, FillRule::NonZero).ok()?;
+    ((before - after).abs() > 1e-3).then_some(cut)
+}
+
+/// Sew again, cut, each unit whose overlaps are removed ([`Unit::overlap`]): its fill without what
+/// the fills sewn after it (in `order`, indices into `units`) cover, inset by its allowance. A cut
+/// that fails leaves the fill whole.
+fn cut_overlaps(units: &mut [Unit], order: &[usize], budget: usize) -> Result<(), String> {
+    for (k, &i) in order.iter().enumerate() {
+        let Some(u) = units.get(i) else { continue };
+        let (Some(allowance), Some(spec)) = (u.overlap, u.fill.as_ref()) else { continue };
+        let later: Vec<(&PathData, FillRule)> =
+            order.iter().skip(k + 1).filter_map(|&j| units.get(j)?.fill.as_ref()).map(|f| (&f.path, f.rule)).collect();
+        if later.is_empty() {
+            continue;
+        }
+        let Some(cut) = cut_fill(spec, &later, allowance) else { continue };
+        let mut rings = vec![];
+        for sp in &cut.subpaths {
+            rings.push(flatten(sp, budget)?.0);
+        }
+        let runs = tatami(&rings, FillRule::NonZero, &spec.params, budget)?;
+        let (part, rgb) = (spec.part, spec.rgb);
+        let Some(u) = units.get_mut(i) else { continue };
+        // The fill's runs are replaced where they were: the fill stays under the outline.
+        let at = u.runs.iter().position(|r| r.part == part).unwrap_or(0);
+        u.runs.retain(|r| r.part != part);
+        let new: Vec<Run> =
+            runs.into_iter().filter(|r| !r.is_empty()).map(|pts| Run { rgb, pts, mode: Mode::Run, join: Join::Drawn, part }).collect();
+        let tail = u.runs.split_off(at.min(u.runs.len()));
+        u.runs.extend(new);
+        u.runs.extend(tail);
+        if let Some(f) = u.fill.as_mut() {
+            f.path = cut;
+            f.rule = FillRule::NonZero;
+            f.rings = rings;
+        }
+    }
+    Ok(())
+}
+
+/// The order of `units` the design sews them in, with their overlaps cut ([`cut_overlaps`]).
+fn prepared_order(doc: &Document, units: &mut [Unit], budget: usize) -> Result<Vec<usize>, String> {
+    let natural: Vec<NodeId> = units.iter().map(|u| u.id).collect();
+    let order = resolve_order(&doc.stitch.order, &natural);
+    if units.iter().any(|u| u.overlap.is_some() && u.fill.is_some()) {
+        cut_overlaps(units, &order, budget)?;
+    }
+    Ok(order)
+}
+
 impl Walk<'_> {
-    /// Sew the collected units in the design's order, each turned as [`order`] says.
+    /// Sew the collected units in the design's order, each turned as [`order`] says, overlaps
+    /// cut ([`cut_overlaps`]) and routed joins stitched ([`Walk::route_into`]).
     pub(super) fn sew_units(&mut self, doc: &Document) -> Result<(), String> {
-        let units = std::mem::take(&mut self.units);
+        let mut units = std::mem::take(&mut self.units);
+        prepared_order(doc, &mut units, MAX_STEPS)?;
         let ends = ends_of(doc, self.o.min_stitch);
         let o = order(doc, &units, &ends);
         self.steps = 0;
@@ -251,10 +349,49 @@ impl Walk<'_> {
             let orient = o.orients.get(k).and_then(|os| os.get(way)).copied().unwrap_or(Orient::Forward);
             // Every step from here to the next object is this one's ([`super::Planned::tags`]).
             self.owners.push(u.id);
-            for r in u.oriented(orient) {
+            let runs = u.oriented(orient);
+            if let (Some(max), Some(first)) = (u.route, runs.iter().find(|r| !r.pts.is_empty())) {
+                let later: Vec<&FillSpec> = o.order.iter().skip(k).filter_map(|&j| units.get(j)?.fill.as_ref()).collect();
+                self.route_into(first, max, &later)?;
+            }
+            for r in runs {
                 self.emit_run(r.rgb, &r.pts, r.mode, r.join)?;
             }
         }
+        Ok(())
+    }
+
+    /// Before `run`, the first an object sews, carry the needle to it by running stitch when the
+    /// last block is the run's thread, the needle is further than the join distance and at most
+    /// `max_mm` away, and the straight way lies under `later` fills of that thread (sewn from
+    /// this object on) or along one's edge. The run then follows without a trim. Otherwise
+    /// nothing: the join is as before.
+    fn route_into(&mut self, run: &Run, max_mm: f64, later: &[&FillSpec]) -> Result<(), String> {
+        let (Some(from), Some(&to)) = (self.pos, run.pts.first()) else { return Ok(()) };
+        if self.blocks.last().is_none_or(|b| b.thread.rgb != run.rgb) || matches!(run.join, Join::Opened { .. }) {
+            return Ok(());
+        }
+        let d = from.dist(to);
+        if d <= f64::from(self.o.min_stitch) || d > max_mm * crate::UNITS_PER_MM {
+            return Ok(());
+        }
+        let regions: Vec<travel::Region> = later.iter().filter(|f| f.rgb == run.rgb).map(|f| (f.rings.as_slice(), f.rule)).collect();
+        if regions.is_empty() || !travel::hidden(from, to, &regions, SHARED_EDGE_MM) {
+            return Ok(());
+        }
+        let length = f64::from(self.o.stitch_length) / crate::UNITS_PER_MM;
+        let mut pts = travel::stitched(from, to, length);
+        pts.push(to);
+        self.steps = self.steps.saturating_add(pts.len());
+        if self.steps > MAX_STEPS {
+            return Err(crate::TOO_MANY_STEPS.to_string());
+        }
+        let owner = u32::try_from(self.owners.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        if let (Some(block), Some(tags)) = (self.blocks.last_mut(), self.tags.last_mut()) {
+            block.steps.extend(pts.iter().map(|p| crate::Step::Stitch(*p)));
+            tags.resize(block.steps.len(), owner);
+        }
+        self.pos = Some(to);
         Ok(())
     }
 }
@@ -266,6 +403,7 @@ pub fn sequence(doc: &Document, o: &super::FromDocOptions) -> Result<Sequenced, 
     for layer in &doc.layers {
         w.node(layer, super::Under::default())?;
     }
+    prepared_order(doc, &mut w.units, MAX_STEPS)?;
     let ends = ends_of(doc, o.min_stitch);
     let ord = order(doc, &w.units, &ends);
     let natural = w.units.iter().map(|u| u.id).collect();
@@ -283,6 +421,40 @@ pub fn sequence(doc: &Document, o: &super::FromDocOptions) -> Result<Sequenced, 
         });
     }
     Ok(Sequenced { items, natural, ends })
+}
+
+/// The objects of `doc` with a tatami fill that a fill sewn after them overlaps (by more than a
+/// square tenth of a millimetre), in sewing order: those overlap removal would cut.
+pub fn covered_fills(doc: &Document, o: &super::FromDocOptions) -> Result<Vec<NodeId>, String> {
+    let mut w = Walk::new(o);
+    for layer in &doc.layers {
+        w.node(layer, super::Under::default())?;
+    }
+    let natural: Vec<NodeId> = w.units.iter().map(|u| u.id).collect();
+    let order = resolve_order(&doc.stitch.order, &natural);
+    let min_area = 0.01 * PT_PER_MM * PT_PER_MM;
+    let mut out = vec![];
+    for (k, &i) in order.iter().enumerate() {
+        let Some((id, spec)) = w.units.get(i).and_then(|u| Some((u.id, u.fill.as_ref()?))) else { continue };
+        let bounds = spec.path.control_bounds();
+        let covered = order.iter().skip(k + 1).filter_map(|&j| w.units.get(j)?.fill.as_ref()).any(|later| {
+            let near = match (bounds, later.path.control_bounds()) {
+                (Some(a), Some(b)) => {
+                    let r = a.intersect(b);
+                    r.width() > 0.0 && r.height() > 0.0
+                }
+                _ => false,
+            };
+            near && try_boolean(&spec.path, spec.rule, &later.path, later.rule, BoolOp::Intersect, DEFAULT_PRECISION)
+                .ok()
+                .and_then(|p| vectorcraft_pathops::try_area(&p, FillRule::NonZero).ok())
+                .is_some_and(|a| a > min_area)
+        });
+        if covered {
+            out.push(id);
+        }
+    }
+    Ok(out)
 }
 
 /// Object `n`'s outline: each subpath flattened to millimetres, a closed one back to its start.
