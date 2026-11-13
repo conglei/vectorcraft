@@ -30,6 +30,7 @@ mod tests;
 use vectorcraft_doc::LetterTrims;
 use vectorcraft_geom::FillRule;
 
+use crate::autodigitize::{Split, split_wide};
 use crate::columns::{self, Stroke, dist, extend_nodes, finite, pieces};
 use crate::fill::{FillParams, tatami};
 use crate::run::run_stitches;
@@ -153,7 +154,7 @@ pub struct LetterShape {
     pub columns: Vec<Column>,
     /// Running stitch lines (thin strokes, or the whole letter when small).
     pub runs: Vec<Vec<P>>,
-    /// The outline, when the letter is filled.
+    /// The outline filled: the whole letter (fill mode), or its wide part, sewn before the columns.
     pub fill: Vec<Vec<P>>,
 }
 
@@ -262,7 +263,15 @@ fn analyse(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<An
             })
             .fold(0.0, f64::max);
         if widest > p.max_satin {
-            return Ok(empty(LetterMode::Fill));
+            // Its wide part is tatami, the rest stays columns and runs reaching into it; when
+            // nothing is left over, all of it is filled.
+            return Ok(match split_wide(&sk.grid, &strokes, p.max_satin) {
+                Split::Mixed { fill, stretches } => {
+                    let style = vec![None; stretches.len()];
+                    Analysis { mode, nodes: extend_nodes(nodes, &stretches), strokes: stretches, style, fills: vec![fill] }
+                }
+                Split::Narrow | Split::Whole => empty(LetterMode::Fill),
+            });
         }
     }
     let style = vec![None; strokes.len()];
@@ -384,11 +393,7 @@ struct Prepared {
 /// fill), as columns, run lines and fill outlines: the objects Convert to Stitch Objects makes.
 pub fn shape_letter(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<LetterShape, String> {
     let a = analyse(rings, mode, p)?;
-    let mut shape = LetterShape { mode: a.mode, columns: vec![], runs: vec![], fill: vec![] };
-    if a.mode == LetterMode::Fill {
-        shape.fill = rings.to_vec();
-        return Ok(shape);
-    }
+    let mut shape = LetterShape { mode: a.mode, columns: vec![], runs: vec![], fill: a.fills.first().cloned().unwrap_or_default() };
     for s in &a.strokes {
         for (col, from, to) in pieces(s) {
             if col {

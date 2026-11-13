@@ -10,8 +10,8 @@ use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, Document, Node, NodeId, NodeKind, StitchProps, StitchType};
 use vectorcraft_geom::{PathData, Point, SubPath};
 use vectorcraft_stitch::{
-    FromDocOptions, LetterMode, MAX_STEPS, PT_PER_MM, THREAD_WIDTH_MM, inherited_props, letter_height, lettering_of, lettering_params, letters_of,
-    mode_for, shape_letter, stats, text_mode,
+    FromDocOptions, MAX_STEPS, PT_PER_MM, THREAD_WIDTH_MM, inherited_props, letter_height, lettering_of, lettering_params, letters_of, mode_for,
+    shape_letter, stats, text_mode,
 };
 
 use super::super::edit::selected_roots;
@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Lettering Info",
             [],
             None,
-            "{ids?|id? (default: the selection; groups give the type inside them), options?: {…the stitch options of stitch.info: the document's defaults}} what each type object sews as (stitch type automatic, lettering or satin: satin lettering, running stitch under the run height; run: running stitch; tatami: filled letters; set the lettering parameters minColumn, runUnder, compensation, satinSpacing, runLength, underlay and letterTrims with stitch.setParams) → {objects: [{id, heightMm (the tallest letter), mode: satin|run|fill|none, letters, columns (satin columns), runs (running stitch lines), fills (filled letters), trims, stitches (as stitch.info counts them for this object alone, lock stitches included)}]}; selecting no type is an error",
+            "{ids?|id? (default: the selection; groups give the type inside them), options?: {…the stitch options of stitch.info: the document's defaults}} what each type object sews as (stitch type automatic, lettering or satin: satin lettering, running stitch under the run height; run: running stitch; tatami: filled letters; set the lettering parameters minColumn, runUnder, compensation, satinSpacing, runLength, underlay and letterTrims with stitch.setParams) → {objects: [{id, heightMm (the tallest letter), mode: satin|run|fill|none, letters, columns (satin columns), runs (running stitch lines), fills (filled letters, and the wide parts of letters whose strokes are wider than satin: tatami under columns that reach 0.3 mm into it), trims, stitches (as stitch.info counts them for this object alone, lock stitches included)}]}; selecting no type is an error",
             has_doc,
             info
         ),
@@ -93,7 +93,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
             v["letters"] = json!(l.letters.len());
             v["columns"] = json!(l.letters.iter().map(|x| x.columns).sum::<usize>());
             v["runs"] = json!(l.letters.iter().map(|x| x.run_lines).sum::<usize>());
-            v["fills"] = json!(l.letters.iter().filter(|x| x.mode == LetterMode::Fill).count());
+            v["fills"] = json!(l.letters.iter().map(|x| x.fills).sum::<usize>());
             if l.letters.iter().any(|x| !x.runs.is_empty())
                 && let Ok((plan, _)) = stitchfile::plan(INFO, d, &raw, "dst", Some(vec![id]))
             {

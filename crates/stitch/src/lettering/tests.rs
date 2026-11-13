@@ -325,3 +325,28 @@ fn a_walk_is_hidden_only_inside_the_ink() {
     assert!(!hidden((1.0, 1.0), (f64::NAN, 1.0), &rings), "not finite");
     assert!(hidden((2.0, 2.0), (2.0, 2.0), &rings), "no distance at all");
 }
+
+/// STI-38: a 25 mm block letter whose body is wider than satin and whose serifs are not: one
+/// tatami fill for the body and satin columns for the serifs, reaching into the fill, sewn as one
+/// letter (the fill first).
+#[test]
+fn a_wide_letter_with_serifs_is_a_fill_body_with_satin_serifs() {
+    // A 10 mm body 25 mm tall, with 3 mm serifs reaching 7 mm out each side, top and bottom.
+    let rings = vec![rect(7.0, 0.0, 17.0, 25.0), rect(0.0, 0.0, 24.0, 3.0), rect(0.0, 22.0, 24.0, 25.0)];
+    let s = shape(rings.clone());
+    assert_eq!(s.mode, LetterMode::Satin, "partly satin");
+    assert!(!s.fill.is_empty(), "a fill for the body");
+    assert!(s.columns.len() >= 4, "a column per serif arm: {}", s.columns.len());
+    // The fill is the body: about its area (plus the serifs' corners), not the serifs' tips.
+    let fill = s.fill.iter().map(|r| area(r)).sum::<f64>();
+    assert!((200.0..330.0).contains(&fill), "{fill}");
+    for c in &s.columns {
+        // Each column runs out along a serif, overlapping the fill a little.
+        let xs: Vec<f64> = c.left.iter().chain(&c.right).map(|p| p.0).collect();
+        let (lo, hi) = xs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        assert!(lo < 3.0 || hi > 21.0, "a serif column: {lo}..{hi}");
+    }
+    let sewn = sew(rings, LetterMode::Satin);
+    assert_eq!((sewn.mode, sewn.fills), (LetterMode::Satin, 1));
+    assert!(sewn.columns >= 4, "{}", sewn.columns);
+}
