@@ -314,7 +314,9 @@ mod tests {
         assert!(frame(&mut app).iter().any(|s| s == "No Selection"));
         app.run("text.create", json!({"x": 10, "y": 200, "text": "Hi"})).unwrap();
         assert!(selection_len(&app) > 0);
-        assert!(frame(&mut app).iter().any(|s| s.starts_with("Select paths")));
+        // Type is sewn as lettering, with its trims.
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Lettering (type)") && t.iter().any(|s| s == "Per word"), "{t:?}");
     }
 
     #[test]
