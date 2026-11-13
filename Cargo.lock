@@ -6778,6 +6778,7 @@ dependencies = [
  "vectorcraft-color",
  "vectorcraft-doc",
  "vectorcraft-geom",
+ "vectorcraft-text",
 ]
 
 [[package]]

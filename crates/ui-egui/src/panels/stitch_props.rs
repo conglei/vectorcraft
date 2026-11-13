@@ -6,7 +6,7 @@
 
 use egui::Ui;
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{StitchParam, StitchType};
+use vectorcraft_doc::{LetterTrims, StitchParam, StitchType};
 
 use super::selection_len;
 use crate::VectorcraftApp;
@@ -104,6 +104,8 @@ fn param_label(p: StitchParam) -> &'static str {
         StitchParam::SatinWidth => tl!("Satin Width:"),
         StitchParam::RunLength => tl!("Stitch Length:"),
         StitchParam::Compensation => tl!("Compensation:"),
+        StitchParam::MinColumn => tl!("Min. Column:"),
+        StitchParam::RunUnder => tl!("Run Under:"),
     }
 }
 
@@ -163,6 +165,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         });
     }
+    letter_trims(app, ui, &objects);
     ui.add_space(6.0);
     let own = objects.iter().any(|o| o["own"].as_object().is_some_and(|m| !m.is_empty()));
     ui.horizontal(|ui| {
@@ -174,6 +177,24 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
     });
     caption(ui);
+}
+
+/// Lettering's Trims dropdown, for type sewn as lettering.
+fn letter_trims(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
+    let lettering = objects.iter().any(|o| o["sews"].as_array().is_some_and(|v| v.iter().any(|t| t == "lettering")));
+    if !lettering {
+        return;
+    }
+    let current = match shared(objects, |o| &o["params"]["letterTrims"]) {
+        Some(v) => v.as_str().and_then(LetterTrims::parse).unwrap_or_default().label(),
+        None => tl!("Mixed"),
+    };
+    let labels: Vec<&str> = LetterTrims::ALL.iter().map(|t| t.label()).collect();
+    widgets::label_row(ui, tl!("Trims:"), LABEL_W, |ui| {
+        if let Some(t) = widgets::dropdown(ui, "stitch-props-trims", current, &labels, 120.0).and_then(|i| LetterTrims::ALL.get(i)) {
+            app.run("stitch.setParams", json!({ "params": { "letterTrims": t.id() } })).ok();
+        }
+    });
 }
 
 /// Where the defaults come from.
@@ -293,7 +314,9 @@ mod tests {
         assert!(frame(&mut app).iter().any(|s| s == "No Selection"));
         app.run("text.create", json!({"x": 10, "y": 200, "text": "Hi"})).unwrap();
         assert!(selection_len(&app) > 0);
-        assert!(frame(&mut app).iter().any(|s| s.starts_with("Select paths")));
+        // Type is sewn as lettering, with its trims.
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Lettering (type)") && t.iter().any(|s| s == "Per word"), "{t:?}");
     }
 
     #[test]

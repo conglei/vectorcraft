@@ -54,6 +54,7 @@ fn sews_text(o: &Value) -> String {
             StitchType::Tatami => tl!("Tatami"),
             StitchType::Satin => tl!("Satin"),
             StitchType::Manual => tl!("Manual"),
+            StitchType::Lettering => tl!("Lettering"),
             _ => tl!("Run"),
         })
         .collect();

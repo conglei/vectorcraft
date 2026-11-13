@@ -115,7 +115,7 @@ pub use selection::{AnchorRef, SegmentRef, Selection, SymbolPart};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
 pub use slices::{CellAlign, CellVAlign, Slice, SliceArea, SliceKind, SliceOptions, SliceSource};
 pub use stitch_design::{Hoop, HoopShape, StitchDesign};
-pub use stitch_props::{StitchParam, StitchProps, StitchType};
+pub use stitch_props::{LetterTrims, StitchParam, StitchProps, StitchType};
 pub use style_libs::StyleLibrary;
 pub use text::FontHeightReference;
 pub use text::GlyphChoice;
