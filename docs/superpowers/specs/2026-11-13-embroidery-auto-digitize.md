@@ -48,7 +48,20 @@ never turns a sharp corner.
 4. **Open stroked paths** are classed by their stroke weight: running stitch up to `minColumn`, a
    satin column up to `maxSatin`, else the stroke's outline is filled.
 
-Every column is at least `minColumn` wide as drawn (property test on random polygons).
+Every column is at least `minColumn` wide as drawn (property test on random polygons). A stretch
+that is not a column but is wide (where a branch meets the stroke it runs into) is left to that
+stroke's column rather than sewn as a stray run.
+
+A two-rail column that closes on itself (a ring) starts and ends at one place, so the sewing
+(`from_doc.rs`) now tells which way its rails run from their quarter points as well as their ends;
+before, a ring could be paired across its hole.
+
+## Measured
+
+In StitchCraft (dev build) on an original logo drawn by commands (16 mm disc in a 3 mm ring, 4 mm
+bar, block T, 0.5 mm line): 1 fill, 5 satin columns, 1 run; 1,207 stitches, 4 colour changes, 2
+trims after Closest Join. The same logo as a 480 × 320 px PNG through Auto-Digitize Image…: 5
+regions in 4 colours, 1,368 stitches, 3 colour changes, 3 trims.
 
 ## Commands
 
