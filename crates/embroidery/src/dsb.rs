@@ -10,9 +10,15 @@ use vectorcraft_stitch::StitchPlan;
 /// The largest move per axis: one byte.
 const MAX_MOVE: i32 = 255;
 /// Control byte of a stitch; `| X_NEG` / `| Y_NEG` for a move left or down (file orientation).
-const STITCH: u8 = 0x00;
+/// Bit 0x80 is set on every record of the format (the trim, stop, needle and end codes all carry
+/// it, as do the end codes seen in machine files): the owner's BAI Mirror rejected a file whose
+/// stitches had it clear as having "no valid stitches" (2026-11-13, STI-37). Readers that mask
+/// the low five bits (pyembroidery, ours) take both forms.
+const STITCH: u8 = 0x80;
 /// Control byte of a jump (a move without a stitch).
-const JUMP: u8 = 0x01;
+const JUMP: u8 = 0x81;
+/// The low five bits of a control byte say what it is; the sign bits and bit 0x80 sit above.
+const KIND: u8 = 0x1F;
 const X_NEG: u8 = 0x20;
 const Y_NEG: u8 = 0x40;
 /// Cut the thread.
@@ -133,8 +139,8 @@ pub fn read(bytes: &[u8], _o: &ReadOptions) -> Result<Input, String> {
         match ctrl {
             TRIM => b.trim(),
             STOP..=0xF7 => b.color_change(0, 0)?,
-            c if c & 0x1F == STITCH => b.stitch(dx, dy),
-            c if c & 0x1F == JUMP => b.jump(dx, dy),
+            c if c & KIND == STITCH & KIND => b.stitch(dx, dy),
+            c if c & KIND == JUMP & KIND => b.jump(dx, dy),
             _ => {
                 warnings.push("an unknown code ended the file early".to_string());
                 break;
@@ -173,16 +179,18 @@ mod tests {
         let b = write(&tiny(), &first_only()).unwrap().bytes;
         assert_eq!(&b[..3], b"LA:");
         assert_eq!(&b[20..30], b"ST:      4");
-        assert_eq!(&b[512..], [0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, 0x40, 0x0A, 0x00, 0xF8, 0x00, 0x00]);
+        assert_eq!(&b[512..], [0x80, 0x00, 0x00, 0x80, 0x00, 0x0A, 0xC0, 0x0A, 0x00, 0xF8, 0x00, 0x00]);
     }
 
     #[test]
     fn signs_jumps_trims_and_needle_changes_have_their_codes() {
-        assert_eq!(encode(-3, 4, STITCH), Some([0x20, 4, 3]));
-        assert_eq!(encode(3, -4, JUMP), Some([0x41, 4, 3]));
-        assert_eq!(encode(-255, -255, JUMP), Some([0x61, 255, 255]));
+        assert_eq!(encode(-3, 4, STITCH), Some([0xA0, 4, 3]));
+        assert_eq!(encode(3, -4, JUMP), Some([0xC1, 4, 3]));
+        assert_eq!(encode(-255, -255, JUMP), Some([0xE1, 255, 255]));
         assert_eq!(encode(256, 0, STITCH), None);
         assert_eq!(encode(i32::MIN, 0, STITCH), None);
+        assert_eq!(decode([0xE1, 5, 7]), (-7, -5));
+        // Files with bit 0x80 clear (older writers, this one before STI-37) read the same.
         assert_eq!(decode([0x61, 5, 7]), (-7, -5));
         let mut p = tiny();
         p.blocks[0].steps.push(Step::Trim);
@@ -259,8 +267,9 @@ mod tests {
     #[test]
     fn a_trim_record_reaches_the_plan_as_a_trim_wherever_it_sits() {
         let mut b = vec![b' '; 512];
-        // stitch, stitch, trim, jump, stitch, trim, needle change, stitch, end
-        b.extend([0x00, 0, 0, 0x00, 0, 10, 0xE7, 0, 0, 0x01, 0, 100, 0x00, 0, 10, 0xE7, 0, 0, 0xE9, 0, 0, 0x00, 0, 10, 0xF8, 0, 0]);
+        // stitch, stitch, trim, jump, stitch, trim, needle change, stitch, end: stitches and jumps
+        // with and without bit 0x80, which both forms of the format use.
+        b.extend([0x80, 0, 0, 0x00, 0, 10, 0xE7, 0, 0, 0x81, 0, 100, 0x00, 0, 10, 0xE7, 0, 0, 0xE9, 0, 0, 0x80, 0, 10, 0xF8, 0, 0]);
         let plan = read(&b, &ReadOptions::default()).unwrap().plan;
         assert_eq!(plan.blocks.len(), 2);
         assert_eq!(plan.blocks[0].steps.iter().filter(|s| **s == Step::Trim).count(), 2, "{:?}", plan.blocks[0].steps);
