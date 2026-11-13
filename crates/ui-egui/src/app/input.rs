@@ -43,6 +43,12 @@ impl VectorcraftApp {
         if dropped.is_empty() {
             return;
         }
+        // Photo to Stitches is open: a photo dropped is its file, and nothing opens.
+        if crate::dialogs::photo_stitch::takes_drops(self) {
+            let paths: Vec<String> = dropped.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|s| !s.is_empty()).collect();
+            crate::dialogs::photo_stitch::drop_files(self, &paths);
+            return;
+        }
         let mut files = vec![];
         for f in dropped {
             let path = Some(f.path().to_string_lossy().to_string()).filter(|s| !s.is_empty());

@@ -138,7 +138,14 @@ pub(crate) fn read_photo(path: &str, cmd: &str) -> Result<Raster> {
     if bytes.len() > MAX_PHOTO_BYTES {
         return Err(bad(cmd, format!("{path} is larger than {} MB", MAX_PHOTO_BYTES >> 20)));
     }
-    Raster::decode_to_fit(&bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
+    // A format the `image` crate lacks (HEIC from a phone) is read as File → Open reads it, which
+    // gives PNG; the first error is the one told when that can't read it either.
+    Raster::decode_to_fit(&bytes)
+        .or_else(|first| match super::fileio::raster_image(&bytes) {
+            Ok(png) => Raster::decode_to_fit(&png.blob.bytes),
+            Err(_) => Err(first),
+        })
+        .map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
 /// The provider `p`'s `provider` names, or the preference's ([`default_provider`]), with the
