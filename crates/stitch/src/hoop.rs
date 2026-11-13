@@ -64,6 +64,29 @@ pub fn fit(design_mm: (f64, f64), margin_mm: f64, field_mm: Option<(f64, f64)>) 
     for_field(field_mm).into_iter().filter(|o| !o.cap && fits(design_mm, o, margin_mm)).min_by(|a, b| a.area().total_cmp(&b.area()))
 }
 
+/// Where a design lies in a hoop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Inside the sewing field: the hoop shrunk by the margin.
+    Inside,
+    /// Inside the hoop but within the margin of its edge, where the presser foot meets the frame.
+    InMargin,
+    /// Over the hoop's edge: the needle would strike the frame.
+    Outside,
+}
+
+/// Where the box (`x0`, `y0`)–(`x1`, `y1`), in mm from the hoop's centre, lies in `hoop` with a
+/// clearance of `margin_mm` from its edge.
+pub fn placement(hoop: &Hoop, rel_mm: (f64, f64, f64, f64), margin_mm: f64) -> Placement {
+    if hoop.holds(rel_mm, margin_mm) {
+        Placement::Inside
+    } else if hoop.holds(rel_mm, 0.0) {
+        Placement::InMargin
+    } else {
+        Placement::Outside
+    }
+}
+
 /// A custom hoop of this size, checked: sides finite and within [`MIN_HOOP_MM`]–[`MAX_HOOP_MM`].
 pub fn custom(name: &str, width_mm: f64, height_mm: f64, shape: HoopShape) -> Result<Hoop, String> {
     for (k, v) in [("width", width_mm), ("height", height_mm)] {
@@ -112,6 +135,19 @@ mod tests {
         assert_eq!(id((300.0, 50.0), 10.0, None).as_deref(), Some("rect-360x200"));
         assert!(fits((90.0, 90.0), &find("round-150").unwrap(), 5.0));
         assert!(!fits((f64::NAN, 1.0), &find("square-100").unwrap(), 0.0));
+    }
+
+    #[test]
+    fn placement_tells_the_field_the_margin_and_the_frame_apart() {
+        let h = find("rect-130x180").unwrap();
+        assert_eq!(placement(&h, (-50.0, -70.0, 50.0, 70.0), 10.0), Placement::Inside);
+        assert_eq!(placement(&h, (-60.0, -70.0, 50.0, 70.0), 10.0), Placement::InMargin);
+        assert_eq!(placement(&h, (-70.0, -70.0, 50.0, 70.0), 10.0), Placement::Outside);
+        assert_eq!(placement(&h, (-70.0, -70.0, 50.0, 70.0), 0.0), Placement::Outside);
+        assert_eq!(placement(&h, (f64::NAN, 0.0, 1.0, 1.0), 10.0), Placement::Outside);
+        let round = find("round-150").unwrap();
+        // The box's corners reach past the circle although its sides are within the width.
+        assert_eq!(placement(&round, (-60.0, -60.0, 60.0, 60.0), 0.0), Placement::Outside);
     }
 
     #[test]

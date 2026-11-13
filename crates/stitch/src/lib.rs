@@ -35,7 +35,7 @@ pub use from_doc::{
     DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Lettered, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions,
     StrokeType, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_point, sequence, text_mode,
 };
-pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM};
+pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM, Placement};
 pub use lettering::{
     COMPENSATION_MM, Column, Letter, LetterMode, LetterShape, LetteringParams, MAX_LETTERS, MAX_SATIN_MM, MIN_COLUMN_MM, NO_TRIM_GAP_MM,
     RUN_LENGTH_MM, RUN_UNDER_MM, SewnLetter, UNDERLAY_LENGTH_MM, letter_height, mode_for, sew_letters, shape_letter,

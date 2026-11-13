@@ -10,9 +10,7 @@ use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, CharStyle, Document, ImageBlob, ImageObject, Node, NodeKind, TextObject};
 use vectorcraft_geom::{Affine, Point, Rect, shapes};
-use vectorcraft_stitch::{
-    DEFAULT_FABRIC, Finding, Level, MAX_SIDE, PreviewMode, PreviewOptions, Step, StitchPlan, UNITS_PER_MM, assign_needles, preview, stats,
-};
+use vectorcraft_stitch::{Finding, Level, MAX_SIDE, PreviewMode, PreviewOptions, Step, StitchPlan, UNITS_PER_MM, assign_needles, preview, stats};
 
 use super::super::fileio::{self, stitchfile};
 use super::super::{CommandSpec, Result, Session, bad, cmd, has_doc, switch_or, text_param};
@@ -98,12 +96,12 @@ fn today() -> String {
 }
 
 /// The design picture as PNG bytes and its pixel size.
-fn picture(plan: &StitchPlan, cmd: &str) -> Result<(Vec<u8>, u32, u32)> {
+fn picture(plan: &StitchPlan, fabric: [u8; 3], cmd: &str) -> Result<(Vec<u8>, u32, u32)> {
     let (w, h) =
         production::extents(plan).map_or((1.0, 1.0), |(x0, y0, x1, y1)| (f64::from(x1 - x0) / UNITS_PER_MM, f64::from(y1 - y0) / UNITS_PER_MM));
     let side = w.max(h).max(1.0) + 4.0;
     let scale = (PICTURE_PX / side).clamp(vectorcraft_stitch::MIN_SCALE, vectorcraft_stitch::MAX_SCALE).min(f64::from(MAX_SIDE) / side);
-    let o = PreviewOptions { scale, fabric: DEFAULT_FABRIC, mode: PreviewMode::Realistic, ..PreviewOptions::default() };
+    let o = PreviewOptions { scale, fabric, mode: PreviewMode::Realistic, ..PreviewOptions::default() };
     let img = preview(plan, &o).map_err(|e| bad(cmd, e))?;
     let (pw, ph) = (img.width, img.height);
     let rgba = image::RgbaImage::from_raw(pw, ph, img.rgba).ok_or_else(|| bad(cmd, "the preview's pixels don't fit its size"))?;
@@ -167,7 +165,8 @@ fn worksheet_doc(s: &Session, p: &Value, cmd: &str) -> Result<(Document, usize)>
     let found: Vec<Finding> = findings(s, p, cmd)?;
     let (errors, warnings) = (found.iter().filter(|f| f.level == Level::Error).count(), found.iter().filter(|f| f.level == Level::Warning).count());
     let rows = stops(s, &plan, prof.needles);
-    let (png, pw, ph) = picture(&plan, cmd)?;
+    let fabric = src.stitch.fabric();
+    let (png, pw, ph) = picture(&plan, fabric, cmd)?;
 
     let mut d = Document::new(PAGE.0, PAGE.1);
     d.title = plan.name.clone();
@@ -183,7 +182,7 @@ fn worksheet_doc(s: &Session, p: &Value, cmd: &str) -> Result<(Document, usize)>
 
     // The design picture, fitted into its box.
     let pic = Rect::new(MARGIN, 104.0, MARGIN + 260.0, 364.0);
-    nodes.push(rect(&mut d, pic, Some(DEFAULT_FABRIC), Some(rule)));
+    nodes.push(rect(&mut d, pic, Some(fabric), Some(rule)));
     let inner = pic.inset(-8.0);
     let k = (inner.width() / f64::from(pw)).min(inner.height() / f64::from(ph));
     let (iw, ih) = (f64::from(pw) * k, f64::from(ph) * k);

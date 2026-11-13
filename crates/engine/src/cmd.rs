@@ -86,7 +86,7 @@ pub(crate) mod shaper;
 pub mod shortcutset;
 pub(crate) mod slices;
 pub mod spelling;
-mod stitch;
+pub(crate) mod stitch;
 pub mod stitchthreads;
 mod stroke;
 mod style;
