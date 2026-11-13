@@ -52,6 +52,10 @@ pub const RUN_LENGTH_MM: f64 = 1.5;
 pub const UNDERLAY_LENGTH_MM: f64 = 2.0;
 /// Letters closer than this, mm, are joined by a stitch rather than a jump.
 pub const NO_TRIM_GAP_MM: f64 = 1.2;
+/// How far apart the points are that check whether a walk stays inside a letter, mm.
+const HIDDEN_STEP_MM: f64 = 0.25;
+/// The most points one such check samples.
+const HIDDEN_SAMPLES: usize = 400;
 /// The most letters one text object sews.
 pub const MAX_LETTERS: usize = 10_000;
 
@@ -159,9 +163,15 @@ pub struct SewnLetter {
     pub rgb: [u8; 3],
     pub word: usize,
     pub mode: LetterMode,
-    /// Needle points; the first run follows the letter before it, the others (separate parts of
-    /// the letter) are reached by a jump.
+    /// Needle points. The first run follows the letter before it: a trim and a jump, unless
+    /// `joined`. The other runs are separate parts of the letter (an i's dot) that a trim and a
+    /// jump reach; a part the needle can walk to inside the letter's ink, or within
+    /// [`NO_TRIM_GAP_MM`], is in the run before it instead, with the walk's stitches.
     pub runs: Vec<Vec<Pt>>,
+    /// The first run continues from where the last letter ended, its stitches to the letter
+    /// included: no trim or jump before it. Letters of one word are joined this way by
+    /// [`LetterTrims::Word`], every letter by [`LetterTrims::None`].
+    pub joined: bool,
     pub columns: usize,
     pub run_lines: usize,
 }
@@ -416,12 +426,32 @@ impl Router<'_> {
 }
 
 /// Sew one letter starting near `from` and ending towards `target`.
-fn sew_letter(letter: &Letter, mode: LetterMode, p: &LetteringParams, from: Option<Pt>, target: P, budget: usize) -> Result<SewnLetter, String> {
+fn sew_letter(
+    letter: &Letter,
+    mode: LetterMode,
+    p: &LetteringParams,
+    from: Option<Pt>,
+    target: P,
+    budget: usize,
+    connect: bool,
+) -> Result<SewnLetter, String> {
     let a = analyse(&letter.rings, mode, p)?;
-    let mut sewn = SewnLetter { rgb: letter.rgb, word: letter.word, mode: a.mode, runs: vec![], columns: 0, run_lines: 0 };
+    let mut sewn = SewnLetter { rgb: letter.rgb, word: letter.word, mode: a.mode, runs: vec![], columns: 0, run_lines: 0, joined: false };
+    // The stitch length of a walk to a part or from the last letter: running stitch at its own
+    // length, else the underlay's, held under the longest stitch.
+    let walk = (if a.mode == LetterMode::Run { p.run_length } else { UNDERLAY_LENGTH_MM }).min((p.max_stitch - 0.15).max(0.3));
     if a.mode == LetterMode::Fill {
         let fp = FillParams { max_stitch: p.max_stitch, ..p.fill };
         sewn.runs = tatami(&letter.rings, FillRule::NonZero, &fp, budget)?;
+        if let (true, Some(q), Some(first)) = (connect, from, sewn.runs.first_mut()) {
+            // Walked to from the last letter: its stitches lead the first run.
+            if let Some(&b) = first.first() {
+                let mut lead = line_run(q.to_mm(), b.to_mm(), walk);
+                lead.append(first);
+                *first = lead;
+                sewn.joined = true;
+            }
+        }
         return Ok(sewn);
     }
     let mut r = Router {
@@ -443,7 +473,22 @@ fn sew_letter(letter: &Letter, mode: LetterMode, p: &LetteringParams, from: Opti
         if let Some(f) = r.seen.get_mut(start) {
             *f = true;
         }
-        r.out.runs.push(vec![]);
+        let here = a.nodes.get(start).copied();
+        match (at, here) {
+            // From the last letter, when the letters are joined: walk there, stitching.
+            (Some(m), Some(q)) if r.out.runs.is_empty() && connect => {
+                r.out.runs.push(vec![]);
+                r.out.add(&line_run(m, q, walk))?;
+                sewn.joined = true;
+            }
+            // Another part of this letter within a stitch, or reached inside the letter's ink
+            // (under the satin sewn after it): walk there, stitching.
+            (Some(m), Some(q)) if !r.out.runs.is_empty() && (dist(m, q) <= NO_TRIM_GAP_MM || hidden(m, q, &letter.rings)) => {
+                r.out.add(&line_run(m, q, walk))?;
+            }
+            // Else a trim and a jump reach it (the first run: unless the letters are joined).
+            _ => r.out.runs.push(vec![]),
+        }
         r.visit(start, false)?;
         at = r.out.pos().map(|q| q.to_mm());
     }
@@ -451,6 +496,47 @@ fn sew_letter(letter: &Letter, mode: LetterMode, p: &LetteringParams, from: Opti
     sewn.columns = r.columns;
     sewn.run_lines = r.run_lines;
     Ok(sewn)
+}
+
+/// Running stitch along the straight line from `a` to `b` (mm), both ends included, at `step` mm.
+fn line_run(a: P, b: P, step: f64) -> Vec<Pt> {
+    run_stitches(&[a, b], &[], false, units(step))
+}
+
+/// Whether `q` lies inside `rings` (non-zero winding, as glyph outlines are filled) or on an edge.
+fn inside_rings(rings: &[Vec<P>], q: P) -> bool {
+    let mut w = 0i64;
+    for ring in rings {
+        for (i, &a) in ring.iter().enumerate() {
+            let b = ring.get(i + 1).or(ring.first()).copied().unwrap_or(a);
+            if !(finite(a) && finite(b)) {
+                continue;
+            }
+            if (a.1 <= q.1) != (b.1 <= q.1) {
+                let t = (q.1 - a.1) / (b.1 - a.1);
+                let u = a.0 + t * (b.0 - a.0);
+                if u > q.0 {
+                    w += if b.1 > a.1 { 1 } else { -1 };
+                }
+            }
+        }
+    }
+    w != 0
+}
+
+/// Whether a straight walk from `a` to `b` (mm) stays inside the ink of `rings`, so the satin
+/// sewn over it later hides it: every [`HIDDEN_STEP_MM`] along it is inside.
+pub(crate) fn hidden(a: P, b: P, rings: &[Vec<P>]) -> bool {
+    let d = dist(a, b);
+    if !d.is_finite() {
+        return false;
+    }
+    // Finite and bounded: at most HIDDEN_SAMPLES.
+    let n = ((d / HIDDEN_STEP_MM).ceil().max(1.0) as usize).min(HIDDEN_SAMPLES);
+    (0..=n).all(|i| {
+        let t = i as f64 / n as f64;
+        inside_rings(rings, (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
+    })
 }
 
 /// The box of a letter's outline: (min x, min y, max x, max y).
@@ -470,6 +556,7 @@ pub fn sew_letters(letters: &[Letter], mode: LetterMode, p: &LetteringParams, bu
     let budget = budget.min(MAX_STEPS);
     let mut out: Vec<SewnLetter> = Vec::with_capacity(letters.len());
     let mut pos: Option<Pt> = None;
+    let mut word: Option<usize> = None;
     let mut used = 0usize;
     for (i, l) in letters.iter().enumerate() {
         // Towards the left middle of the next letter, or this one's right.
@@ -477,7 +564,16 @@ pub fn sew_letters(letters: &[Letter], mode: LetterMode, p: &LetteringParams, bu
             Some(b) => (b.0, (b.1 + b.3) / 2.0),
             None => bounds(l).map_or((0.0, 0.0), |b| (b.2, (b.1 + b.3) / 2.0)),
         };
-        let s = sew_letter(l, mode, p, pos, target, budget.saturating_sub(used))?;
+        // Joined to the letter before it by a walk of stitches, never by a bare jump, which a
+        // machine sews as a loose thread across the fabric: within a word by default.
+        let connect = pos.is_some()
+            && match p.trims {
+                LetterTrims::None => true,
+                LetterTrims::Word => word == Some(l.word),
+                LetterTrims::Letter => false,
+            };
+        let s = sew_letter(l, mode, p, pos, target, budget.saturating_sub(used), connect)?;
+        word = Some(l.word);
         used = used.saturating_add(s.runs.iter().map(Vec::len).sum());
         if used > budget {
             return Err(TOO_MANY_STEPS.into());

@@ -7,7 +7,7 @@ use vectorcraft_doc::{CharStyle, Document, LayerColor, LetterTrims, Node, NodeId
 use vectorcraft_geom::{PathData, Point, SubPath};
 
 use super::*;
-use crate::{LetterMode, PT_PER_MM, stats};
+use crate::{LetterMode, PT_PER_MM, UNITS_PER_MM, stats};
 
 /// A document with one point-type object of `text` at font size `size_mm`, its stitch
 /// properties `props`.
@@ -139,4 +139,72 @@ fn two_rails_with_satin_sew_one_column_between_them() {
     // Never turned round (the underlay would end up over the satin).
     let seq = sequence(&doc, &FromDocOptions::default()).unwrap();
     assert_eq!(seq.items[0].item.ways.len(), 1);
+}
+
+/// Jumps the machine would sew as a loose thread: the first jump of a travel that no trim
+/// precedes, longer than the gap a stitch may cross.
+fn bare_jumps(plan: &crate::StitchPlan) -> Vec<f64> {
+    let mut out = vec![];
+    for b in &plan.blocks {
+        let mut pos: Option<Pt> = None;
+        let mut cut = true;
+        let mut in_jump = false;
+        for s in &b.steps {
+            match s {
+                Step::Trim => cut = true,
+                Step::Jump(q) => {
+                    if let (false, false, Some(p)) = (in_jump, cut, pos) {
+                        let d = p.dist(*q) / UNITS_PER_MM;
+                        if d > crate::lettering::NO_TRIM_GAP_MM {
+                            out.push(d);
+                        }
+                    }
+                    in_jump = true;
+                    pos = Some(*q);
+                }
+                Step::Stitch(q) => {
+                    cut = false;
+                    in_jump = false;
+                    pos = Some(*q);
+                }
+                Step::Stop => {}
+            }
+        }
+    }
+    out
+}
+
+/// Found at the first machine preview (2026-11-13): letters of a word and the parts of a letter
+/// were reached by a single jump, which the machine sews as a thread floating across the fabric.
+/// Now a word's letters are joined by a walk of stitches, and a part by a walk inside the letter
+/// or by a trim.
+#[test]
+fn lettering_never_leaves_a_bare_jump() {
+    for (text, size, trims) in [
+        ("Hello", 15.0, None),
+        ("Hello you", 15.0, None),
+        ("Hello you", 15.0, Some(LetterTrims::None)),
+        ("Hello you", 15.0, Some(LetterTrims::Letter)),
+        ("ij", 15.0, None),
+        ("Test", 5.0, None),
+        ("Test", 12.0, None),
+        ("I\u{2019}m Conglei", 12.0, None),
+    ] {
+        let doc = text_doc(text, size, StitchProps { letter_trims: trims, ..Default::default() });
+        let out = plan_of(&doc);
+        assert_eq!(bare_jumps(&out.plan), Vec::<f64>::new(), "{text:?} at {size} mm, trims {trims:?}");
+    }
+    // Letters of a word are walked to, stitching: the plan holds stitches between the letters.
+    let l = lettered(&text_doc("Hello", 15.0, StitchProps::default()));
+    assert!(l.letters.iter().skip(1).all(|s| s.joined), "{:?}", l.letters.iter().map(|s| s.joined).collect::<Vec<_>>());
+    assert!(!l.letters[0].joined);
+    // An i's dot is a part no walk inside the ink reaches: a trim, not a float.
+    let dots = plan_of(&text_doc("ij", 15.0, StitchProps::default()));
+    assert!(stats(&dots.plan).trims >= 2, "{}", stats(&dots.plan).trims);
+    // Per letter: nothing is joined; per word: a new word is not.
+    let per_letter = lettered(&text_doc("Hello you", 15.0, StitchProps { letter_trims: Some(LetterTrims::Letter), ..Default::default() }));
+    assert!(per_letter.letters.iter().all(|s| !s.joined));
+    let words = lettered(&text_doc("Hello you", 15.0, StitchProps::default()));
+    let joined: Vec<bool> = words.letters.iter().map(|s| s.joined).collect();
+    assert_eq!(joined, vec![false, true, true, true, true, false, true, true]);
 }
