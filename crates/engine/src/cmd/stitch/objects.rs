@@ -247,6 +247,13 @@ fn props(s: &mut Session, p: &Value) -> Result<Value> {
         let (Some(n), Some((inherited, opened))) = (d.node(id), inherited_props(d, id)) else { continue };
         let own = n.stitch_props().copied().unwrap_or_default();
         let sews: Vec<&str> = match n.kind {
+            // Converted lettering sews as lettering, its pieces as they are set.
+            NodeKind::Group { .. } if own.kind == StitchType::Lettering && !opened => {
+                let mut v = contents_sewn_as(d, n, &o);
+                v.retain(|t| *t != StitchType::Lettering);
+                v.insert(0, StitchType::Lettering);
+                v
+            }
             NodeKind::Group { .. } | NodeKind::Layer { .. } => contents_sewn_as(d, n, &o),
             _ => sewn_as(n, &inherited, opened, &o),
         }

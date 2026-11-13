@@ -304,7 +304,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Replace `old` in the sewing order with `new`, where it is listed.
-fn replace_in_order(d: &mut Document, old: NodeId, new: &[NodeId]) {
+pub(super) fn replace_in_order(d: &mut Document, old: NodeId, new: &[NodeId]) {
     if let Some(at) = d.stitch.order.iter().position(|i| *i == old) {
         d.stitch.order.splice(at..=at, new.iter().copied());
     }

@@ -208,3 +208,42 @@ fn lettering_never_leaves_a_bare_jump() {
     let joined: Vec<bool> = words.letters.iter().map(|s| s.joined).collect();
     assert_eq!(joined, vec![false, true, true, true, true, false, true, true]);
 }
+
+/// What Convert to Stitch Objects makes of `doc`'s type, as letters of pieces.
+fn pieces_of(doc: &Document) -> Vec<crate::lettering::PieceLetter> {
+    use crate::lettering::{PieceLetter, PieceStyle, shape_letter};
+    let l = lettered(doc);
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let style = PieceStyle { spacing: l.params.spacing, compensation: l.params.compensation, underlay: l.params.underlay };
+    letters_of(t)
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let s = shape_letter(&x.rings, l.mode, &l.params).unwrap();
+            PieceLetter {
+                rgb: x.rgb,
+                word: x.word,
+                columns: s.columns.into_iter().map(|c| (c, style)).collect(),
+                runs: s.runs,
+                fills: if s.fill.is_empty() { vec![] } else { vec![s.fill] },
+            }
+        })
+        .collect()
+}
+
+/// STI-38: a letter's pieces, as Convert to Stitch Objects makes them, sew as the letter does:
+/// the same parts and about the same stitches ("Hello" within 5 %; a stroke cut into a column and
+/// a run at a junction travels a little more as two pieces, up to 10 % on "TEXT").
+#[test]
+fn pieces_sew_as_the_letters_do() {
+    for (text, within) in [("Hello", 0.05), ("Hi", 0.1), ("TEXT", 0.1)] {
+        let doc = text_doc(text, 15.0, StitchProps::default());
+        let l = lettered(&doc);
+        let sewn = crate::lettering::sew_pieces(&pieces_of(&doc), &l.params, MAX_STEPS).unwrap();
+        let count = |v: &[crate::SewnLetter]| v.iter().flat_map(|s| &s.runs).map(Vec::len).sum::<usize>();
+        let parts = |v: &[crate::SewnLetter]| v.iter().map(|s| s.runs.len()).collect::<Vec<_>>();
+        assert_eq!(parts(&sewn), parts(&l.letters), "{text}: runs per letter");
+        let (a, b) = (count(&l.letters) as f64, count(&sewn) as f64);
+        assert!((b / a - 1.0).abs() <= within, "{text}: {a} live, {b} from pieces");
+    }
+}
