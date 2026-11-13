@@ -24,12 +24,12 @@ pub(crate) struct Fields {
 }
 
 /// `v` clamped to what `width` digits can show.
-fn fit(v: i64, width: u32) -> i64 {
+pub(crate) fn fit(v: i64, width: u32) -> i64 {
     v.clamp(0, 10i64.pow(width) - 1)
 }
 
 /// A signed field: the sign, then a five-wide magnitude.
-fn signed(v: i64) -> String {
+pub(crate) fn signed(v: i64) -> String {
     let sign = if v < 0 { '-' } else { '+' };
     format!("{sign}{:>5}", fit(v.abs(), 5))
 }
@@ -46,11 +46,16 @@ pub(crate) fn overflow(records: usize, color_changes: usize) -> Vec<String> {
     w
 }
 
+/// A design name as the `LA:` field holds it: letters, digits, spaces, `-` and `_`, at most 16.
+pub(crate) fn label(name: &str) -> String {
+    name.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_')).take(NAME_WIDTH).collect()
+}
+
 /// The header for a file of `records` records (including the end record) with
 /// `color_changes` colour changes, the given extents and end point (relative to the origin,
 /// y up).
 pub(crate) fn write(name: &str, records: usize, color_changes: usize, ext: Extents, end: (i32, i32)) -> [u8; LEN] {
-    let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_')).take(NAME_WIDTH).collect();
+    let name = label(name);
     let records = fit(i64::try_from(records).unwrap_or(i64::MAX), 7);
     let color_changes = fit(i64::try_from(color_changes).unwrap_or(i64::MAX), 3);
     let text = format!(
