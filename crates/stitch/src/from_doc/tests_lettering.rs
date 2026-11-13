@@ -52,10 +52,11 @@ fn hello_at_15_mm_is_satin_lettering_with_one_trim_per_word() {
     assert_eq!(out.plan.blocks.len(), 1);
     assert_eq!(out.plan.blocks[0].thread.rgb, [200, 0, 0]);
     assert!(st.stitches > 400, "{}", st.stitches);
-    // Two words: a trim between them, and in "you" two more: the y is left at the foot of its
-    // tail, and the connectors from it and on to the u would show over 3 mm (STI-38 review).
+    // Two words: a trim between them, and no other. In "you" the y was left at the foot of its
+    // tail and the o where its ring started, so the connectors on would show over 3 mm and were
+    // trims (STI-38 review); now each letter is left where it is nearest the next (STI-41).
     let two = plan_of(&text_doc("Hello you", 15.0, StitchProps::default()));
-    assert_eq!(stats(&two.plan).trims, 3);
+    assert_eq!(stats(&two.plan).trims, 1);
     let per_letter = plan_of(&text_doc("Hello you", 15.0, StitchProps { letter_trims: Some(LetterTrims::Letter), ..Default::default() }));
     assert_eq!(stats(&per_letter.plan).trims, 7);
     let never = plan_of(&text_doc("Hello you", 15.0, StitchProps { letter_trims: Some(LetterTrims::None), ..Default::default() }));
@@ -207,7 +208,7 @@ fn lettering_never_leaves_a_bare_jump() {
     assert!(per_letter.letters.iter().all(|s| !s.joined));
     let words = lettered(&text_doc("Hello you", 15.0, StitchProps::default()));
     let joined: Vec<bool> = words.letters.iter().map(|s| s.joined).collect();
-    assert_eq!(joined, vec![false, true, true, true, true, false, false, false]);
+    assert_eq!(joined, vec![false, true, true, true, true, false, true, true]);
 }
 
 /// What Convert to Stitch Objects makes of `doc`'s type, as letters of pieces.
@@ -328,4 +329,32 @@ fn connectors_between_letters_are_short_or_trimmed() {
     // Never trimmed: walked however long.
     let never = lettered(&text_doc("TEXT", 15.0, StitchProps { letter_trims: Some(LetterTrims::None), ..Default::default() }));
     assert!(never.letters.iter().skip(1).all(|s| s.joined));
+}
+
+/// STI-41: a letter was left wherever its last stroke ended, often the side away from the next
+/// letter (an o where its ring started, a C at its far tip), so the walk on showed over 3 mm and
+/// was a trim: "I’m Conglei" at 40 pt sewed 8 trims. Now each letter is left at its point nearest
+/// the next, travelling there under its own satin: a round letter then a straight one is walked
+/// to, and "I’m Conglei" trims only between its words and at the i's dot.
+#[test]
+fn round_letters_are_left_nearest_the_next_one() {
+    use crate::lettering::MAX_CONNECTOR_MM;
+    let size = 40.0 / PT_PER_MM;
+    for text in ["on", "Co", "ol"] {
+        let doc = text_doc(text, size, StitchProps::default());
+        let l = lettered(&doc);
+        assert!(l.letters[1].joined, "{text}: walked to the second letter");
+        assert!(l.letters[1].lead_mm <= MAX_CONNECTOR_MM + 1e-9, "{text}: {:.1} mm shows", l.letters[1].lead_mm);
+        let plan = plan_of(&doc);
+        assert_eq!(stats(&plan.plan).trims, 0, "{text}");
+        assert_eq!(bare_jumps(&plan.plan), Vec::<f64>::new(), "{text}");
+    }
+    let doc = text_doc("I\u{2019}m Conglei", size, StitchProps::default());
+    let l = lettered(&doc);
+    assert!(l.letters.iter().filter(|s| s.joined).all(|s| s.lead_mm <= MAX_CONNECTOR_MM + 1e-9));
+    // "Conglei" is one walk: only its i's dot is reached by a trim.
+    assert!(l.letters[4..].iter().all(|s| s.joined), "{:?}", l.letters.iter().map(|s| s.joined).collect::<Vec<_>>());
+    let plan = plan_of(&doc);
+    assert!(stats(&plan.plan).trims <= 3, "{}", stats(&plan.plan).trims);
+    assert_eq!(bare_jumps(&plan.plan), Vec::<f64>::new());
 }

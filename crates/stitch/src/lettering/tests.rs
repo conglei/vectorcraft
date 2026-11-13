@@ -85,6 +85,37 @@ fn an_o_ring_is_a_closed_column_round_the_hole() {
     }
 }
 
+/// STI-41: a ring (an o) starts and ends at its point nearest the letter after it, not where its
+/// outline happens to start: on its right before a bar on its right, on its left before one on
+/// its left. Entered from a letter on the other side, it travels round under its satin and is
+/// still one column, sewn in one run.
+#[test]
+fn a_ring_is_left_at_its_point_nearest_the_next_letter() {
+    let o = || letter(vec![circle(10.0, 10.0, 5.0, false), circle(10.0, 10.0, 3.0, true)]);
+    let bar = |x: f64| letter(vec![rect(x, 4.0, x + 2.0, 16.0)]);
+    let p = LetteringParams::default();
+    // Which side of the ring's centre a needle point is on, and whether it is about level with it.
+    let side = |q: Pt| {
+        let (x, y) = q.to_mm();
+        ((x - 10.0).signum(), (x - 10.0).abs() > 2.0 && (y - 10.0).abs() < 2.0)
+    };
+    for (next, s) in [(16.0, 1.0), (2.0, -1.0)] {
+        let sewn = sew_letters(&[o(), bar(next)], LetterMode::Satin, &p, MAX_STEPS).unwrap();
+        let ring = &sewn[0];
+        assert_eq!((ring.runs.len(), ring.columns), (1, 1));
+        assert_eq!(side(*ring.runs[0].first().unwrap()), (s, true), "starts towards the bar at {next}");
+        assert_eq!(side(*ring.runs[0].last().unwrap()), (s, true), "ends towards the bar at {next}");
+        assert!(sewn[1].joined, "the bar is walked to");
+    }
+    // Between two bars: entered on its left, left on its right.
+    let sewn = sew_letters(&[bar(2.0), o(), bar(16.0)], LetterMode::Satin, &p, MAX_STEPS).unwrap();
+    let ring = &sewn[1];
+    assert!(ring.joined && sewn[2].joined);
+    assert_eq!((ring.runs.len(), ring.columns), (1, 1), "one column, cut where it is entered");
+    assert_eq!(side(*ring.runs[0].last().unwrap()), (1.0, true));
+    assert!(ring.lead_mm <= MAX_CONNECTOR_MM && sewn[2].lead_mm <= MAX_CONNECTOR_MM);
+}
+
 #[test]
 fn an_l_and_a_t_meet_without_a_gap_and_sew_in_one_go() {
     let l = vec![rect(0.0, 0.0, 3.0, 15.0), rect(0.0, 12.0, 10.0, 15.0)];

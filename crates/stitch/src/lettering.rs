@@ -22,7 +22,12 @@
 //! - letters closer than 1.2 mm need no trim (piworld, above).
 //!
 //! Inside a letter the strokes are sewn in one go, travelling under the satin that covers them
-//! later; letters are joined where the needle is nearest, and trimmed per word by default.
+//! later. A letter is entered at its point nearest the needle and left at its point nearest the
+//! next letter (a ring is cut there, so an o starts and ends on the side facing the next
+//! letter): the strokes on the way between them are sewn last, everything else out and back,
+//! so the needle travels under the stitching rather than across the gap. Letters are trimmed
+//! per word by default, and wherever the walk between two would show over
+//! [`MAX_CONNECTOR_MM`].
 
 #[cfg(test)]
 mod tests;
@@ -70,9 +75,6 @@ const RUN_CORNER_REACH_MM: f64 = 0.3;
 /// these connectors short (<https://docs.wilcom.com/embroiderystudio/28/en/OnlineHelp/Lettering/lettering_advanced/lettering_advanced-16.htm>);
 /// no public source gives a length, so 3 mm is estimated.
 pub const MAX_CONNECTOR_MM: f64 = 3.0;
-/// Entry points within this of the nearest, mm, are equally near: the one nearest the baseline
-/// is taken.
-const ENTRY_SLACK_MM: f64 = 1.0;
 /// Letters closer than this, mm, are joined by a stitch rather than a jump.
 pub const NO_TRIM_GAP_MM: f64 = 1.2;
 /// How far apart the points are that check whether a walk stays inside a letter, mm.
@@ -230,6 +232,7 @@ pub fn mode_for(height: f64, p: &LetteringParams) -> LetterMode {
 
 /// A letter analysed: its fills (sewn first) and its strokes and nodes, or its mode when it has
 /// no strokes to sew.
+#[derive(Clone)]
 struct Analysis {
     mode: LetterMode,
     nodes: Vec<P>,
@@ -569,26 +572,246 @@ fn units(mm: f64) -> i32 {
 
 /// The depth-first walk over a letter's strokes.
 struct Router<'a> {
-    a: &'a Analysis,
+    /// The letter's analysis, its strokes cut where a part is entered and left ([`Router::cut`]).
+    a: Analysis,
     p: &'a LetteringParams,
     sewn: Vec<bool>,
     seen: Vec<bool>,
+    /// The strokes of the way from where a part is entered to where it is left: each is sewn last
+    /// at the node it starts from, after everything else there, so the part ends where the way
+    /// does.
+    way: Vec<bool>,
+    /// Whether the part may end anywhere (the last part of the last letter): its last stroke at
+    /// each node is sewn on, not out and back.
+    free: bool,
     target: P,
     out: Out,
     columns: usize,
     run_lines: usize,
 }
 
+/// Cuts closer than this many centre points to a stroke's end are made at the end.
+const CUT_SNAP: usize = 2;
+
 impl Router<'_> {
-    /// The strokes at node `u` not yet sewn.
+    /// The strokes at node `u` not yet sewn, but for those of the way.
     fn open_at(&self, u: usize) -> Vec<usize> {
         self.a
             .strokes
             .iter()
             .enumerate()
-            .filter(|(i, s)| (s.a == u || s.b == u) && !self.sewn.get(*i).copied().unwrap_or(true))
+            .filter(|(i, s)| (s.a == u || s.b == u) && !self.sewn.get(*i).copied().unwrap_or(true) && !self.way.get(*i).copied().unwrap_or(false))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// The stroke of the way at node `u` not yet sewn.
+    fn way_at(&self, u: usize) -> Option<usize> {
+        self.a
+            .strokes
+            .iter()
+            .enumerate()
+            .position(|(i, s)| (s.a == u || s.b == u) && self.way.get(i).copied().unwrap_or(false) && !self.sewn.get(i).copied().unwrap_or(true))
+    }
+
+    /// Whether stroke `i` is still to sew.
+    fn unsewn(&self, i: usize) -> bool {
+        !self.sewn.get(i).copied().unwrap_or(true)
+    }
+
+    /// The strokes not yet sewn, grouped into parts: strokes that meet at a node are one part.
+    /// Each stroke's part, `None` once sewn.
+    fn parts(&self) -> Vec<Option<usize>> {
+        // Union-find over the nodes, bounded by their number.
+        let mut up: Vec<usize> = (0..self.a.nodes.len()).collect();
+        fn root(up: &mut [usize], mut x: usize) -> usize {
+            for _ in 0..up.len() {
+                let Some(&p) = up.get(x) else { break };
+                if p == x {
+                    break;
+                }
+                let gp = up.get(p).copied().unwrap_or(p);
+                if let Some(u) = up.get_mut(x) {
+                    *u = gp;
+                }
+                x = p;
+            }
+            x
+        }
+        for (i, s) in self.a.strokes.iter().enumerate() {
+            if self.unsewn(i) {
+                let (ra, rb) = (root(&mut up, s.a), root(&mut up, s.b));
+                if let Some(u) = up.get_mut(ra) {
+                    *u = rb;
+                }
+            }
+        }
+        (0..self.a.strokes.len()).map(|i| if self.unsewn(i) { self.a.strokes.get(i).map(|s| root(&mut up, s.a)) } else { None }).collect()
+    }
+
+    /// The centre point of the strokes of part `part` (any part: `None`) nearest by `key`: its
+    /// stroke and index.
+    fn nearest(&self, parts: &[Option<usize>], part: Option<usize>, key: impl Fn(P) -> f64) -> Option<(usize, usize)> {
+        let mut best: Option<(f64, usize, usize)> = None;
+        for (i, s) in self.a.strokes.iter().enumerate() {
+            let Some(Some(pi)) = parts.get(i) else { continue };
+            if part.is_some_and(|x| x != *pi) {
+                continue;
+            }
+            for (k, q) in s.centre.iter().enumerate() {
+                let d = key(*q);
+                if d.is_finite() && best.is_none_or(|b| d < b.0) {
+                    best = Some((d, i, k));
+                }
+            }
+        }
+        best.map(|b| (b.1, b.2))
+    }
+
+    /// The node at centre point `k` of stroke `i`: a stroke end when within [`CUT_SNAP`] of it,
+    /// else the stroke is cut there in two. A closed ring on its own (an o) is turned to start
+    /// there instead when `turn`, so it stays one column that starts and ends at the point.
+    fn cut(&mut self, i: usize, k: usize, turn: bool) -> Option<usize> {
+        let s = self.a.strokes.get(i)?;
+        let n = s.centre.len();
+        let alone = s.a == s.b && self.a.strokes.iter().enumerate().all(|(j, t)| j == i || (t.a != s.a && t.b != s.a));
+        if turn && alone && n >= 4 && k > 0 && k + 1 < n {
+            let s = self.a.strokes.get_mut(i)?;
+            // Closed: the last point repeats the first, or the ring closes across from it.
+            let closed = s.centre.first().zip(s.centre.last()).is_some_and(|(f, l)| dist(*f, *l) < 1e-9);
+            let cyc = if closed { n - 1 } else { n };
+            let order: Vec<usize> = (k..cyc).chain(0..=k).collect();
+            let turned = |v: &Vec<P>| order.iter().filter_map(|&j| v.get(j).copied()).collect::<Vec<P>>();
+            let (centre, left, right) = (turned(&s.centre), turned(&s.left), turned(&s.right));
+            let column: Vec<bool> = order.iter().map(|&j| s.column.get(j).copied().unwrap_or(false)).collect();
+            let mut bend: Vec<bool> = order.iter().map(|&j| s.bend.get(j).copied().unwrap_or(false)).collect();
+            if let Some(b) = bend.first_mut() {
+                *b = false;
+            }
+            if let Some(b) = bend.last_mut() {
+                *b = false;
+            }
+            if centre.len() != order.len() || left.len() != order.len() || right.len() != order.len() {
+                return Some(s.a);
+            }
+            let q = centre.first().copied();
+            (s.centre, s.left, s.right, s.column, s.bend) = (centre, left, right, column, bend);
+            let node = s.a;
+            if let (Some(q), Some(pos)) = (q, self.a.nodes.get_mut(node)) {
+                *pos = q;
+            }
+            return Some(node);
+        }
+        let s = self.a.strokes.get(i)?;
+        if k < CUT_SNAP || k + CUT_SNAP >= n {
+            return Some(if 2 * k < n { s.a } else { s.b });
+        }
+        let node = self.a.nodes.len();
+        let mut bend: Vec<bool> = s.bend.clone();
+        if let Some(b) = bend.get_mut(k) {
+            *b = false;
+        }
+        let head = |v: &Vec<P>| v.get(..=k).map(<[P]>::to_vec).unwrap_or_default();
+        let tail = |v: &Vec<P>| v.get(k..).map(<[P]>::to_vec).unwrap_or_default();
+        let second = Stroke {
+            a: node,
+            b: s.b,
+            centre: tail(&s.centre),
+            left: tail(&s.left),
+            right: tail(&s.right),
+            column: s.column.get(k..).map(<[bool]>::to_vec).unwrap_or_default(),
+            bend: bend.get(k..).map(<[bool]>::to_vec).unwrap_or_default(),
+        };
+        let first = Stroke {
+            a: s.a,
+            b: node,
+            centre: head(&s.centre),
+            left: head(&s.left),
+            right: head(&s.right),
+            column: s.column.get(..=k).map(<[bool]>::to_vec).unwrap_or_default(),
+            bend: bend.get(..=k).map(<[bool]>::to_vec).unwrap_or_default(),
+        };
+        let q = s.centre.get(k).copied()?;
+        let style = self.a.style.get(i).copied().flatten();
+        self.a.continues.resize(self.a.strokes.len(), false);
+        self.a.style.resize(self.a.strokes.len(), None);
+        self.a.nodes.push(q);
+        self.seen.push(false);
+        if let Some(s) = self.a.strokes.get_mut(i) {
+            *s = first;
+        }
+        self.a.strokes.push(second);
+        // The column goes on through the cut: counted once.
+        self.a.continues.push(true);
+        self.a.style.push(style);
+        self.sewn.push(false);
+        self.way.push(false);
+        Some(node)
+    }
+
+    /// Mark the shortest way along the centre lines of strokes not yet sewn from node `from` to
+    /// node `to` (Dijkstra, bounded by the strokes and nodes): false when there is none.
+    fn plan_way(&mut self, from: usize, to: usize) -> bool {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let n = self.a.nodes.len();
+        let mut adj: Vec<Vec<(usize, usize, f64)>> = vec![vec![]; n];
+        for (i, s) in self.a.strokes.iter().enumerate() {
+            if !self.unsewn(i) || s.a == s.b {
+                continue;
+            }
+            let len: f64 = s.centre.windows(2).map(|w| if let [p, q] = w { dist(*p, *q) } else { 0.0 }).sum();
+            if !len.is_finite() {
+                continue;
+            }
+            if let Some(v) = adj.get_mut(s.a) {
+                v.push((s.b, i, len));
+            }
+            if let Some(v) = adj.get_mut(s.b) {
+                v.push((s.a, i, len));
+            }
+        }
+        let mut best = vec![f64::INFINITY; n];
+        let mut prev: Vec<Option<(usize, usize)>> = vec![None; n];
+        let mut heap = BinaryHeap::new();
+        if let Some(b) = best.get_mut(from) {
+            *b = 0.0;
+        }
+        // Lengths are finite and not negative: their bits sort as they do.
+        heap.push(Reverse((0f64.to_bits(), from)));
+        while let Some(Reverse((bits, u))) = heap.pop() {
+            let d = f64::from_bits(bits);
+            if d > best.get(u).copied().unwrap_or(f64::INFINITY) || u == to {
+                continue;
+            }
+            for &(v, i, len) in adj.get(u).map(Vec::as_slice).unwrap_or(&[]) {
+                let nd = d + len;
+                if nd < best.get(v).copied().unwrap_or(f64::INFINITY) {
+                    if let Some(b) = best.get_mut(v) {
+                        *b = nd;
+                    }
+                    if let Some(p) = prev.get_mut(v) {
+                        *p = Some((i, u));
+                    }
+                    heap.push(Reverse((nd.to_bits(), v)));
+                }
+            }
+        }
+        if !best.get(to).is_some_and(|d| d.is_finite()) {
+            return false;
+        }
+        let mut at = to;
+        for _ in 0..n {
+            if at == from {
+                return true;
+            }
+            let Some(Some((i, u))) = prev.get(at).copied() else { return false };
+            if let Some(w) = self.way.get_mut(i) {
+                *w = true;
+            }
+            at = u;
+        }
+        at == from
     }
 
     /// Running stitch along stroke `i`'s centre, forwards or back, at `length` mm.
@@ -599,7 +822,8 @@ impl Router<'_> {
             c.reverse();
             bend.reverse();
         }
-        let pts = run_stitches(&c, &bend, false, units(length));
+        // A running-stitch letter's travel follows its curves, as its runs do.
+        let pts = if self.a.mode == LetterMode::Run { curve_run(&c, &bend, length) } else { run_stitches(&c, &bend, false, units(length)) };
         self.out.add(&pts)
     }
 
@@ -692,40 +916,44 @@ impl Router<'_> {
         Ok(())
     }
 
-    /// Sew the strokes reached from node `u`; `back`: end at `u`. Depth is bounded by the
-    /// number of strokes ([`MAX_EDGES`] and the dots of one letter).
+    /// Sew the strokes reached from node `u`: those off the way out and back, then on along the
+    /// way, if any; `back`: end at `u`. Depth is bounded by the number of strokes ([`MAX_EDGES`]
+    /// and the dots of one letter).
     fn visit(&mut self, u: usize, back: bool) -> Result<(), String> {
         loop {
             let open = self.open_at(u);
-            if open.is_empty() {
-                return Ok(());
-            }
             let far = |i: usize| {
                 let s = self.a.strokes.get(i);
                 let v = s.map_or(u, |s| if s.a == u { s.b } else { s.a });
                 self.a.nodes.get(v).map_or(0.0, |q| dist(*q, self.target))
             };
-            // Strokes that lead away from the next letter first; the one towards it last.
-            let Some(&i) = open.iter().max_by(|x, y| far(**x).total_cmp(&far(**y))) else { return Ok(()) };
-            let last = open.len() == 1 && !back;
+            // Strokes that lead away from the next letter first; the way on last.
+            let (i, last) = match open.iter().max_by(|x, y| far(**x).total_cmp(&far(**y))) {
+                // Free to end anywhere (the last letter), its last stroke is sewn only on.
+                Some(&i) => (i, self.free && !back && open.len() == 1),
+                None => match (back, self.way_at(u)) {
+                    (false, Some(i)) => (i, true),
+                    _ => return Ok(()),
+                },
+            };
             if let Some(f) = self.sewn.get_mut(i) {
                 *f = true;
             }
             let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
             let (forward, v) = if s.a == u { (true, s.b) } else { (false, s.a) };
-            // Joined along the baseline, a last stroke that would end further from the next
-            // letter (the top of an l) is sewn out and back, so the letter is left at its foot.
-            let away = |n: usize| self.a.nodes.get(n).map_or(0.0, |q| dist(*q, self.target));
-            let last = last && !(self.p.join == LetterJoin::Bottom && self.open_at(v).is_empty() && away(v) > away(u));
             let under = self.underlay(i);
             // Held under the longest stitch, which rounding to plan units would otherwise pass.
             let walk = (if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM }).min(self.out.max);
-            if last {
+            // A ring comes back where it started: sewn once round, as a last stroke is.
+            if last || v == u {
                 // The underlay's passes out and back, then the satin out.
                 for (k, pass) in passes(under).iter().enumerate() {
                     self.pass(i, *pass, forward == (k % 2 == 0), walk)?;
                 }
                 self.cover(i, forward)?;
+                if !last {
+                    continue;
+                }
                 if let Some(f) = self.seen.get_mut(v) {
                     *f = true;
                 }
@@ -769,17 +997,70 @@ fn shown(a: P, b: P, before: &[Vec<P>], rings: &[Vec<P>]) -> f64 {
     d * out as f64 / n as f64
 }
 
-/// Sew one letter starting near `from` (where the letter `before` ended) and ending towards
-/// `target`: its fills first, then its strokes.
+/// The most parts [`entry_part`] weighs.
+const ENTRY_PARTS: usize = 8;
+
+/// Of the [`ENTRY_PARTS`] parts still to sew nearest `m` (where the letter `before` ended), the one
+/// a walk from `m` to its nearest point shows least of outside both letters' ink (`rings`); the
+/// nearer when equal. One of its strokes.
+fn entry_part(r: &Router<'_>, parts: &[Option<usize>], m: P, before: &[Vec<P>], rings: &[Vec<P>]) -> Option<usize> {
+    // Each part's point nearest `m`: (distance, stroke, point), by the node naming the part.
+    let mut near: Vec<Option<(f64, usize, P)>> = vec![None; r.a.nodes.len()];
+    for (i, (s, pi)) in r.a.strokes.iter().zip(parts).enumerate() {
+        let Some(slot) = pi.and_then(|pi| near.get_mut(pi)) else { continue };
+        for q in &s.centre {
+            let d = dist(*q, m);
+            if d.is_finite() && slot.is_none_or(|b| d < b.0) {
+                *slot = Some((d, i, *q));
+            }
+        }
+    }
+    let mut near: Vec<(f64, usize, P)> = near.into_iter().flatten().collect();
+    near.sort_by(|x, y| x.0.total_cmp(&y.0));
+    near.truncate(ENTRY_PARTS);
+    near.into_iter().map(|(d, i, q)| (shown(m, q, before, rings), d, i)).min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1))).map(|b| b.2)
+}
+
+/// The middle of the box of the part still to sew nearest part `part` (by the middles of their
+/// boxes), if there is another.
+fn next_part(r: &Router<'_>, parts: &[Option<usize>], part: usize) -> Option<P> {
+    // Parts are named by a node: one box per node at most.
+    let mut boxes: Vec<Option<(f64, f64, f64, f64)>> = vec![None; r.a.nodes.len()];
+    for (s, pi) in r.a.strokes.iter().zip(parts) {
+        let Some(b) = pi.and_then(|pi| boxes.get_mut(pi)) else { continue };
+        for q in s.centre.iter().filter(|q| finite(**q)) {
+            *b = Some(b.map_or((q.0, q.1, q.0, q.1), |b| (b.0.min(q.0), b.1.min(q.1), b.2.max(q.0), b.3.max(q.1))));
+        }
+    }
+    let mid = |b: (f64, f64, f64, f64)| ((b.0 + b.2) / 2.0, (b.1 + b.3) / 2.0);
+    let own = mid((*boxes.get(part)?)?);
+    boxes.iter().enumerate().filter_map(|(i, b)| b.filter(|_| i != part).map(mid)).min_by(|x, y| dist(*x, own).total_cmp(&dist(*y, own)))
+}
+
+/// Where the letter after one being sewn is.
+struct Ahead<'a> {
+    /// A point of it (its left middle, or bottom left when joined along the baseline); the
+    /// letter's own right when it is the last.
+    target: P,
+    /// Its centre points, sampled ([`centre_sample`]): the letter is left at its point nearest
+    /// them. Empty: nearest `target`.
+    points: &'a [P],
+    /// There is none: the letter may end anywhere.
+    last: bool,
+}
+
+/// Sew one letter starting near `from` (where the letter `before` ended) and ending towards the
+/// next letter (`ahead`): its fills first, then its strokes.
 fn sew_letter(
     l: &Prepared,
     before: &[Vec<P>],
     p: &LetteringParams,
     from: Option<Pt>,
-    target: P,
+    ahead: &Ahead<'_>,
     budget: usize,
     connect: bool,
 ) -> Result<SewnLetter, String> {
+    let target = ahead.target;
     let a = &l.a;
     let mut sewn = SewnLetter {
         rgb: l.rgb,
@@ -796,10 +1077,12 @@ fn sew_letter(
     // length, else the underlay's, held under the longest stitch.
     let walk = (if a.mode == LetterMode::Run { p.run_length } else { UNDERLAY_LENGTH_MM }).min((p.max_stitch - 0.15).max(0.3));
     let mut r = Router {
-        a,
+        a: a.clone(),
         p,
         sewn: vec![false; a.strokes.len()],
         seen: vec![false; a.nodes.len()],
+        way: vec![false; a.strokes.len()],
+        free: false,
         target,
         out: Out { runs: vec![], budget, max: (p.max_stitch - 0.15).max(0.3), count: 0 },
         columns: 0,
@@ -829,40 +1112,94 @@ fn sew_letter(
         }
     }
     let mut at = r.out.pos().map(|q| q.to_mm()).or(from.map(|q| q.to_mm()));
-    // Joined along the baseline: the letter starts near its bottom left.
+    // Joined along the baseline, the letter's first part is the one at its bottom left.
     let bottom_left = bounds(&l.rings).map(|b| (b.0, b.3)).filter(|_| p.join == LetterJoin::Bottom);
-    while r.sewn.iter().any(|s| !s) {
-        // The next part starts at its node nearest the needle (closest join), the letter's first
-        // at its bottom left when joined along the baseline.
-        let open: Vec<usize> = (0..a.nodes.len()).filter(|&n| !r.open_at(n).is_empty()).collect();
+    // Each round sews a part, and cutting strokes makes no new part: bounded by the strokes.
+    for _ in 0..=a.strokes.len() {
+        let parts = r.parts();
+        // The next part is the one nearest the needle (closest join); the letter's first, with no
+        // needle, its leftmost, or the one at its bottom left when joined along the baseline.
         let towards = if r.out.runs.is_empty() { bottom_left.or(at) } else { at };
-        let near = |n: &usize| a.nodes.get(*n).map_or(f64::INFINITY, |q| towards.map_or(q.0, |m| dist(*q, m)));
-        let Some(nearest) = open.iter().map(near).min_by(f64::total_cmp) else { break };
-        // Of the points about as near, the one nearest the baseline (page y grows down).
-        let low = |n: &usize| a.nodes.get(*n).map_or(f64::NEG_INFINITY, |q| q.1);
-        let Some(&start) = open.iter().filter(|n| near(n) <= nearest + ENTRY_SLACK_MM).max_by(|x, y| low(x).total_cmp(&low(y))) else { break };
-        if let Some(f) = r.seen.get_mut(start) {
-            *f = true;
+        let Some((mut si, _)) = r.nearest(&parts, None, |q| towards.map_or(q.0, |m| dist(q, m))) else { break };
+        // Walked to from the letter before (closest join): of the parts about as near, the one the
+        // walk shows least of (an i's stem, not its dot beside it).
+        if let (true, true, LetterJoin::Closest, Some(m)) = (r.out.runs.is_empty(), connect, p.join, at)
+            && let Some(i) = entry_part(&r, &parts, m, before, &l.rings)
+        {
+            si = i;
         }
-        let here = a.nodes.get(start).copied();
-        match (at, here) {
+        let Some(part) = parts.get(si).copied().flatten() else { break };
+        // It is left at its point nearest the next part still to sew, else nearest the next
+        // letter; travelling to there under its stitching rather than across the gap. The last
+        // part of the last letter ends where its strokes do.
+        let aim = next_part(&r, &parts, part);
+        r.free = ahead.last && aim.is_none();
+        let exit_at = match aim {
+            _ if r.free => None,
+            Some(aim) => r.nearest(&parts, Some(part), |q| dist(q, aim)),
+            // The last part: at its point nearest the next letter's strokes.
+            None if !ahead.points.is_empty() => {
+                r.nearest(&parts, Some(part), |q| ahead.points.iter().map(|n| dist(q, *n)).fold(f64::INFINITY, f64::min))
+            }
+            None => r.nearest(&parts, Some(part), |q| dist(q, target)),
+        };
+        let exit = match exit_at {
+            Some((xi, xk)) => Some(r.cut(xi, xk, true).ok_or("a stroke went missing")?),
+            None => None,
+        };
+        let parts = r.parts();
+        let part =
+            r.a.strokes.iter().position(|s| exit.is_some_and(|x| s.a == x || s.b == x)).or(Some(si)).and_then(|i| parts.get(i).copied().flatten());
+        // It is entered at its point nearest the needle (with none, its leftmost).
+        let entry = part.and_then(|part| r.nearest(&parts, Some(part), |q| towards.map_or(q.0, |m| dist(q, m))));
+        let here = entry.and_then(|(i, k)| r.a.strokes.get(i).and_then(|s| s.centre.get(k)).copied());
+        let walked = match (at, here) {
             // From the last letter, when the letters are joined: walk there, stitching.
             (Some(m), Some(q)) if r.out.runs.is_empty() && connect && walks(m, q) => {
                 r.out.runs.push(vec![]);
                 r.out.add(&line_run(m, q, walk))?;
                 sewn.joined = true;
                 sewn.lead_mm = shown(m, q, before, &l.rings);
+                true
             }
             // Another part of this letter within a stitch, or reached inside the letter's ink
             // (under the satin sewn after it): walk there, stitching.
             (Some(m), Some(q)) if !r.out.runs.is_empty() && (dist(m, q) <= NO_TRIM_GAP_MM || hidden(m, q, &l.rings)) => {
                 r.out.add(&line_run(m, q, walk))?;
+                true
             }
-            // Else a trim and a jump reach it (the first run: unless the letters are joined).
-            _ => r.out.runs.push(vec![]),
+            // Else a trim and a jump reach it (the first run: unless the letters are joined),
+            // straight to where it is left.
+            _ => {
+                r.out.runs.push(vec![]);
+                false
+            }
+        };
+        // Walked to: on from the entry along the strokes to the exit, the rest of the part sewn
+        // out and back from the nodes on the way.
+        // Ending anywhere, it starts at the entry (jumped to or not).
+        let start = match (exit, entry) {
+            (Some(exit), Some((i, k))) if walked => r.cut(i, k, false).unwrap_or(exit),
+            (Some(exit), _) => exit,
+            (None, Some((i, k))) => r.cut(i, k, true).ok_or("a stroke went missing")?,
+            (None, None) => break,
+        };
+        if let Some(exit) = exit
+            && start != exit
+            && !r.plan_way(start, exit)
+        {
+            r.way.iter_mut().for_each(|w| *w = false);
         }
+        if let Some(f) = r.seen.get_mut(start) {
+            *f = true;
+        }
+        let before_count = r.sewn.iter().filter(|s| **s).count();
         r.visit(start, false)?;
+        r.way.iter_mut().for_each(|w| *w = false);
         at = r.out.pos().map(|q| q.to_mm());
+        if r.sewn.iter().filter(|s| **s).count() == before_count {
+            break;
+        }
     }
     sewn.runs = r.out.runs.into_iter().filter(|run| run.len() > 1).collect();
     sewn.columns = r.columns;
@@ -1042,6 +1379,16 @@ pub fn sew_pieces(letters: &[PieceLetter], p: &LetteringParams, budget: usize) -
     sew_prepared(&prepared, p, budget)
 }
 
+/// The most centre points of a letter that choosing where the letter before it ends looks at.
+const AHEAD_POINTS: usize = 64;
+
+/// Up to [`AHEAD_POINTS`] centre points of `a`'s strokes, evenly picked.
+fn centre_sample(a: &Analysis) -> Vec<P> {
+    let n: usize = a.strokes.iter().map(|s| s.centre.len()).sum();
+    let step = n.div_ceil(AHEAD_POINTS).max(1);
+    a.strokes.iter().flat_map(|s| s.centre.iter().copied()).step_by(step).filter(|q| finite(*q)).collect()
+}
+
 /// Sew `letters` in order, each started at its point nearest where the last one ended.
 fn sew_prepared(letters: &[Prepared], p: &LetteringParams, budget: usize) -> Result<Vec<SewnLetter>, String> {
     let budget = budget.min(MAX_STEPS);
@@ -1066,7 +1413,13 @@ fn sew_prepared(letters: &[Prepared], p: &LetteringParams, budget: usize) -> Res
                 LetterTrims::Letter => false,
             };
         let before = i.checked_sub(1).and_then(|j| letters.get(j)).map_or(&[][..], |b| &b.rings[..]);
-        let s = sew_letter(l, before, p, pos, target, budget.saturating_sub(used), connect)?;
+        // Joined where closest, the letter is left at its point nearest the next one's strokes.
+        let points = match letters.get(i + 1) {
+            Some(n) if p.join == LetterJoin::Closest => centre_sample(&n.a),
+            _ => vec![],
+        };
+        let ahead = Ahead { target, points: &points, last: i + 1 == letters.len() };
+        let s = sew_letter(l, before, p, pos, &ahead, budget.saturating_sub(used), connect)?;
         word = Some(l.word);
         used = used.saturating_add(s.runs.iter().map(Vec::len).sum());
         if used > budget {
