@@ -1,4 +1,4 @@
-//! VectorCraft embroidery machine files: DST, DSB, EXP, U01 and TBF readers and writers.
+//! VectorCraft embroidery machine files: DST, DSB, EXP, U01, TBF and PES/PEC readers and writers.
 //!
 //! Writers take a [`StitchPlan`] that is already within the format's limits (the caller
 //! prepares it for the machine) and return the file's bytes. Readers treat their input as
@@ -10,6 +10,7 @@ pub mod dsb;
 pub mod dst;
 pub mod exp;
 mod palette;
+pub mod pes;
 pub mod tbf;
 pub mod u01;
 
