@@ -1,7 +1,8 @@
 # Embroidery: the DSB machine file
 
-Status: first slice implemented 2026-11-11 (STI-9). Measured by tests and a cross-check against
-pyembroidery; not yet stitched on a machine.
+Status: first slice implemented 2026-11-11 (STI-9), measured by tests and a cross-check against
+pyembroidery. 2026-11-13 (STI-37): the owner's BAI Mirror rejected our file ("no valid stitches");
+stitch and jump records now carry bit 0x80 like every other code of the format. Not yet stitched.
 
 DSB is the file Barudan machines read. It has no public specification. This is what the reader and
 writer in `crates/embroidery/src/dsb.rs` implement, taken from the two open implementations below.
@@ -35,8 +36,8 @@ known; unknown.
 
 | control | meaning |
 |---|---|
-| `0x00` | stitch |
-| `0x01` | jump (move without stitching) |
+| `0x80` | stitch (bit 0x80 is set on every record; a reader masks the low five bits, so `0x00` reads the same) |
+| `0x81` | jump (move without stitching) |
 | `+ 0x20` | on a stitch or jump: dx is negative (left) |
 | `+ 0x40` | on a stitch or jump: dy is negative (down, y up) |
 | `0xE7` | trim (move bytes ignored; we write 0, 0) |
