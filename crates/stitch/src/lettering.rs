@@ -27,13 +27,14 @@
 #[cfg(test)]
 mod tests;
 
-use vectorcraft_doc::LetterTrims;
+use vectorcraft_doc::{LetterJoin, LetterTrims, Underlay};
 use vectorcraft_geom::FillRule;
 
+use crate::autodigitize::{Split, split_wide};
 use crate::columns::{self, Stroke, dist, extend_nodes, finite, pieces};
 use crate::fill::{FillParams, tatami};
 use crate::run::run_stitches;
-use crate::satin::{RailsParams, rails_satin};
+use crate::satin::{Pass, RailsParams, pass_stitches, passes, rails_satin, underlay_for};
 use crate::{MAX_STEPS, Pt, TOO_MANY_STEPS, UNITS_PER_MM};
 
 pub(crate) type P = (f64, f64);
@@ -50,6 +51,28 @@ pub const COMPENSATION_MM: f64 = 0.2;
 pub const RUN_LENGTH_MM: f64 = 1.5;
 /// Stitch length of the centre-run underlay and of travel under satin, mm.
 pub const UNDERLAY_LENGTH_MM: f64 = 2.0;
+/// How far a running-stitch letter's stitch may stray from its centre line, mm: stitches are
+/// shortened on curves to keep within it (estimated).
+pub const RUN_CHORD_MM: f64 = 0.1;
+/// The shortest running stitch a curve is cut into, mm (estimated).
+pub const RUN_MIN_MM: f64 = 0.4;
+/// Smoothing passes over a running-stitch letter's centre lines, beyond the columns' own.
+const RUN_SMOOTHING: usize = 6;
+/// A running-stitch letter's corner stays one where its line turns by more than this, measured
+/// [`RUN_CORNER_REACH_MM`] each side (a thin stroke's skeleton marks many small bends as corners).
+const RUN_CORNER_TURN_DEG: f64 = 75.0;
+/// How far each side of a corner its turn is measured, mm.
+const RUN_CORNER_REACH_MM: f64 = 0.3;
+/// The longest connector between two letters of a word that may show on the fabric, mm: a walk
+/// from one letter to the next with more than this outside both letters' ink is a trim and a jump
+/// instead
+/// (unless the letters are never trimmed, [`LetterTrims::None`]). Closest join exists to keep
+/// these connectors short (<https://docs.wilcom.com/embroiderystudio/28/en/OnlineHelp/Lettering/lettering_advanced/lettering_advanced-16.htm>);
+/// no public source gives a length, so 3 mm is estimated.
+pub const MAX_CONNECTOR_MM: f64 = 3.0;
+/// Entry points within this of the nearest, mm, are equally near: the one nearest the baseline
+/// is taken.
+const ENTRY_SLACK_MM: f64 = 1.0;
 /// Letters closer than this, mm, are joined by a stitch rather than a jump.
 pub const NO_TRIM_GAP_MM: f64 = 1.2;
 /// How far apart the points are that check whether a walk stays inside a letter, mm.
@@ -74,9 +97,13 @@ pub struct LetteringParams {
     pub run_under: f64,
     /// The widest satin column.
     pub max_satin: f64,
-    /// A centre run under satin columns.
-    pub underlay: bool,
+    /// The underlay under satin columns (automatic: by each column's width).
+    pub underlay: Underlay,
     pub trims: LetterTrims,
+    /// Where one letter is joined to the next: closest, or along the baseline.
+    pub join: LetterJoin,
+    /// Running-stitch letters sewn as a bean run (each stitch three times).
+    pub bean: bool,
     /// The longest stitch.
     pub max_stitch: f64,
     /// Tatami settings for letters too wide for satin.
@@ -92,8 +119,10 @@ impl Default for LetteringParams {
             min_column: MIN_COLUMN_MM,
             run_under: RUN_UNDER_MM,
             max_satin: MAX_SATIN_MM,
-            underlay: true,
+            underlay: Underlay::Auto,
             trims: LetterTrims::Word,
+            join: LetterJoin::Closest,
+            bean: false,
             max_stitch: 12.1,
             fill: FillParams::default(),
         }
@@ -153,7 +182,7 @@ pub struct LetterShape {
     pub columns: Vec<Column>,
     /// Running stitch lines (thin strokes, or the whole letter when small).
     pub runs: Vec<Vec<P>>,
-    /// The outline, when the letter is filled.
+    /// The outline filled: the whole letter (fill mode), or its wide part, sewn before the columns.
     pub fill: Vec<Vec<P>>,
 }
 
@@ -174,6 +203,11 @@ pub struct SewnLetter {
     pub joined: bool,
     pub columns: usize,
     pub run_lines: usize,
+    /// Fills sewn (a filled letter, or the wide parts of one).
+    pub fills: usize,
+    /// When joined, how much of the walk from the letter before shows outside their ink, mm
+    /// (0 otherwise).
+    pub lead_mm: f64,
 }
 
 /// The letters' height: the tallest outline, mm.
@@ -194,11 +228,44 @@ pub fn mode_for(height: f64, p: &LetteringParams) -> LetterMode {
     if height < p.run_under { LetterMode::Run } else { LetterMode::Satin }
 }
 
-/// A letter analysed: its strokes and nodes, or its mode when it has no strokes to sew.
+/// A letter analysed: its fills (sewn first) and its strokes and nodes, or its mode when it has
+/// no strokes to sew.
 struct Analysis {
     mode: LetterMode,
     nodes: Vec<P>,
     strokes: Vec<Stroke>,
+    /// Each stroke's own satin settings (a converted letter's column), else the lettering's.
+    style: Vec<Option<PieceStyle>>,
+    /// Outlines (rings, nonzero rule) sewn as tatami before the strokes.
+    fills: Vec<Vec<Vec<P>>>,
+    /// Each stroke that goes on from the one before it round a corner ([`split_corners`]): its
+    /// column is the same column, not counted again. Empty: none.
+    continues: Vec<bool>,
+}
+
+/// How one column of a converted letter sews, from its own stitch properties.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PieceStyle {
+    /// Satin spacing, peak to peak, mm.
+    pub spacing: f64,
+    /// Pull compensation each side, mm.
+    pub compensation: f64,
+    /// The underlay under it.
+    pub underlay: Underlay,
+}
+
+/// A converted letter (`text.toStitches`): its pieces as stitch objects hold them, to be sewn as
+/// lettering again ([`sew_pieces`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PieceLetter {
+    pub rgb: [u8; 3],
+    pub word: usize,
+    /// Two-rail satin columns, each with its own settings.
+    pub columns: Vec<(Column, PieceStyle)>,
+    /// Running stitch lines.
+    pub runs: Vec<Vec<P>>,
+    /// Fill outlines (rings), each one fill.
+    pub fills: Vec<Vec<Vec<P>>>,
 }
 
 /// The analysis of a glyph outline in `mode` (satin or run). Hostile outlines are bounded: more
@@ -206,7 +273,10 @@ struct Analysis {
 /// [`columns::MAX_EDGES`] sews the letter as fill.
 fn analyse(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<Analysis, String> {
     columns::check_outline(rings, "letter")?;
-    let empty = |mode| Analysis { mode, nodes: vec![], strokes: vec![] };
+    let empty = |mode| {
+        let fills = if mode == LetterMode::Fill { vec![rings.to_vec()] } else { vec![] };
+        Analysis { mode, nodes: vec![], strokes: vec![], style: vec![], fills, continues: vec![] }
+    };
     if mode == LetterMode::Fill {
         return Ok(empty(LetterMode::Fill));
     }
@@ -227,21 +297,211 @@ fn analyse(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<An
             })
             .fold(0.0, f64::max);
         if widest > p.max_satin {
-            return Ok(empty(LetterMode::Fill));
+            // Its wide part is tatami, the rest stays columns and runs reaching into it; when
+            // nothing is left over, all of it is filled.
+            return Ok(match split_wide(&sk.grid, &strokes, p.max_satin) {
+                Split::Mixed { fill, stretches } => {
+                    let style = vec![None; stretches.len()];
+                    Analysis { mode, nodes: extend_nodes(nodes, &stretches), strokes: stretches, style, fills: vec![fill], continues: vec![] }
+                }
+                Split::Narrow | Split::Whole => empty(LetterMode::Fill),
+            });
         }
     }
-    Ok(Analysis { mode, nodes: extend_nodes(nodes, &strokes), strokes })
+    let mut strokes = strokes;
+    if mode == LetterMode::Run {
+        for s in &mut strokes {
+            smooth_run(s);
+        }
+    }
+    let style = vec![None; strokes.len()];
+    Ok(Analysis { mode, nodes: extend_nodes(nodes, &strokes), strokes, style, fills: vec![], continues: vec![] })
+}
+
+/// Piece ends of a converted letter are one node when closer than this many half widths of the
+/// column ending there (a column's end is the middle of its last rung, which lies off the centre
+/// line where a rail reaches into another stroke).
+const SAME_NODE: f64 = 0.8;
+/// ... and always when closer than this, mm.
+const SAME_POINT_MM: f64 = 0.05;
+
+/// Whether each point of `pts` is a corner: the line turns there by more than 40 degrees,
+/// measured two points each side, and more than at its neighbours.
+fn bends(pts: &[P]) -> Vec<bool> {
+    let turn = |i: usize| -> f64 {
+        let (Some(a), Some(b), Some(c)) = (i.checked_sub(2).and_then(|j| pts.get(j)), pts.get(i), pts.get(i + 2)) else { return 0.0 };
+        let (u, v) = ((b.0 - a.0, b.1 - a.1), (c.0 - b.0, c.1 - b.1));
+        let (lu, lv) = (u.0.hypot(u.1), v.0.hypot(v.1));
+        if lu > 1e-9 && lv > 1e-9 { ((u.0 * v.0 + u.1 * v.1) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees() } else { 0.0 }
+    };
+    let turns: Vec<f64> = (0..pts.len()).map(turn).collect();
+    (0..pts.len())
+        .map(|i| {
+            let t = turns.get(i).copied().unwrap_or(0.0);
+            t > 40.0 && (i.saturating_sub(2)..=(i + 2)).all(|j| j == i || turns.get(j).is_none_or(|u| *u < t || (*u == t && j > i)))
+        })
+        .collect()
+}
+
+/// The polygon of a column's rails, counter-clockwise (positive area).
+fn column_ring(c: &Column) -> Vec<P> {
+    let mut ring = c.left.clone();
+    ring.extend(c.right.iter().rev());
+    orient(ring)
+}
+
+/// `ring` turned to positive area.
+fn orient(mut ring: Vec<P>) -> Vec<P> {
+    let n = ring.len();
+    let area: f64 = (0..n).filter_map(|i| Some((ring.get(i)?, ring.get((i + 1) % n)?))).map(|(a, b)| a.0 * b.1 - b.0 * a.1).sum();
+    if area < 0.0 {
+        ring.reverse();
+    }
+    ring
+}
+
+/// A converted letter gathered back into strokes: piece ends that meet are nodes; its ink, for
+/// walks hidden under it, is its columns' outlines and its fills.
+fn from_pieces(l: &PieceLetter) -> Result<Prepared, String> {
+    // Each node: where it is and the half width of the column end that made it.
+    let mut nodes: Vec<(P, f64)> = vec![];
+    // The node at `q` (half width `r`), never `not` (a stroke's other end, unless it closes).
+    let mut node = |q: P, r: f64, not: Option<usize>| -> usize {
+        let reach = |n: &(P, f64)| (SAME_NODE * r.max(n.1)).max(SAME_POINT_MM);
+        let near = nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| Some(*i) != not && dist(n.0, q) <= reach(n))
+            .min_by(|x, y| dist(x.1.0, q).total_cmp(&dist(y.1.0, q)))
+            .map(|(i, _)| i);
+        near.unwrap_or_else(|| {
+            nodes.push((q, r));
+            nodes.len() - 1
+        })
+    };
+    let half = |c: &Column, i: usize| match (c.left.get(i), c.right.get(i)) {
+        (Some(a), Some(b)) => dist(*a, *b) / 2.0,
+        _ => 0.0,
+    };
+    let mut strokes = vec![];
+    let mut style = vec![];
+    for (c, st) in &l.columns {
+        let centre: Vec<P> = c.left.iter().zip(&c.right).map(|(a, b)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)).collect();
+        if centre.len() < 2 || c.right.len() != centre.len() || !centre.iter().all(|q| finite(*q)) {
+            continue;
+        }
+        let (Some(&first), Some(&last)) = (centre.first(), centre.last()) else { continue };
+        let n = centre.len();
+        let a = node(first, half(c, 0), None);
+        let b = node(last, half(c, n - 1), (dist(first, last) > SAME_POINT_MM).then_some(a));
+        strokes.push(Stroke { a, b, bend: bends(&centre), centre, left: c.left.clone(), right: c.right.clone(), column: vec![true; n] });
+        style.push(Some(*st));
+    }
+    for line in &l.runs {
+        let (Some(&first), Some(&last)) = (line.first(), line.last()) else { continue };
+        if line.len() < 2 || !line.iter().all(|q| finite(*q)) {
+            continue;
+        }
+        let a = node(first, 0.0, None);
+        let b = node(last, 0.0, (dist(first, last) > SAME_POINT_MM).then_some(a));
+        let n = line.len();
+        strokes.push(Stroke { a, b, bend: bends(line), centre: line.clone(), left: line.clone(), right: line.clone(), column: vec![false; n] });
+        style.push(None);
+    }
+    let mut rings: Vec<Vec<P>> = l.columns.iter().map(|(c, _)| column_ring(c)).collect();
+    for f in &l.fills {
+        columns::check_outline(f, "letter")?;
+        // A fill's outer ring counter-clockwise, its holes the other way, as glyphs wind.
+        let flip = f.first().is_some_and(|r| orient(r.clone()) != *r);
+        rings.extend(f.iter().map(|r| if flip { r.iter().rev().copied().collect() } else { r.clone() }));
+    }
+    let mode = if !l.columns.is_empty() {
+        LetterMode::Satin
+    } else if !l.runs.is_empty() {
+        LetterMode::Run
+    } else {
+        LetterMode::Fill
+    };
+    let nodes = nodes.into_iter().map(|n| n.0).collect();
+    let mut a = Analysis { mode, nodes: extend_nodes(nodes, &strokes), strokes, style, fills: l.fills.clone(), continues: vec![] };
+    split_corners(&mut a);
+    Ok(Prepared { rings, rgb: l.rgb, word: l.word, a })
+}
+
+/// Split each stroke of `a` at its corners, for routing only: a letter may be entered and left
+/// at a corner (the top left of an E), as at the ends of its strokes. The pieces share the
+/// corner's rung, so the column still turns the corner as one.
+fn split_corners(a: &mut Analysis) {
+    let mut strokes = Vec::with_capacity(a.strokes.len());
+    let mut style = Vec::with_capacity(a.strokes.len());
+    let mut continues = Vec::with_capacity(a.strokes.len());
+    for (i, s) in std::mem::take(&mut a.strokes).into_iter().enumerate() {
+        let own = a.style.get(i).copied().flatten();
+        let n = s.centre.len();
+        // Corners at least three points from each end and from each other.
+        let mut cuts: Vec<usize> = vec![];
+        for k in 3..n.saturating_sub(3) {
+            if s.bend.get(k).copied().unwrap_or(false) && cuts.last().is_none_or(|c| k >= c + 3) {
+                cuts.push(k);
+            }
+        }
+        if cuts.is_empty() || s.a == s.b && cuts.len() < 2 {
+            strokes.push(s);
+            style.push(own);
+            continues.push(false);
+            continue;
+        }
+        let mut from = 0;
+        let mut node = s.a;
+        let ends: Vec<usize> = cuts.iter().copied().chain([n - 1]).collect();
+        for (j, &to) in ends.iter().enumerate() {
+            let next = if j + 1 == ends.len() {
+                s.b
+            } else {
+                a.nodes.push(s.centre.get(to).copied().unwrap_or((0.0, 0.0)));
+                a.nodes.len() - 1
+            };
+            let part = |v: &Vec<P>| v.get(from..=to).map(<[P]>::to_vec).unwrap_or_default();
+            let mut bend = s.bend.get(from..=to).map(<[bool]>::to_vec).unwrap_or_default();
+            if let Some(b) = bend.first_mut() {
+                *b = false;
+            }
+            if let Some(b) = bend.last_mut() {
+                *b = false;
+            }
+            strokes.push(Stroke {
+                a: node,
+                b: next,
+                centre: part(&s.centre),
+                left: part(&s.left),
+                right: part(&s.right),
+                column: s.column.get(from..=to).map(<[bool]>::to_vec).unwrap_or_default(),
+                bend,
+            });
+            style.push(own);
+            continues.push(j > 0);
+            from = to;
+            node = next;
+        }
+    }
+    a.strokes = strokes;
+    a.style = style;
+    a.continues = continues;
+}
+
+/// A letter ready to sew: its ink (rings, nonzero rule), thread, word and analysis.
+struct Prepared {
+    rings: Vec<Vec<P>>,
+    rgb: [u8; 3],
+    word: usize,
+    a: Analysis,
 }
 
 /// What letter `rings` becomes in `mode` (satin or run; a letter too wide for satin becomes
 /// fill), as columns, run lines and fill outlines: the objects Convert to Stitch Objects makes.
 pub fn shape_letter(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<LetterShape, String> {
     let a = analyse(rings, mode, p)?;
-    let mut shape = LetterShape { mode: a.mode, columns: vec![], runs: vec![], fill: vec![] };
-    if a.mode == LetterMode::Fill {
-        shape.fill = rings.to_vec();
-        return Ok(shape);
-    }
+    let mut shape = LetterShape { mode: a.mode, columns: vec![], runs: vec![], fill: a.fills.first().cloned().unwrap_or_default() };
     for s in &a.strokes {
         for (col, from, to) in pieces(s) {
             if col {
@@ -334,11 +594,12 @@ impl Router<'_> {
     /// Running stitch along stroke `i`'s centre, forwards or back, at `length` mm.
     fn travel(&mut self, i: usize, forward: bool, length: f64) -> Result<(), String> {
         let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
-        let mut c = s.centre.clone();
+        let (mut c, mut bend) = (s.centre.clone(), s.bend.clone());
         if !forward {
             c.reverse();
+            bend.reverse();
         }
-        let pts = run_stitches(&c, &[], false, units(length));
+        let pts = run_stitches(&c, &bend, false, units(length));
         self.out.add(&pts)
     }
 
@@ -349,10 +610,18 @@ impl Router<'_> {
         if !forward {
             ps.reverse();
         }
-        let rp = RailsParams { spacing: self.p.spacing, max_stitch: self.p.max_stitch, compensation: self.p.compensation };
+        let own = self.a.style.get(i).copied().flatten();
+        let rp = RailsParams {
+            spacing: own.map_or(self.p.spacing, |o| o.spacing),
+            max_stitch: self.p.max_stitch,
+            compensation: own.map_or(self.p.compensation, |o| o.compensation),
+        };
         for (col, from, to) in ps {
             let pts = if col {
-                self.columns += 1;
+                // A column split at a corner for routing is still one column.
+                if !(from == 0 && self.a.continues.get(i).copied().unwrap_or(false)) {
+                    self.columns += 1;
+                }
                 let (Some(l), Some(r)) = (s.left.get(from..=to), s.right.get(from..=to)) else { continue };
                 let (mut l, mut r) = (l.to_vec(), r.to_vec());
                 if !forward {
@@ -363,11 +632,19 @@ impl Router<'_> {
             } else {
                 self.run_lines += 1;
                 let Some(c) = s.centre.get(from..=to) else { continue };
-                let mut c = c.to_vec();
+                let (mut c, mut bend) = (c.to_vec(), s.bend.get(from..=to).map(<[bool]>::to_vec).unwrap_or_default());
                 if !forward {
                     c.reverse();
+                    bend.reverse();
                 }
-                run_stitches(&c, &[], false, units(self.p.run_length.min(self.out.max)))
+                let length = self.p.run_length.min(self.out.max);
+                if self.a.mode == LetterMode::Run {
+                    // Small letters: shorter stitches round curves, a bean run when asked.
+                    let run = curve_run(&c, &bend, length);
+                    if self.p.bean { bean(&run) } else { run }
+                } else {
+                    run_stitches(&c, &bend, false, units(length))
+                }
             };
             self.out.add(&pts)?;
         }
@@ -376,6 +653,43 @@ impl Router<'_> {
 
     fn has_column(&self, i: usize) -> bool {
         self.a.strokes.get(i).is_some_and(|s| pieces(s).iter().any(|p| p.0))
+    }
+
+    /// The underlay stroke `i` takes (resolved by its columns' median width): none for running
+    /// stitch and for strokes with no column.
+    fn underlay(&self, i: usize) -> Underlay {
+        if self.a.mode != LetterMode::Satin || !self.has_column(i) {
+            return Underlay::None;
+        }
+        let kind = self.a.style.get(i).copied().flatten().map_or(self.p.underlay, |o| o.underlay);
+        let Some(s) = self.a.strokes.get(i) else { return Underlay::None };
+        let mut w: Vec<f64> = s.left.iter().zip(&s.right).zip(&s.column).filter(|(_, c)| **c).map(|((a, b), _)| dist(*a, *b)).collect();
+        w.sort_by(f64::total_cmp);
+        underlay_for(kind, w.get(w.len() / 2).copied().unwrap_or(0.0))
+    }
+
+    /// Underlay pass `pass` along stroke `i`'s columns, forwards or back; a centre pass runs
+    /// along the whole centre line, as travel does.
+    fn pass(&mut self, i: usize, pass: Pass, forward: bool, walk: f64) -> Result<(), String> {
+        if pass == Pass::Centre {
+            return self.travel(i, forward, walk);
+        }
+        let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
+        let mut ps: Vec<(usize, usize)> = pieces(s).into_iter().filter(|p| p.0).map(|p| (p.1, p.2)).collect();
+        if !forward {
+            ps.reverse();
+        }
+        for (from, to) in ps {
+            let (Some(l), Some(r)) = (s.left.get(from..=to), s.right.get(from..=to)) else { continue };
+            let (mut l, mut r) = (l.to_vec(), r.to_vec());
+            if !forward {
+                l.reverse();
+                r.reverse();
+            }
+            let pts = pass_stitches(&l, &r, pass, units(walk), units(self.out.max));
+            self.out.add(&pts)?;
+        }
+        Ok(())
     }
 
     /// Sew the strokes reached from node `u`; `back`: end at `u`. Depth is bounded by the
@@ -399,13 +713,17 @@ impl Router<'_> {
             }
             let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
             let (forward, v) = if s.a == u { (true, s.b) } else { (false, s.a) };
-            let under = self.p.underlay && self.a.mode == LetterMode::Satin && self.has_column(i);
+            // Joined along the baseline, a last stroke that would end further from the next
+            // letter (the top of an l) is sewn out and back, so the letter is left at its foot.
+            let away = |n: usize| self.a.nodes.get(n).map_or(0.0, |q| dist(*q, self.target));
+            let last = last && !(self.p.join == LetterJoin::Bottom && self.open_at(v).is_empty() && away(v) > away(u));
+            let under = self.underlay(i);
             // Held under the longest stitch, which rounding to plan units would otherwise pass.
             let walk = (if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM }).min(self.out.max);
             if last {
-                if under {
-                    self.travel(i, forward, walk)?;
-                    self.travel(i, !forward, walk)?;
+                // The underlay's passes out and back, then the satin out.
+                for (k, pass) in passes(under).iter().enumerate() {
+                    self.pass(i, *pass, forward == (k % 2 == 0), walk)?;
                 }
                 self.cover(i, forward)?;
                 if let Some(f) = self.seen.get_mut(v) {
@@ -420,42 +738,65 @@ impl Router<'_> {
                 }
                 self.visit(v, true)?;
             }
+            // The travel out was a centre run; an edge walk or a zigzag is sewn back and out
+            // from here, then the satin back.
+            if under != Underlay::Center {
+                for (k, pass) in passes(under).iter().enumerate() {
+                    self.pass(i, *pass, forward != (k % 2 == 0), walk)?;
+                }
+            }
             self.cover(i, !forward)?;
         }
     }
 }
 
-/// Sew one letter starting near `from` and ending towards `target`.
+/// How much of a walk from `a` to `b` (mm) shows on the fabric: its length outside the ink of
+/// the letter before (`before`) and of this one (`rings`), where satin covers it.
+fn shown(a: P, b: P, before: &[Vec<P>], rings: &[Vec<P>]) -> f64 {
+    let d = dist(a, b);
+    if !d.is_finite() {
+        return f64::INFINITY;
+    }
+    // Finite and bounded: at most HIDDEN_SAMPLES.
+    let n = ((d / HIDDEN_STEP_MM).ceil().max(1.0) as usize).min(HIDDEN_SAMPLES);
+    let out = (0..n)
+        .filter(|i| {
+            let t = (*i as f64 + 0.5) / n as f64;
+            let q = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+            !inside_rings(before, q) && !inside_rings(rings, q)
+        })
+        .count();
+    d * out as f64 / n as f64
+}
+
+/// Sew one letter starting near `from` (where the letter `before` ended) and ending towards
+/// `target`: its fills first, then its strokes.
 fn sew_letter(
-    letter: &Letter,
-    mode: LetterMode,
+    l: &Prepared,
+    before: &[Vec<P>],
     p: &LetteringParams,
     from: Option<Pt>,
     target: P,
     budget: usize,
     connect: bool,
 ) -> Result<SewnLetter, String> {
-    let a = analyse(&letter.rings, mode, p)?;
-    let mut sewn = SewnLetter { rgb: letter.rgb, word: letter.word, mode: a.mode, runs: vec![], columns: 0, run_lines: 0, joined: false };
+    let a = &l.a;
+    let mut sewn = SewnLetter {
+        rgb: l.rgb,
+        word: l.word,
+        mode: a.mode,
+        runs: vec![],
+        columns: 0,
+        run_lines: 0,
+        fills: a.fills.len(),
+        joined: false,
+        lead_mm: 0.0,
+    };
     // The stitch length of a walk to a part or from the last letter: running stitch at its own
     // length, else the underlay's, held under the longest stitch.
     let walk = (if a.mode == LetterMode::Run { p.run_length } else { UNDERLAY_LENGTH_MM }).min((p.max_stitch - 0.15).max(0.3));
-    if a.mode == LetterMode::Fill {
-        let fp = FillParams { max_stitch: p.max_stitch, ..p.fill };
-        sewn.runs = tatami(&letter.rings, FillRule::NonZero, &fp, budget)?;
-        if let (true, Some(q), Some(first)) = (connect, from, sewn.runs.first_mut()) {
-            // Walked to from the last letter: its stitches lead the first run.
-            if let Some(&b) = first.first() {
-                let mut lead = line_run(q.to_mm(), b.to_mm(), walk);
-                lead.append(first);
-                *first = lead;
-                sewn.joined = true;
-            }
-        }
-        return Ok(sewn);
-    }
     let mut r = Router {
-        a: &a,
+        a,
         p,
         sewn: vec![false; a.strokes.len()],
         seen: vec![false; a.nodes.len()],
@@ -464,26 +805,57 @@ fn sew_letter(
         columns: 0,
         run_lines: 0,
     };
-    let mut at = from.map(|q| q.to_mm());
+    // A connector from the letter before is walked when short, hidden in this letter's ink, or
+    // when letters are never trimmed; else it is a trim and a jump.
+    let walks = |m: P, q: P| p.trims == LetterTrims::None || shown(m, q, before, &l.rings) <= MAX_CONNECTOR_MM;
+    let fp = FillParams { max_stitch: p.max_stitch, ..p.fill };
+    for rings in &a.fills {
+        for mut run in tatami(rings, FillRule::NonZero, &fp, budget.saturating_sub(r.out.count))? {
+            if let (true, true, Some(q), Some(&b)) = (r.out.runs.is_empty(), connect, from, run.first())
+                && walks(q.to_mm(), b.to_mm())
+            {
+                // Walked to from the last letter: its stitches lead the first run.
+                sewn.lead_mm = shown(q.to_mm(), b.to_mm(), before, &l.rings);
+                let mut lead = line_run(q.to_mm(), b.to_mm(), walk);
+                lead.append(&mut run);
+                run = lead;
+                sewn.joined = true;
+            }
+            r.out.count = r.out.count.saturating_add(run.len());
+            if r.out.count > budget {
+                return Err(TOO_MANY_STEPS.into());
+            }
+            r.out.runs.push(run);
+        }
+    }
+    let mut at = r.out.pos().map(|q| q.to_mm()).or(from.map(|q| q.to_mm()));
+    // Joined along the baseline: the letter starts near its bottom left.
+    let bottom_left = bounds(&l.rings).map(|b| (b.0, b.3)).filter(|_| p.join == LetterJoin::Bottom);
     while r.sewn.iter().any(|s| !s) {
-        // The next part starts at its node nearest the needle (closest join).
+        // The next part starts at its node nearest the needle (closest join), the letter's first
+        // at its bottom left when joined along the baseline.
         let open: Vec<usize> = (0..a.nodes.len()).filter(|&n| !r.open_at(n).is_empty()).collect();
-        let near = |n: &usize| a.nodes.get(*n).map_or(f64::INFINITY, |q| at.map_or(q.0, |m| dist(*q, m)));
-        let Some(&start) = open.iter().min_by(|x, y| near(x).total_cmp(&near(y))) else { break };
+        let towards = if r.out.runs.is_empty() { bottom_left.or(at) } else { at };
+        let near = |n: &usize| a.nodes.get(*n).map_or(f64::INFINITY, |q| towards.map_or(q.0, |m| dist(*q, m)));
+        let Some(nearest) = open.iter().map(near).min_by(f64::total_cmp) else { break };
+        // Of the points about as near, the one nearest the baseline (page y grows down).
+        let low = |n: &usize| a.nodes.get(*n).map_or(f64::NEG_INFINITY, |q| q.1);
+        let Some(&start) = open.iter().filter(|n| near(n) <= nearest + ENTRY_SLACK_MM).max_by(|x, y| low(x).total_cmp(&low(y))) else { break };
         if let Some(f) = r.seen.get_mut(start) {
             *f = true;
         }
         let here = a.nodes.get(start).copied();
         match (at, here) {
             // From the last letter, when the letters are joined: walk there, stitching.
-            (Some(m), Some(q)) if r.out.runs.is_empty() && connect => {
+            (Some(m), Some(q)) if r.out.runs.is_empty() && connect && walks(m, q) => {
                 r.out.runs.push(vec![]);
                 r.out.add(&line_run(m, q, walk))?;
                 sewn.joined = true;
+                sewn.lead_mm = shown(m, q, before, &l.rings);
             }
             // Another part of this letter within a stitch, or reached inside the letter's ink
             // (under the satin sewn after it): walk there, stitching.
-            (Some(m), Some(q)) if !r.out.runs.is_empty() && (dist(m, q) <= NO_TRIM_GAP_MM || hidden(m, q, &letter.rings)) => {
+            (Some(m), Some(q)) if !r.out.runs.is_empty() && (dist(m, q) <= NO_TRIM_GAP_MM || hidden(m, q, &l.rings)) => {
                 r.out.add(&line_run(m, q, walk))?;
             }
             // Else a trim and a jump reach it (the first run: unless the letters are joined).
@@ -496,6 +868,101 @@ fn sew_letter(
     sewn.columns = r.columns;
     sewn.run_lines = r.run_lines;
     Ok(sewn)
+}
+
+/// A running-stitch letter's centre line smoothed further: its skeleton is only a few pixels
+/// wide and steps show at a short stitch. Its ends and corners stay where they are.
+fn smooth_run(s: &mut Stroke) {
+    let n = s.centre.len();
+    let reach = (RUN_CORNER_REACH_MM / columns::STEP_MM).ceil() as usize;
+    for i in 0..n {
+        if !s.bend.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let (Some(a), Some(b), Some(c)) = (s.centre.get(i.saturating_sub(reach)), s.centre.get(i), s.centre.get((i + reach).min(n - 1))) else {
+            continue;
+        };
+        let (u, v) = ((b.0 - a.0, b.1 - a.1), (c.0 - b.0, c.1 - b.1));
+        let (lu, lv) = (u.0.hypot(u.1), v.0.hypot(v.1));
+        let turn = if lu > 1e-9 && lv > 1e-9 { ((u.0 * v.0 + u.1 * v.1) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees() } else { 0.0 };
+        if turn < RUN_CORNER_TURN_DEG
+            && let Some(f) = s.bend.get_mut(i)
+        {
+            *f = false;
+        }
+    }
+    for _ in 0..RUN_SMOOTHING {
+        let prev = s.centre.clone();
+        for i in 1..prev.len().saturating_sub(1) {
+            if s.bend.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            if let (Some(a), Some(b), Some(c), Some(o)) = (prev.get(i - 1), prev.get(i), prev.get(i + 1), s.centre.get_mut(i)) {
+                *o = ((a.0 + 2.0 * b.0 + c.0) / 4.0, (a.1 + 2.0 * b.1 + c.1) / 4.0);
+            }
+        }
+    }
+}
+
+/// Running stitch along `line` (mm) at most `length` mm a stitch, shorter where it bends so no
+/// stitch strays more than [`RUN_CHORD_MM`] from it (down to [`RUN_MIN_MM`]); corners (`bend`)
+/// and both ends are needle points.
+fn curve_run(line: &[P], bend: &[bool], length: f64) -> Vec<Pt> {
+    let mut out: Vec<Pt> = vec![];
+    let mut push = |q: P| {
+        if let Some(p) = Pt::from_mm(q.0, q.1)
+            && out.last() != Some(&p)
+        {
+            out.push(p);
+        }
+    };
+    let Some(&first) = line.first() else { return out };
+    push(first);
+    let (mut i, n) = (0usize, line.len());
+    while i + 1 < n {
+        let Some(&a) = line.get(i) else { break };
+        // The furthest point within the length whose chord keeps to the line, stopping at a corner.
+        let mut j = i + 1;
+        while j + 1 < n && !bend.get(j).copied().unwrap_or(false) {
+            let Some(&b) = line.get(j + 1) else { break };
+            let d = dist(a, b);
+            if d > length {
+                break;
+            }
+            let strays = line.get(i + 1..=j).is_some_and(|mid| mid.iter().any(|m| crate::fill::seg_dist(*m, a, b) > RUN_CHORD_MM));
+            if strays && dist(a, line.get(j).copied().unwrap_or(a)) >= RUN_MIN_MM {
+                break;
+            }
+            j += 1;
+        }
+        let Some(&b) = line.get(j) else { break };
+        // A straight stretch longer than the length is cut evenly.
+        let d = dist(a, b);
+        let k = (d / length).ceil().clamp(1.0, 1000.0) as usize;
+        for m in 1..=k {
+            let t = m as f64 / k as f64;
+            push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+        }
+        i = j;
+    }
+    out
+}
+
+/// `pts` as a bean run: each stitch sewn forward, back and forward again.
+fn bean(pts: &[Pt]) -> Vec<Pt> {
+    let mut out = Vec::with_capacity(pts.len() * 3);
+    for w in pts.windows(2) {
+        if let [a, b] = w {
+            if out.is_empty() {
+                out.push(*a);
+            }
+            out.extend([*b, *a, *b]);
+        }
+    }
+    if out.is_empty() {
+        out.extend(pts.first());
+    }
+    out
 }
 
 /// Running stitch along the straight line from `a` to `b` (mm), both ends included, at `step` mm.
@@ -540,8 +1007,8 @@ pub(crate) fn hidden(a: P, b: P, rings: &[Vec<P>]) -> bool {
 }
 
 /// The box of a letter's outline: (min x, min y, max x, max y).
-fn bounds(l: &Letter) -> Option<(f64, f64, f64, f64)> {
-    let mut it = l.rings.iter().flatten().filter(|q| finite(**q));
+fn bounds(rings: &[Vec<P>]) -> Option<(f64, f64, f64, f64)> {
+    let mut it = rings.iter().flatten().filter(|q| finite(**q));
     let first = it.next()?;
     Some(it.fold((first.0, first.1, first.0, first.1), |b, q| (b.0.min(q.0), b.1.min(q.1), b.2.max(q.0), b.3.max(q.1))))
 }
@@ -553,16 +1020,42 @@ pub fn sew_letters(letters: &[Letter], mode: LetterMode, p: &LetteringParams, bu
     if letters.len() > MAX_LETTERS {
         return Err(format!("lettering sews at most {MAX_LETTERS} letters"));
     }
+    let prepared = letters
+        .iter()
+        .map(|l| {
+            let mut a = analyse(&l.rings, mode, p)?;
+            split_corners(&mut a);
+            Ok(Prepared { rings: l.rings.clone(), rgb: l.rgb, word: l.word, a })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    sew_prepared(&prepared, p, budget)
+}
+
+/// Sew converted letters (`text.toStitches`) as lettering again: each letter's pieces gathered
+/// back into strokes (piece ends that meet are nodes), its fills first, joined and trimmed as
+/// [`sew_letters`] joins and trims. At most [`MAX_LETTERS`] letters and `budget` needle points.
+pub fn sew_pieces(letters: &[PieceLetter], p: &LetteringParams, budget: usize) -> Result<Vec<SewnLetter>, String> {
+    if letters.len() > MAX_LETTERS {
+        return Err(format!("lettering sews at most {MAX_LETTERS} letters"));
+    }
+    let prepared = letters.iter().map(from_pieces).collect::<Result<Vec<_>, String>>()?;
+    sew_prepared(&prepared, p, budget)
+}
+
+/// Sew `letters` in order, each started at its point nearest where the last one ended.
+fn sew_prepared(letters: &[Prepared], p: &LetteringParams, budget: usize) -> Result<Vec<SewnLetter>, String> {
     let budget = budget.min(MAX_STEPS);
     let mut out: Vec<SewnLetter> = Vec::with_capacity(letters.len());
     let mut pos: Option<Pt> = None;
     let mut word: Option<usize> = None;
     let mut used = 0usize;
     for (i, l) in letters.iter().enumerate() {
-        // Towards the left middle of the next letter, or this one's right.
-        let target = match letters.get(i + 1).and_then(bounds) {
-            Some(b) => (b.0, (b.1 + b.3) / 2.0),
-            None => bounds(l).map_or((0.0, 0.0), |b| (b.2, (b.1 + b.3) / 2.0)),
+        // Towards the left middle of the next letter, or this one's right; joined along the
+        // baseline, towards their bottom (page y grows down).
+        let height = |b: (f64, f64, f64, f64)| if p.join == LetterJoin::Bottom { b.3 } else { (b.1 + b.3) / 2.0 };
+        let target = match letters.get(i + 1).and_then(|n| bounds(&n.rings)) {
+            Some(b) => (b.0, height(b)),
+            None => bounds(&l.rings).map_or((0.0, 0.0), |b| (b.2, height(b))),
         };
         // Joined to the letter before it by a walk of stitches, never by a bare jump, which a
         // machine sews as a loose thread across the fabric: within a word by default.
@@ -572,7 +1065,8 @@ pub fn sew_letters(letters: &[Letter], mode: LetterMode, p: &LetteringParams, bu
                 LetterTrims::Word => word == Some(l.word),
                 LetterTrims::Letter => false,
             };
-        let s = sew_letter(l, mode, p, pos, target, budget.saturating_sub(used), connect)?;
+        let before = i.checked_sub(1).and_then(|j| letters.get(j)).map_or(&[][..], |b| &b.rings[..]);
+        let s = sew_letter(l, before, p, pos, target, budget.saturating_sub(used), connect)?;
         word = Some(l.word);
         used = used.saturating_add(s.runs.iter().map(Vec::len).sum());
         if used > budget {

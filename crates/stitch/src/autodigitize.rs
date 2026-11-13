@@ -154,6 +154,7 @@ fn stretch(s: &Stroke, from: usize, to: usize) -> Option<Stroke> {
         left: s.left.get(from..=to)?.to_vec(),
         right: s.right.get(from..=to)?.to_vec(),
         column: s.column.get(from..=to)?.to_vec(),
+        bend: s.bend.get(from..=to)?.to_vec(),
     })
 }
 
@@ -187,25 +188,64 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
     // A column only where it is measurably (a pixel) wider than the minimum.
     let run_max = p.min_column + g.px;
     let strokes = columns::strokes(&gr, g, &sk.segs, |w| w > run_max);
+    match split_wide(g, &strokes, p.max_satin) {
+        Split::Narrow => {
+            // No fill: a compact blob is filled whole, else columns and runs.
+            let widest = strokes.iter().flat_map(|s| s.left.iter().zip(&s.right).map(|(a, b)| dist(*a, *b))).fold(0.0, f64::max);
+            let total: f64 = strokes.iter().map(|s| length(&s.centre)).sum();
+            if widest >= p.max_satin / 2.0 && total < COMPACT * widest {
+                return Ok(whole_fill());
+            }
+            let mut out = AutoShape::of(AutoKind::Run);
+            for s in &strokes {
+                add_pieces(&mut out, s, run_max);
+            }
+            out.kind = if out.columns.is_empty() { AutoKind::Run } else { AutoKind::Satin };
+            if out.columns.is_empty() && out.runs.is_empty() {
+                return Ok(whole_fill());
+            }
+            Ok(out)
+        }
+        Split::Whole => Ok(whole_fill()),
+        Split::Mixed { fill, stretches } => {
+            let mut out = AutoShape::of(AutoKind::Mixed);
+            for s in &stretches {
+                add_pieces(&mut out, s, run_max);
+            }
+            if out.columns.is_empty() && out.runs.is_empty() {
+                return Ok(whole_fill());
+            }
+            out.fill = fill;
+            if out.fill.is_empty() {
+                out.kind = if out.columns.is_empty() { AutoKind::Run } else { AutoKind::Satin };
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// How a shape divides between fill and columns ([`split_wide`]).
+pub(crate) enum Split {
+    /// Nothing wider than satin.
+    Narrow,
+    /// All of it is fill (no leftover long enough to be a column, or a fill outline too detailed).
+    Whole,
+    /// The wide part's outline (rings, nonzero rule) and the leftover stretches of the strokes,
+    /// each reaching [`FILL_OVERLAP_MM`] into the fill. A stretch's end cut at the fill is a new
+    /// node of its own.
+    Mixed { fill: Vec<Vec<P>>, stretches: Vec<Stroke> },
+}
+
+/// The wide part of the shape on grid `g` with strokes `strokes`: its opening by a disc
+/// `max_satin` across (every place such a disc fits). What is left over is kept as stretches of
+/// the strokes where they are at least [`STUB_FACTOR`] times `max_satin` long; shorter leftovers
+/// are filled with the wide part. Shared by auto-digitize and lettering's partial fills.
+pub(crate) fn split_wide(g: &Grid, strokes: &[Stroke], max_satin: f64) -> Split {
     // The wide part: within half the widest satin of a pixel whose half width is at least that.
-    let r_px = p.max_satin / 2.0 / g.px;
+    let r_px = max_satin / 2.0 / g.px;
     let centres: Vec<bool> = g.dist.iter().map(|d| d - 0.5 >= r_px).collect();
     if !centres.contains(&true) {
-        // No fill: a compact blob is filled whole, else columns and runs.
-        let widest = strokes.iter().flat_map(|s| s.left.iter().zip(&s.right).map(|(a, b)| dist(*a, *b))).fold(0.0, f64::max);
-        let total: f64 = strokes.iter().map(|s| length(&s.centre)).sum();
-        if widest >= p.max_satin / 2.0 && total < COMPACT * widest {
-            return Ok(whole_fill());
-        }
-        let mut out = AutoShape::of(AutoKind::Run);
-        for s in &strokes {
-            add_pieces(&mut out, s, run_max);
-        }
-        out.kind = if out.columns.is_empty() { AutoKind::Run } else { AutoKind::Satin };
-        if out.columns.is_empty() && out.runs.is_empty() {
-            return Ok(whole_fill());
-        }
-        return Ok(out);
+        return Split::Narrow;
     }
     let not_c: Vec<bool> = centres.iter().map(|c| !c).collect();
     // Pixels from the nearest wide centre.
@@ -214,22 +254,32 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
     let in_open = |i: usize| inside(i) && dc.get(i).is_some_and(|d| *d <= r_px);
     let deep = (r_px - FILL_OVERLAP_MM / g.px).max(0.0);
     let covered = |q: P| pixel(g, q).is_some_and(|i| inside(i) && dc.get(i).is_some_and(|d| *d <= deep));
-    // Leftover stretches, the short ones dropped.
-    let stub = STUB_FACTOR * p.max_satin;
-    let mut out = AutoShape::of(AutoKind::Mixed);
+    // Leftover stretches, the short ones dropped; a cut end is a node of its own.
+    let stub = STUB_FACTOR * max_satin;
+    let mut next = strokes.iter().map(|s| s.a.max(s.b) + 1).max().unwrap_or(0);
+    let mut stretches = vec![];
     let mut kept_px: Vec<usize> = vec![];
-    for s in &strokes {
+    for s in strokes {
+        let last = s.centre.len().saturating_sub(1);
         for (a, b) in uncovered(s, &covered) {
-            let Some(part) = stretch(s, a, b) else { continue };
+            let Some(mut part) = stretch(s, a, b) else { continue };
             if length(&part.centre) < stub {
                 continue;
             }
+            if a > 0 {
+                part.a = next;
+                next += 1;
+            }
+            if b < last {
+                part.b = next;
+                next += 1;
+            }
             kept_px.extend(part.centre.iter().filter_map(|q| pixel(g, *q)));
-            add_pieces(&mut out, &part, run_max);
+            stretches.push(part);
         }
     }
-    if out.columns.is_empty() && out.runs.is_empty() {
-        return Ok(whole_fill());
+    if stretches.is_empty() {
+        return Split::Whole;
     }
     // The fill: the shape less the leftover areas a kept stretch runs through.
     let mut fill: Vec<bool> = (0..g.w * g.h).map(in_open).collect();
@@ -269,24 +319,20 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
             *f = label.get(i).and_then(|l| keep.get(*l as usize)).is_some_and(|k| !*k);
         }
     }
-    let rings_px = trace_mask(&fill, g.w, g.h);
+    let mut rings = vec![];
     let mut points = 0usize;
-    for r in rings_px {
+    for r in trace_mask(&fill, g.w, g.h) {
         let r = simplify(&r, 0.75);
         points += r.len();
         if points > MAX_RING_POINTS {
-            return Ok(whole_fill());
+            return Split::Whole;
         }
         if r.len() >= 3 {
-            out.fill.push(r.iter().map(|&(x, y)| (g.x0 + x * g.px, g.y0 + y * g.px)).collect());
+            rings.push(r.iter().map(|&(x, y)| (g.x0 + x * g.px, g.y0 + y * g.px)).collect());
         }
     }
-    if out.fill.is_empty() {
-        out.kind = if out.columns.is_empty() { AutoKind::Run } else { AutoKind::Satin };
-    }
-    Ok(out)
+    Split::Mixed { fill: rings, stretches }
 }
-
 /// The columns and runs of stroke `s` added to `out`. A run piece is kept only where the shape
 /// is thin (its median width at most `run_max`): a wide stretch that is no column is where a
 /// branch meets the stroke it runs into, which that stroke's column covers.

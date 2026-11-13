@@ -303,6 +303,9 @@ pub(crate) struct Edge {
     pub(crate) b: usize,
     pub(crate) pts: Vec<P>,
     pub(crate) alive: bool,
+    /// Corners along it: the positions of nodes where two strokes were joined at a bend
+    /// ([`merge`]), each one of `pts`.
+    pub(crate) corners: Vec<P>,
 }
 
 impl Edge {
@@ -388,7 +391,7 @@ pub(crate) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
             return None;
         }
         let e = out.edges.len();
-        out.edges.push(Edge { a, b, pts, alive: true });
+        out.edges.push(Edge { a, b, pts, alive: true, corners: vec![] });
         for n in [a, b] {
             let node = out.nodes.get_mut(n)?;
             if n == a || b != a {
@@ -494,20 +497,20 @@ pub(crate) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
 /// Remove spurs: an edge from an end to a junction shorter than `factor` times the junction's
 /// half width (plus a pixel), the forks thinning leaves at a stroke's square end. Then join the
 /// two edges left at a node that had three, and at every node where just two meet and the stroke
-/// runs straight on (a digital curve's staircase leaves such nodes all round a ring; a corner
-/// stays a node, so a column doesn't turn it).
+/// runs straight on (a digital curve's staircase leaves such nodes all round a ring). Other nodes
+/// where two meet are corners, which [`crate::columns`] joins when the strokes are alike.
 pub(crate) fn prune(gr: &mut Graph, factor: f64, px: f64) {
     prune_spurs(gr, factor, px);
     for n in 0..gr.nodes.len() {
         if runs_on(gr, n, px) {
-            merge(gr, n);
+            merge(gr, n, px);
         }
     }
 }
 
 /// Whether exactly two edges meet at node `n` and leave it in nearly opposite directions (they
 /// bend by less than 45 degrees), measured a few pixels out.
-fn runs_on(gr: &Graph, n: usize, px: f64) -> bool {
+pub(crate) fn runs_on(gr: &Graph, n: usize, px: f64) -> bool {
     let Some(node) = gr.nodes.get(n) else { return false };
     let live: Vec<&Edge> = node.edges.iter().filter_map(|&e| gr.edges.get(e)).filter(|e| e.alive).collect();
     let [e1, e2] = live.as_slice() else { return false };
@@ -552,7 +555,7 @@ fn prune_spurs(gr: &mut Graph, factor: f64, px: f64) {
             if let Some(n) = gr.nodes.get_mut(junction) {
                 n.edges.retain(|&x| x != e);
             }
-            merge(gr, junction);
+            merge(gr, junction, px);
             changed = true;
         }
         if !changed {
@@ -562,7 +565,10 @@ fn prune_spurs(gr: &mut Graph, factor: f64, px: f64) {
 }
 
 /// Join the two edges at node `n` into one when exactly two distinct ones (no loop) meet there.
-fn merge(gr: &mut Graph, n: usize) {
+/// Where they bend ([`runs_on`] says no), the node's position is kept as a corner of the joined
+/// edge.
+pub(crate) fn merge(gr: &mut Graph, n: usize, px: f64) {
+    let bend = !runs_on(gr, n, px);
     let Some(node) = gr.nodes.get(n) else { return };
     let live: Vec<usize> = node.edges.iter().copied().filter(|&e| gr.edges.get(e).is_some_and(|x| x.alive)).collect();
     let [e1, e2] = live.as_slice() else { return };
@@ -575,11 +581,16 @@ fn merge(gr: &mut Graph, n: usize) {
     let (x, mut first) = if a.b == n { (a.a, a.pts) } else { (a.b, a.pts.into_iter().rev().collect()) };
     let (y, second): (usize, Vec<P>) = if b.a == n { (b.b, b.pts) } else { (b.a, b.pts.into_iter().rev().collect()) };
     first.extend(second.into_iter().skip(1));
+    let mut corners = a.corners;
+    corners.extend(b.corners);
+    if bend && let Some(node) = gr.nodes.get(n) {
+        corners.push(node.pos);
+    }
     if let Some(ed) = gr.edges.get_mut(e2) {
         ed.alive = false;
     }
     if let Some(ed) = gr.edges.get_mut(e1) {
-        *ed = Edge { a: x, b: y, pts: first, alive: true };
+        *ed = Edge { a: x, b: y, pts: first, alive: true, corners };
     }
     if let Some(node) = gr.nodes.get_mut(n) {
         node.edges.clear();

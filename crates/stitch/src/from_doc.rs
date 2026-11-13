@@ -9,17 +9,18 @@
 use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType, Underlay};
 use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathData, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
 use crate::lettering::UNDERLAY_LENGTH_MM;
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
-use crate::satin::{RailsParams, SatinParams, rails_satin, resample, satin};
+use crate::satin::{Pass, RailsParams, SatinParams, pass_stitches, passes, rails_satin, resample, satin, underlay_for};
 use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
+mod converted;
 mod sequenced;
 #[cfg(test)]
 mod tests_lettering;
@@ -325,6 +326,19 @@ impl<'o> Walk<'o> {
             props: n.stitch_props().map_or(up.props, |p| p.inherit(&up.props)),
         };
         match &n.kind {
+            // Converted lettering: one object, sewn as lettering is; its pieces in its order.
+            NodeKind::Group { .. } if up.listed && !up.marked && converted::is_converted(n) => {
+                let mut unit = Unit::new(n.id, (None, None), (None, None), true);
+                unit.route = n.stitch_props().and_then(StitchProps::route_mm);
+                self.units.push(unit);
+                let others = self.converted(n, up)?;
+                if self.units.last().is_some_and(|u| u.runs.is_empty()) {
+                    self.units.pop();
+                }
+                for c in others {
+                    self.node(c, up)?;
+                }
+            }
             NodeKind::Layer { children, .. } | NodeKind::Group { children, .. } => {
                 // A clip group's or clipping layer's first child is its clipping path.
                 let clips = n.clips();
@@ -528,36 +542,39 @@ impl<'o> Walk<'o> {
     fn sew_rails(&mut self, a: &SubPath, b: &SubPath, rgb: [u8; 3], props: &StitchProps, max_mm: f64, up: Under) -> Result<(), String> {
         self.part += 1;
         let budget = MAX_STEPS.saturating_sub(self.steps);
-        let (left, right) = (flatten(a, budget)?.0, flatten(b, budget)?.0);
-        let n = left.len().max(right.len());
-        if n < 2 || n > budget {
-            return Ok(());
-        }
-        let (mut left, mut right) = (resample(&left, n), resample(&right, n));
-        // Rails drawn the opposite way round are turned to run together. Their ends and middles
-        // and quarters are compared: a closed column (a ring) starts and ends at one place, so only
-        // its quarters tell the two ways apart.
-        let pairing = |turned: bool| -> f64 {
-            [0, n / 4, n / 2, 3 * n / 4, n - 1]
-                .iter()
-                .filter_map(|&i| Some((left.get(i)?, right.get(if turned { n - 1 - i } else { i })?)))
-                .map(|(p, q)| (p.0 - q.0).hypot(p.1 - q.1))
-                .sum()
-        };
-        if pairing(true) < pairing(false) {
-            right.reverse();
-        }
+        let Some((mut left, mut right)) = paired_rails(a, b, budget)? else { return Ok(()) };
         let p = RailsParams {
             spacing: props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing),
             max_stitch: max_mm,
             compensation: props.number(StitchParam::Compensation).unwrap_or(0.0),
         };
         let mut run: Vec<Pt> = vec![];
-        if props.underlay == Some(true) {
-            let centre: Vec<(f64, f64)> = left.iter().zip(&right).map(|(l, r)| ((l.0 + r.0) / 2.0, (l.1 + r.1) / 2.0)).collect();
-            run = run_stitches(&centre, &[], false, mm_units(UNDERLAY_LENGTH_MM));
-            left.reverse();
-            right.reverse();
+        // The underlay first: a centre run out (the satin then comes back over it), or passes out
+        // and back (the satin then goes out). Unset is none on a column of its own.
+        let width = {
+            let mut w: Vec<f64> = left.iter().zip(&right).map(|(l, r)| (l.0 - r.0).hypot(l.1 - r.1)).collect();
+            w.sort_by(f64::total_cmp);
+            w.get(w.len() / 2).copied().unwrap_or(0.0)
+        };
+        let kind = underlay_for(props.underlay.unwrap_or(Underlay::None), width);
+        let ways: &[Pass] = if kind == Underlay::Center { &[Pass::Centre] } else { passes(kind) };
+        for (k, pass) in ways.iter().enumerate() {
+            let (mut l, mut r) = (left.clone(), right.clone());
+            if k % 2 == 1 {
+                l.reverse();
+                r.reverse();
+            }
+            for q in pass_stitches(&l, &r, *pass, mm_units(UNDERLAY_LENGTH_MM), self.o.max_stitch) {
+                if run.last() != Some(&q) {
+                    run.push(q);
+                }
+            }
+        }
+        if !ways.is_empty() {
+            if ways.len() % 2 == 1 {
+                left.reverse();
+                right.reverse();
+            }
             // Turned round, the underlay would be sewn over the satin: the column is sewn forwards.
             if let Some(u) = self.units.last_mut() {
                 u.fixed = true;
@@ -584,8 +601,13 @@ impl<'o> Walk<'o> {
         let budget = MAX_STEPS.saturating_sub(self.steps);
         let Some(done) = text::lettering_of(n, &props, self.o, budget)? else { return Ok(()) };
         self.part += 1;
+        self.emit_letters(done.letters, up)
+    }
+
+    /// Keep sewn `letters` for the object being walked, joined as lettering decided them.
+    fn emit_letters(&mut self, letters: Vec<crate::lettering::SewnLetter>, up: Under) -> Result<(), String> {
         let mut first = true;
-        for letter in done.letters {
+        for letter in letters {
             for (k, run) in letter.runs.iter().enumerate() {
                 // Lettering decided the joins (`LetterTrims`, see `sew_letters`): a joined first
                 // run already holds the stitches from the letter before; any other run is a
@@ -701,6 +723,33 @@ fn thread(paint: &Paint, patterned: &mut bool) -> [u8; 3] {
             [0, 0, 0]
         }
     }
+}
+
+/// A satin column's two rails, mm, paired point by point.
+pub(crate) type Rails = (Vec<(f64, f64)>, Vec<(f64, f64)>);
+
+/// Rails `a` and `b` flattened (mm) and resampled to as many points each, paired to run the
+/// same way: rails drawn the opposite way round are turned. Their ends, middles and quarters are
+/// compared: a closed column (a ring) starts and ends at one place, so only its quarters tell the
+/// two ways apart. `None`: too few points, or more than `budget`.
+pub(crate) fn paired_rails(a: &SubPath, b: &SubPath, budget: usize) -> Result<Option<Rails>, String> {
+    let (left, right) = (flatten(a, budget)?.0, flatten(b, budget)?.0);
+    let n = left.len().max(right.len());
+    if n < 2 || n > budget {
+        return Ok(None);
+    }
+    let (left, mut right) = (resample(&left, n), resample(&right, n));
+    let pairing = |turned: bool| -> f64 {
+        [0, n / 4, n / 2, 3 * n / 4, n - 1]
+            .iter()
+            .filter_map(|&i| Some((left.get(i)?, right.get(if turned { n - 1 - i } else { i })?)))
+            .map(|(p, q)| (p.0 - q.0).hypot(p.1 - q.1))
+            .sum()
+    };
+    if pairing(true) < pairing(false) {
+        right.reverse();
+    }
+    Ok(Some((left, right)))
 }
 
 /// The two rails of a satin column drawn as rails: exactly two open subpaths, each with a

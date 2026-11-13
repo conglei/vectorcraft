@@ -43,8 +43,8 @@ pub use from_doc::{
 };
 pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM, Placement};
 pub use lettering::{
-    COMPENSATION_MM, Column, Letter, LetterMode, LetterShape, LetteringParams, MAX_LETTERS, MAX_SATIN_MM, MIN_COLUMN_MM, NO_TRIM_GAP_MM,
-    RUN_LENGTH_MM, RUN_UNDER_MM, SewnLetter, UNDERLAY_LENGTH_MM, letter_height, mode_for, sew_letters, shape_letter,
+    COMPENSATION_MM, Column, Letter, LetterMode, LetterShape, LetteringParams, MAX_LETTERS, MAX_SATIN_MM, MIN_COLUMN_MM, NO_TRIM_GAP_MM, PieceLetter,
+    PieceStyle, RUN_LENGTH_MM, RUN_UNDER_MM, SewnLetter, UNDERLAY_LENGTH_MM, letter_height, mode_for, sew_letters, sew_pieces, shape_letter,
 };
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
 pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare, prepare_tagged};
@@ -56,7 +56,7 @@ pub use preview::{
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
-pub use satin::{RailsParams, SatinParams, rails_satin, satin};
+pub use satin::{EDGE_WALK_FROM_MM, RailsParams, SatinParams, ZIGZAG_FROM_MM, ZIGZAG_SPACING_MM, rails_satin, satin, underlay_for};
 pub use stats::{Stats, TagStats, ThreadStats, stats, stats_by_tag};
 pub use thread::{
     JSON_FORMAT, MAX_BRAND, MAX_CHART_BYTES, MAX_CHART_NAME, MAX_CHART_THREADS, MAX_CODE, MAX_NAME, MAX_WEIGHT, NeedleUse, Needles, STARTER_BRAND,

@@ -8,10 +8,17 @@
 //! other stitch moved half a part, so they don't form a line down the column.
 
 use crate::fill::{ROUNDING_SLACK_MM, to_plan};
+use vectorcraft_doc::Underlay;
+
 use crate::{MAX_STEPS, Pt, TOO_MANY_STEPS};
 
 /// How far a mitred rail corner may lie from the centre line, in half widths.
 const MITER_LIMIT: f64 = 2.0;
+/// A rail pierced again closer than this many spacings to its last piercing gets a short stitch
+/// (estimated; Ink/Stitch's documentation describes short stitches without a default).
+const SHORT_DISTANCE: f64 = 0.25;
+/// How far a short stitch stops short of its rail: this much of the rung (estimated).
+const SHORT_INSET: f64 = 0.25;
 
 /// Satin settings, in millimetres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -265,6 +272,8 @@ pub fn rails_satin(left: &[(f64, f64)], right: &[(f64, f64)], p: &RailsParams, b
     let max = (p.max_stitch - ROUNDING_SLACK_MM).max(0.3);
     let mut out: Vec<P> = Vec::with_capacity(stations + 1);
     let mut seg = 0usize;
+    // The last piercing of each rail (left, right), and whether it was a short stitch.
+    let (mut last_l, mut last_r): ((Option<P>, bool), (Option<P>, bool)) = ((None, false), (None, false));
     for k in 0..=stations {
         let target = total * k as f64 / stations as f64;
         while seg + 2 < left.len() && guide.get(seg + 1).is_some_and(|&v| v < target) {
@@ -278,7 +287,15 @@ pub fn rails_satin(left: &[(f64, f64)], right: &[(f64, f64)], p: &RailsParams, b
         let out_dir = if w > 1e-9 { ((a.0 - b.0) / w, (a.1 - b.1) / w) } else { (0.0, 0.0) };
         // A negative compensation never crosses the rails over.
         let c = p.compensation.max(-w / 2.0);
-        let q = if k % 2 == 0 { (a.0 + out_dir.0 * c, a.1 + out_dir.1 * c) } else { (b.0 - out_dir.0 * c, b.1 - out_dir.1 * c) };
+        let on_left = k % 2 == 0;
+        let (pierce, other) = if on_left { ((a.0 + out_dir.0 * c, a.1 + out_dir.1 * c), b) } else { ((b.0 - out_dir.0 * c, b.1 - out_dir.1 * c), a) };
+        // Short stitches: where this rail is pierced again almost in the same hole (the inside
+        // of a corner or a tight curve), every other stitch stops short of it.
+        let last = if on_left { &mut last_l } else { &mut last_r };
+        let crowded = last.0.is_some_and(|l| dist(l, pierce) < SHORT_DISTANCE * p.spacing);
+        let short = crowded && !last.1;
+        *last = (Some(pierce), short);
+        let q = if short { lerp(pierce, other, SHORT_INSET) } else { pierce };
         if let Some(&prev) = out.last() {
             let l = dist(prev, q);
             if l > max {
@@ -297,6 +314,87 @@ pub fn rails_satin(left: &[(f64, f64)], right: &[(f64, f64)], p: &RailsParams, b
         }
     }
     Ok(to_plan(vec![out], budget)?.into_iter().next().unwrap_or_default())
+}
+
+/// Columns at least this wide (as drawn, mm) take an edge walk under automatic underlay; narrower
+/// ones a centre run (public guides give a centre run for columns of about 2–3 mm).
+pub const EDGE_WALK_FROM_MM: f64 = 3.0;
+/// Columns at least this wide take an edge walk and a zigzag (estimated: guides give 4 mm or
+/// "wide columns").
+pub const ZIGZAG_FROM_MM: f64 = 6.0;
+/// Zigzag underlay, peak to peak, mm (estimated).
+pub const ZIGZAG_SPACING_MM: f64 = 2.0;
+
+/// The underlay a column `width` mm wide (as drawn) takes for `kind`: automatic is chosen by
+/// [`EDGE_WALK_FROM_MM`] and [`ZIGZAG_FROM_MM`].
+pub fn underlay_for(kind: Underlay, width: f64) -> Underlay {
+    match kind {
+        Underlay::Auto if width >= ZIGZAG_FROM_MM => Underlay::Zigzag,
+        Underlay::Auto if width >= EDGE_WALK_FROM_MM => Underlay::Edge,
+        Underlay::Auto => Underlay::Center,
+        k => k,
+    }
+}
+
+/// One pass of underlay along a column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    /// Down the middle.
+    Centre,
+    /// Along the left rail, inset.
+    Left,
+    /// Along the right rail, inset.
+    Right,
+    /// A zigzag between the inset rails.
+    Zigzag,
+}
+
+/// The passes of underlay `kind` (resolved, [`underlay_for`]), in pairs out and back: each even
+/// one runs the column's way, each odd one back, so the satin starts where they began.
+pub(crate) fn passes(kind: Underlay) -> &'static [Pass] {
+    match kind {
+        Underlay::Center => &[Pass::Centre, Pass::Centre],
+        Underlay::Edge => &[Pass::Left, Pass::Right],
+        Underlay::Zigzag => &[Pass::Left, Pass::Right, Pass::Zigzag, Pass::Zigzag],
+        Underlay::Auto | Underlay::None => &[],
+    }
+}
+
+/// How far an edge walk keeps in from a rail `w` mm from the other: a fifth of the width, 0.2–0.5
+/// mm, never past the middle (estimated).
+fn inset(w: f64) -> f64 {
+    (0.2 * w).clamp(0.2, 0.5).min(0.45 * w)
+}
+
+/// The needle points of underlay pass `pass` along the column between `left` and `right`
+/// (paired point by point), in the rails' direction: runs at `step` plan units, a zigzag split
+/// only where longer than `max` plan units.
+pub(crate) fn pass_stitches(left: &[P], right: &[P], pass: Pass, step: i32, max: i32) -> Vec<Pt> {
+    let edge = |a: &P, b: &P| {
+        let w = dist(*a, *b);
+        if w > 1e-9 { lerp(*a, *b, inset(w) / w) } else { *a }
+    };
+    let line: Vec<P> = match pass {
+        Pass::Centre => left.iter().zip(right).map(|(a, b)| lerp(*a, *b, 0.5)).collect(),
+        Pass::Left => left.iter().zip(right).map(|(a, b)| edge(a, b)).collect(),
+        Pass::Right => right.iter().zip(left).map(|(a, b)| edge(a, b)).collect(),
+        Pass::Zigzag => {
+            let l: Vec<P> = left.iter().zip(right).map(|(a, b)| edge(a, b)).collect();
+            let r: Vec<P> = right.iter().zip(left).map(|(a, b)| edge(a, b)).collect();
+            let centre: Vec<P> = l.iter().zip(&r).map(|(a, b)| lerp(*a, *b, 0.5)).collect();
+            let length = arc(&centre).last().copied().unwrap_or(0.0);
+            if !(length.is_finite() && length > 0.0) {
+                return vec![];
+            }
+            // A piercing every half spacing, alternating rails; bounded by the column's points.
+            let n = ((length / (ZIGZAG_SPACING_MM / 2.0)).ceil() as usize).clamp(1, l.len().max(2) * 4) + 1;
+            let (l, r) = (resample(&l, n), resample(&r, n));
+            let pts: Vec<P> = l.iter().zip(&r).enumerate().map(|(k, (a, b))| if k % 2 == 0 { *a } else { *b }).collect();
+            let corners = vec![true; pts.len()];
+            return crate::run::run_stitches(&pts, &corners, false, max);
+        }
+    };
+    crate::run::run_stitches(&line, &[], false, step)
 }
 
 #[cfg(test)]
@@ -330,6 +428,47 @@ mod tests {
             rails_satin(&[(0.0, 1.0), (1000.0, 1.0)], &[(0.0, 0.0), (1000.0, 0.0)], &RailsParams::default(), 100).unwrap_err(),
             TOO_MANY_STEPS
         );
+    }
+
+    /// A fan round one point (the inside of a corner): every other piercing of that rail stops
+    /// short of it, so the needle doesn't go through one hole again and again.
+    #[test]
+    fn a_fan_gets_short_stitches_on_its_crowded_rail() {
+        let n = 40;
+        let outer: Vec<P> = (0..=n)
+            .map(|i| {
+                let a = std::f64::consts::FRAC_PI_2 * f64::from(i) / f64::from(n);
+                (5.0 * a.cos(), 5.0 * a.sin())
+            })
+            .collect();
+        let inner = vec![(0.0, 0.0); outer.len()];
+        let run = rails_satin(&inner, &outer, &RailsParams::default(), MAX_STEPS).unwrap();
+        let at_hub: Vec<f64> = run.iter().step_by(2).map(|q| q.to_mm().0.hypot(q.to_mm().1)).collect();
+        let short = at_hub.iter().filter(|r| **r > 1.0).count();
+        assert!(short * 3 >= at_hub.len() && short * 3 <= at_hub.len() * 2, "{at_hub:?}");
+        // The other rail is pierced as drawn.
+        assert!(run.iter().skip(1).step_by(2).all(|q| (q.to_mm().0.hypot(q.to_mm().1) - 5.0).abs() < 0.1));
+    }
+
+    /// STI-38: automatic underlay by width, and each pass where it belongs.
+    #[test]
+    fn underlay_passes_follow_the_column() {
+        assert_eq!(underlay_for(Underlay::Auto, 2.0), Underlay::Center);
+        assert_eq!(underlay_for(Underlay::Auto, 4.0), Underlay::Edge);
+        assert_eq!(underlay_for(Underlay::Auto, 7.0), Underlay::Zigzag);
+        assert_eq!(underlay_for(Underlay::None, 7.0), Underlay::None);
+        assert_eq!(passes(Underlay::Zigzag).len() % 2, 0);
+        // A column 10 mm long, 4 mm wide (y from -2 to 2).
+        let left: Vec<P> = (0..=10).map(|i| (f64::from(i), 2.0)).collect();
+        let right: Vec<P> = (0..=10).map(|i| (f64::from(i), -2.0)).collect();
+        let ys = |pass| pass_stitches(&left, &right, pass, 20, 120).iter().map(|q| q.to_mm().1).collect::<Vec<_>>();
+        assert!(ys(Pass::Centre).iter().all(|y| y.abs() < 1e-9));
+        assert!(ys(Pass::Left).iter().all(|y| (y - 1.5).abs() < 0.051), "{:?}", ys(Pass::Left));
+        assert!(ys(Pass::Right).iter().all(|y| (y + 1.5).abs() < 0.051));
+        let zig = pass_stitches(&left, &right, Pass::Zigzag, 20, 120);
+        assert!(zig.len() >= 10, "{}", zig.len());
+        assert!(zig.iter().all(|q| q.to_mm().1.abs() <= 1.55));
+        assert!(zig.windows(2).all(|w| w[0].dist(w[1]) <= 120.0));
     }
 
     #[test]

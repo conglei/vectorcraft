@@ -52,9 +52,10 @@ fn hello_at_15_mm_is_satin_lettering_with_one_trim_per_word() {
     assert_eq!(out.plan.blocks.len(), 1);
     assert_eq!(out.plan.blocks[0].thread.rgb, [200, 0, 0]);
     assert!(st.stitches > 400, "{}", st.stitches);
-    // Two words: one trim between them; per letter: one between every two letters.
+    // Two words: a trim between them, and in "you" two more: the y is left at the foot of its
+    // tail, and the connectors from it and on to the u would show over 3 mm (STI-38 review).
     let two = plan_of(&text_doc("Hello you", 15.0, StitchProps::default()));
-    assert_eq!(stats(&two.plan).trims, 1);
+    assert_eq!(stats(&two.plan).trims, 3);
     let per_letter = plan_of(&text_doc("Hello you", 15.0, StitchProps { letter_trims: Some(LetterTrims::Letter), ..Default::default() }));
     assert_eq!(stats(&per_letter.plan).trims, 7);
     let never = plan_of(&text_doc("Hello you", 15.0, StitchProps { letter_trims: Some(LetterTrims::None), ..Default::default() }));
@@ -128,7 +129,7 @@ fn two_rails_with_satin_sew_one_column_between_them() {
     assert!(st.stitches > 90 && st.stitches < 110, "{}", st.stitches);
     // With underlay, a centre run first.
     let mut under = n;
-    under.set_stitch_props(StitchProps { underlay: Some(true), ..props });
+    under.set_stitch_props(StitchProps { underlay: Some(vectorcraft_doc::Underlay::Center), ..props });
     if let Some(c) = layer.children_mut() {
         *c = vec![Arc::new(under)];
     }
@@ -206,5 +207,125 @@ fn lettering_never_leaves_a_bare_jump() {
     assert!(per_letter.letters.iter().all(|s| !s.joined));
     let words = lettered(&text_doc("Hello you", 15.0, StitchProps::default()));
     let joined: Vec<bool> = words.letters.iter().map(|s| s.joined).collect();
-    assert_eq!(joined, vec![false, true, true, true, true, false, true, true]);
+    assert_eq!(joined, vec![false, true, true, true, true, false, false, false]);
+}
+
+/// What Convert to Stitch Objects makes of `doc`'s type, as letters of pieces.
+fn pieces_of(doc: &Document) -> Vec<crate::lettering::PieceLetter> {
+    use crate::lettering::{PieceLetter, PieceStyle, shape_letter};
+    let l = lettered(doc);
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let style = PieceStyle { spacing: l.params.spacing, compensation: l.params.compensation, underlay: l.params.underlay };
+    letters_of(t)
+        .unwrap()
+        .iter()
+        .map(|x| {
+            let s = shape_letter(&x.rings, l.mode, &l.params).unwrap();
+            PieceLetter {
+                rgb: x.rgb,
+                word: x.word,
+                columns: s.columns.into_iter().map(|c| (c, style)).collect(),
+                runs: s.runs,
+                fills: if s.fill.is_empty() { vec![] } else { vec![s.fill] },
+            }
+        })
+        .collect()
+}
+
+/// STI-38: a letter's pieces, as Convert to Stitch Objects makes them, sew as the letter does:
+/// the same parts and about the same stitches ("Hello" within 5 %; a stroke cut into a column and
+/// a run at a junction travels a little more as two pieces, up to 10 % on "TEXT").
+#[test]
+fn pieces_sew_as_the_letters_do() {
+    for (text, within) in [("Hello", 0.05), ("Hi", 0.1), ("TEXT", 0.1)] {
+        let doc = text_doc(text, 15.0, StitchProps::default());
+        let l = lettered(&doc);
+        let sewn = crate::lettering::sew_pieces(&pieces_of(&doc), &l.params, MAX_STEPS).unwrap();
+        let count = |v: &[crate::SewnLetter]| v.iter().flat_map(|s| &s.runs).map(Vec::len).sum::<usize>();
+        let parts = |v: &[crate::SewnLetter]| v.iter().map(|s| s.runs.len()).collect::<Vec<_>>();
+        assert_eq!(parts(&sewn), parts(&l.letters), "{text}: runs per letter");
+        let (a, b) = (count(&l.letters) as f64, count(&sewn) as f64);
+        assert!((b / a - 1.0).abs() <= within, "{text}: {a} live, {b} from pieces");
+    }
+}
+
+/// STI-38: bottom join: each letter is left near its baseline, towards the next one's bottom
+/// left, so the walks between letters run along the baseline; still no bare jump, and no
+/// connector over the cap.
+#[test]
+fn bottom_join_leaves_letters_along_the_baseline() {
+    let bottom = StitchProps { letter_join: Some(vectorcraft_doc::LetterJoin::Bottom), ..Default::default() };
+    let doc = text_doc("Hello", 15.0, StitchProps::default());
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let boxes: Vec<(f64, f64)> = letters_of(t)
+        .unwrap()
+        .iter()
+        .map(|l| l.rings.iter().flatten().fold((f64::MAX, f64::MIN), |(lo, hi), q| (lo.min(q.1), hi.max(q.1))))
+        .collect();
+    // How far up from its bottom each letter but the last is left, as a fraction of its height.
+    let exits = |props: StitchProps| -> Vec<f64> {
+        let l = lettered(&text_doc("Hello", 15.0, props));
+        l.letters
+            .iter()
+            .zip(&boxes)
+            .take(l.letters.len() - 1)
+            .map(|(s, (top, foot))| (foot - s.runs.last().unwrap().last().unwrap().to_mm().1) / (foot - top))
+            .collect()
+    };
+    let low = exits(bottom);
+    assert!(low.iter().all(|f| *f < 0.3), "left near the baseline: {low:?}");
+    let closest = exits(StitchProps::default());
+    assert!(closest.iter().sum::<f64>() > low.iter().sum::<f64>(), "{closest:?} then {low:?}");
+    for text in ["Hello", "Hello you"] {
+        let joined = plan_of(&text_doc(text, 15.0, bottom));
+        assert_eq!(bare_jumps(&joined.plan), Vec::<f64>::new(), "{text}");
+        let l = lettered(&text_doc(text, 15.0, bottom));
+        assert!(l.letters.iter().all(|s| s.lead_mm <= crate::lettering::MAX_CONNECTOR_MM + 1e-9), "{text}");
+    }
+}
+
+/// STI-38: a 25 mm H's legs keep their width through the junctions with its bar (they bulged
+/// into the bar, looked at in StitchCraft): no rung of a column is much wider than its median.
+#[test]
+fn an_h_keeps_its_legs_even_at_the_junctions() {
+    let doc = text_doc("H", 38.0, StitchProps::default());
+    let l = lettered(&doc);
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let letters = letters_of(t).unwrap();
+    let s = crate::lettering::shape_letter(&letters[0].rings, l.mode, &l.params).unwrap();
+    for c in &s.columns {
+        let mut w: Vec<f64> = c.left.iter().zip(&c.right).map(|(a, b)| (a.0 - b.0).hypot(a.1 - b.1)).collect();
+        w.sort_by(f64::total_cmp);
+        let (median, widest) = (w[w.len() / 2], w[w.len() - 1]);
+        assert!(widest < 1.25 * median, "a column {median:.2} mm wide reaches {widest:.2} mm");
+    }
+}
+
+/// STI-38 review: a connector between two letters of a word was sewn however long it was (8 mm
+/// from the T's bar down to the E's middle bar in "TEXT", the E's corner having stopped being a
+/// node). Now letters are entered at corners too, and a connector over
+/// [`crate::lettering::MAX_CONNECTOR_MM`] that the next letter does not hide is a trim: every
+/// connector in the plan is a trim or a short walk, live and converted.
+#[test]
+fn connectors_between_letters_are_short_or_trimmed() {
+    use crate::lettering::MAX_CONNECTOR_MM;
+    for text in ["TEXT", "Hello"] {
+        let doc = text_doc(text, 15.0, StitchProps::default());
+        let l = lettered(&doc);
+        let converted = crate::lettering::sew_pieces(&pieces_of(&doc), &l.params, MAX_STEPS).unwrap();
+        for (how, letters) in [("live", &l.letters), ("converted", &converted)] {
+            for s in letters.iter().skip(1).filter(|s| s.joined) {
+                assert!(s.lead_mm <= MAX_CONNECTOR_MM + 1e-9, "{text} {how}: a {:.1} mm connector", s.lead_mm);
+            }
+        }
+        // Every letter not walked to is reached by a trim, as is every other part of a letter.
+        let trims: usize = l.letters.iter().skip(1).map(|s| usize::from(!s.joined)).sum::<usize>()
+            + l.letters.iter().map(|s| s.runs.len().saturating_sub(1)).sum::<usize>();
+        let plan = plan_of(&doc);
+        assert_eq!(stats(&plan.plan).trims, trims, "{text}");
+        assert_eq!(bare_jumps(&plan.plan), Vec::<f64>::new(), "{text}");
+    }
+    // Never trimmed: walked however long.
+    let never = lettered(&text_doc("TEXT", 15.0, StitchProps { letter_trims: Some(LetterTrims::None), ..Default::default() }));
+    assert!(never.letters.iter().skip(1).all(|s| s.joined));
 }

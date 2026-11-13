@@ -1,7 +1,7 @@
 //! Type in a document sewn as lettering ([`crate::lettering`]): a text object's glyphs laid out as
 //! the canvas draws them, in millimetres, with the words they belong to.
 
-use vectorcraft_doc::{LetterTrims, Node, NodeKind, StitchParam, StitchProps, StitchType, TextObject};
+use vectorcraft_doc::{LetterTrims, Node, NodeKind, StitchParam, StitchProps, StitchType, TextObject, Underlay};
 use vectorcraft_geom::PathData;
 
 use super::{FromDocOptions, flatten, thread};
@@ -25,8 +25,10 @@ pub fn lettering_params(props: &StitchProps, o: &FromDocOptions) -> LetteringPar
         min_column: n(StitchParam::MinColumn, MIN_COLUMN_MM),
         run_under: n(StitchParam::RunUnder, RUN_UNDER_MM),
         max_satin: MAX_SATIN_MM,
-        underlay: props.underlay.unwrap_or(true),
+        underlay: props.underlay.unwrap_or(Underlay::Auto),
         trims: props.letter_trims.unwrap_or(LetterTrims::Word),
+        join: props.letter_join.unwrap_or_default(),
+        bean: props.bean.unwrap_or(false),
         max_stitch,
         fill: FillParams {
             angle: n(StitchParam::FillAngle, f.angle),

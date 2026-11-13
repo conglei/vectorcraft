@@ -6,7 +6,7 @@
 
 use egui::Ui;
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{LetterTrims, StitchParam, StitchType};
+use vectorcraft_doc::{LetterJoin, LetterTrims, StitchParam, StitchType, Underlay};
 
 use super::selection_len;
 use crate::VectorcraftApp;
@@ -165,6 +165,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         });
     }
+    underlay(app, ui, &objects);
     letter_trims(app, ui, &objects);
     sequencing(app, ui, &objects);
     ui.add_space(6.0);
@@ -178,6 +179,25 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
     });
     caption(ui);
+}
+
+/// The Underlay dropdown, for what sews satin columns (two-rail satin and lettering).
+fn underlay(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
+    let satin = objects.iter().any(|o| o["sews"].as_array().is_some_and(|v| v.iter().any(|t| t == "lettering" || t == "satin")));
+    if !satin {
+        return;
+    }
+    let current = match shared(objects, |o| &o["params"]["underlay"]) {
+        Some(v) => v.as_str().and_then(Underlay::parse).unwrap_or_default().label(),
+        None => tl!("Mixed"),
+    };
+    let labels: Vec<&str> = Underlay::ALL.iter().map(|u| u.label()).collect();
+    // Automatic: a center run under narrow columns, an edge walk from 3 mm, a zigzag too from 6 mm.
+    widgets::label_row(ui, tl!("Underlay:"), LABEL_W, |ui| {
+        if let Some(u) = widgets::dropdown(ui, "stitch-props-underlay", current, &labels, 160.0).and_then(|i| Underlay::ALL.get(i)) {
+            app.run("stitch.setParams", json!({ "params": { "underlay": u.id() } })).ok();
+        }
+    });
 }
 
 /// Lettering's Trims dropdown, for type sewn as lettering.
@@ -196,6 +216,21 @@ fn letter_trims(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
             app.run("stitch.setParams", json!({ "params": { "letterTrims": t.id() } })).ok();
         }
     });
+    let current = match shared(objects, |o| &o["params"]["letterJoin"]) {
+        Some(v) => v.as_str().and_then(LetterJoin::parse).unwrap_or_default().label(),
+        None => tl!("Mixed"),
+    };
+    let labels: Vec<&str> = LetterJoin::ALL.iter().map(|j| j.label()).collect();
+    widgets::label_row(ui, tl!("Join:"), LABEL_W, |ui| {
+        if let Some(j) = widgets::dropdown(ui, "stitch-props-join", current, &labels, 120.0).and_then(|i| LetterJoin::ALL.get(i)) {
+            app.run("stitch.setParams", json!({ "params": { "letterJoin": j.id() } })).ok();
+        }
+    });
+    // Small letters (running stitch) as a bean run, each stitch three times.
+    let mut bean = shared(objects, |o| &o["params"]["bean"]).and_then(Value::as_bool).unwrap_or(false);
+    if ui.checkbox(&mut bean, tl!("Bean run for small letters")).changed() {
+        app.run("stitch.setParams", json!({ "params": { "bean": bean } })).ok();
+    }
 }
 
 /// Embroidery › Remove Overlaps and Route Within Colors, when the selection has them: a line each
@@ -296,6 +331,31 @@ mod tests {
         assert!(t.iter().any(|s| s == "Overlaps removed (0.7 mm)") && t.iter().any(|s| s == "Clear"), "{t:?}");
         app.run("stitch.overlap.clear", json!({"ids": [a]})).unwrap();
         assert!(!frame(&mut app).iter().any(|s| s.starts_with("Overlaps removed")));
+    }
+
+    /// STI-38: satin shows the underlay choice; tatami doesn't.
+    #[test]
+    fn satin_shows_its_underlay() {
+        let (mut app, a, _) = app_with_rects();
+        app.run("select.set", json!({"ids": [a]})).unwrap();
+        assert!(!frame(&mut app).iter().any(|s| s == "Underlay:"));
+        app.run("stitch.setType", json!({"type": "satin"})).unwrap();
+        app.run("stitch.setParams", json!({"params": {"underlay": "edge"}})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Underlay:") && t.iter().any(|s| s == "Edge walk"), "{t:?}");
+    }
+
+    /// STI-38: type sewn as lettering shows where its letters join.
+    #[test]
+    fn lettering_shows_its_join() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+        let id = app.run("text.create", json!({"x": 20, "y": 100, "text": "Hi", "size": 42.5})).unwrap()["id"].as_u64().unwrap();
+        app.run("select.set", json!({"ids": [id]})).unwrap();
+        app.run("stitch.setParams", json!({"params": {"letterJoin": "bottom"}})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Join:") && t.iter().any(|s| s == "Bottom"), "{t:?}");
+        assert!(t.iter().any(|s| s == "Bean run for small letters"), "{t:?}");
     }
 
     #[test]

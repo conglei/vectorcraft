@@ -67,7 +67,13 @@ fn a_20mm_disc_is_a_fill_and_a_small_disc_a_satin_dot() {
 fn an_l_is_columns_without_fill() {
     let s = auto(vec![rect(0.0, 0.0, 4.0, 25.0), rect(0.0, 21.0, 20.0, 25.0)]);
     assert_eq!(s.kind, AutoKind::Satin, "{:?}", s.kind);
-    assert!(!s.columns.is_empty() && s.fill.is_empty());
+    assert!(s.fill.is_empty());
+    // One column turns the corner (STI-38), not two overlapping there.
+    assert_eq!(s.columns.len(), 1, "{:?}", s.columns.len());
+    let mut hole = rect(4.0, 4.0, 16.0, 16.0);
+    hole.reverse();
+    let ring = auto(vec![rect(0.0, 0.0, 20.0, 20.0), hole]);
+    assert_eq!((ring.kind, ring.columns.len()), (AutoKind::Satin, 1), "a square ring is one closed column");
     // A T: columns only; the stem's stretch inside the bar is the bar's, not a run.
     let t = auto(vec![vec![(0.0, 0.0), (20.0, 0.0), (20.0, 4.0), (12.0, 4.0), (12.0, 26.0), (8.0, 26.0), (8.0, 4.0), (0.0, 4.0)]]);
     assert_eq!(t.kind, AutoKind::Satin);

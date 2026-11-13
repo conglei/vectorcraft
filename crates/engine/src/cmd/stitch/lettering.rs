@@ -10,8 +10,8 @@ use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{Appearance, Document, Node, NodeId, NodeKind, StitchProps, StitchType};
 use vectorcraft_geom::{PathData, Point, SubPath};
 use vectorcraft_stitch::{
-    FromDocOptions, LetterMode, MAX_STEPS, PT_PER_MM, THREAD_WIDTH_MM, inherited_props, letter_height, lettering_of, lettering_params, letters_of,
-    mode_for, shape_letter, stats, text_mode,
+    FromDocOptions, MAX_STEPS, PT_PER_MM, THREAD_WIDTH_MM, inherited_props, letter_height, lettering_of, lettering_params, letters_of, mode_for,
+    shape_letter, stats, text_mode,
 };
 
 use super::super::edit::selected_roots;
@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Lettering Info",
             [],
             None,
-            "{ids?|id? (default: the selection; groups give the type inside them), options?: {…the stitch options of stitch.info: the document's defaults}} what each type object sews as (stitch type automatic, lettering or satin: satin lettering, running stitch under the run height; run: running stitch; tatami: filled letters; set the lettering parameters minColumn, runUnder, compensation, satinSpacing, runLength, underlay and letterTrims with stitch.setParams) → {objects: [{id, heightMm (the tallest letter), mode: satin|run|fill|none, letters, columns (satin columns), runs (running stitch lines), fills (filled letters), trims, stitches (as stitch.info counts them for this object alone, lock stitches included)}]}; selecting no type is an error",
+            "{ids?|id? (default: the selection; groups give the type inside them), options?: {…the stitch options of stitch.info: the document's defaults}} what each type object sews as (stitch type automatic, lettering or satin: satin lettering, running stitch under the run height; run: running stitch; tatami: filled letters; set the lettering parameters minColumn, runUnder, compensation, satinSpacing, runLength, underlay, letterTrims, letterJoin and bean with stitch.setParams) → {objects: [{id, heightMm (the tallest letter), mode: satin|run|fill|none, letters, columns (satin columns), runs (running stitch lines), fills (filled letters, and the wide parts of letters whose strokes are wider than satin: tatami under columns that reach 0.3 mm into it), trims, stitches (as stitch.info counts them for this object alone, lock stitches included)}]}; selecting no type is an error",
             has_doc,
             info
         ),
@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Convert Type to Stitch Objects",
             ["Embroidery"],
             None,
-            "{options?: {…stitch options, as stitch.lettering.info}} replace the selected type with the stitch objects its lettering is made of, a group per text object holding a group per letter: each satin column a compound path of two open rails (stitch type satin, its compensation, spacing and underlay set), each running stitch line an open path (run), each filled letter its outline (tatami), in the letters' thread colour; one undo step → {ids: [group id…], columns, runs, fills}",
+            "{options?: {…stitch options, as stitch.lettering.info}} replace the selected type with the stitch objects its lettering is made of, a group per text object (stitch type lettering: sewn as one lettering object, its pieces joined by walks in lettering's order and trimmed per word, taking the type's place in the sewing order) holding a group per word, each holding a group per letter: a filled part's outline first (tatami), each satin column a compound path of two open rails (stitch type satin, its compensation, spacing and underlay set), each running stitch line an open path (run), in the letters' thread colour; a column whose rails are moved apart from the rest is reached by a walk inside the letter or a trim; one undo step → {ids: [group id…], columns, runs, fills}",
             has_type,
             to_stitches
         ),
@@ -93,7 +93,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
             v["letters"] = json!(l.letters.len());
             v["columns"] = json!(l.letters.iter().map(|x| x.columns).sum::<usize>());
             v["runs"] = json!(l.letters.iter().map(|x| x.run_lines).sum::<usize>());
-            v["fills"] = json!(l.letters.iter().filter(|x| x.mode == LetterMode::Fill).count());
+            v["fills"] = json!(l.letters.iter().map(|x| x.fills).sum::<usize>());
             if l.letters.iter().any(|x| !x.runs.is_empty())
                 && let Ok((plan, _)) = stitchfile::plan(INFO, d, &raw, "dst", Some(vec![id]))
             {
@@ -152,22 +152,29 @@ fn to_stitches(s: &mut Session, p: &Value) -> Result<Value> {
             columns += shape.columns.len();
             runs += shape.runs.len();
             fills += usize::from(!shape.fill.is_empty());
-            shapes.push((l.rgb, shape));
+            shapes.push((l.rgb, l.word, shape));
         }
-        made.push((*tid, n.name.clone(), lp, shapes));
+        made.push((*tid, n.name.clone(), lp, n.stitch_props().copied().unwrap_or_default(), shapes));
     }
     if made.is_empty() {
         return Err(bad(TO_STITCHES, "the selected type is not sewn (its stitch type is none or manual)"));
     }
     let ids = s.edit("Convert Type to Stitch Objects", |d, sel| {
         let mut out = vec![];
-        for (tid, name, lp, shapes) in made {
+        for (tid, name, lp, lettering_props, shapes) in made {
             let Some((parent, index, _)) = d.position(tid) else { continue };
-            let mut letters: Vec<Arc<Node>> = vec![];
-            for ([r, g, b], shape) in shapes {
+            // A group per word, holding a group per letter.
+            let mut words: Vec<(usize, Vec<Arc<Node>>)> = vec![];
+            for ([r, g, b], word, shape) in shapes {
                 let thread = Paint::solid(Color::rgb8(r, g, b));
                 let stroke = Appearance::basic(Paint::None, thread.clone(), THREAD_WIDTH_MM * PT_PER_MM);
                 let mut parts: Vec<Arc<Node>> = vec![];
+                // The fill first, as lettering sews it.
+                if !shape.fill.is_empty() {
+                    let props = StitchProps { kind: StitchType::Tatami, ..Default::default() };
+                    let rings = shape.fill.iter().map(|r| subpath(r, true)).collect();
+                    parts.push(Arc::new(stitch_object(d, rings, Appearance::basic(thread.clone(), Paint::None, 1.0), props)));
+                }
                 for c in &shape.columns {
                     let props = StitchProps {
                         kind: StitchType::Satin,
@@ -182,23 +189,36 @@ fn to_stitches(s: &mut Session, p: &Value) -> Result<Value> {
                     let props = StitchProps { kind: StitchType::Run, run_length: Some(lp.run_length), ..Default::default() };
                     parts.push(Arc::new(stitch_object(d, vec![subpath(line, false)], stroke.clone(), props)));
                 }
-                if !shape.fill.is_empty() {
-                    let props = StitchProps { kind: StitchType::Tatami, ..Default::default() };
-                    let rings = shape.fill.iter().map(|r| subpath(r, true)).collect();
-                    parts.push(Arc::new(stitch_object(d, rings, Appearance::basic(thread, Paint::None, 1.0), props)));
+                if parts.is_empty() {
+                    continue;
                 }
-                if !parts.is_empty() {
-                    letters.push(Arc::new(Node::group(d.alloc_id(), parts)));
+                let letter = Arc::new(Node::group(d.alloc_id(), parts));
+                match words.last_mut() {
+                    Some((w, letters)) if *w == word => letters.push(letter),
+                    _ => words.push((word, vec![letter])),
                 }
             }
             d.remove(tid)?;
-            if letters.is_empty() {
+            if words.is_empty() {
                 continue;
             }
+            let words: Vec<Arc<Node>> = words.into_iter().map(|(_, letters)| Arc::new(Node::group(d.alloc_id(), letters))).collect();
             let gid = d.alloc_id();
-            let mut g = Node::group(gid, letters);
+            let mut g = Node::group(gid, words);
             g.name = Some(name.unwrap_or_else(|| "Lettering".into()));
+            // Sewn as one lettering object, as the type was: its pieces joined by walks and
+            // trimmed per word, with the type's lettering settings.
+            g.set_stitch_props(StitchProps {
+                kind: StitchType::Lettering,
+                entry: None,
+                exit: None,
+                join_entry: None,
+                join_exit: None,
+                overlap: None,
+                ..lettering_props
+            });
             d.insert(parent, index, g)?;
+            super::autodigitize::replace_in_order(d, tid, &[gid]);
             out.push(gid);
         }
         if out.is_empty() {
@@ -263,11 +283,39 @@ mod tests {
         let after = s.execute("stitch.info", &json!({})).unwrap();
         // About the same stitches: the columns sewn as two-rail satin.
         let (a, b) = (before["stitches"].as_f64().unwrap(), after["stitches"].as_f64().unwrap());
-        assert!((b / a - 1.0).abs() < 0.35, "{a} then {b}");
+        assert!((b / a - 1.0).abs() <= 0.05, "{a} then {b}");
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["stitches"], before["stitches"]);
         // Nothing selected: refused.
         s.execute("select.none", &json!({})).unwrap();
         assert!(s.execute("text.toStitches", &json!({})).is_err());
+    }
+
+    /// STI-38: converted type still sews as one lettering object: its columns joined by walks in
+    /// lettering's order and trimmed per word, so "Hello" sews with no trim, as the type does
+    /// (it had 50 trims, each column sewn as an object of its own).
+    #[test]
+    fn converted_hello_sews_as_the_type_does() {
+        let mut s = Session::new();
+        let id = hello(&mut s, "Hello", 15.0);
+        let live = s.execute("stitch.info", &json!({})).unwrap();
+        assert_eq!(live["trims"], json!(0), "{live}");
+        s.execute("select.set", &json!({"ids": [id]})).unwrap();
+        let r = s.execute("text.toStitches", &json!({})).unwrap();
+        let g = r["ids"][0].as_u64().unwrap();
+        assert_eq!(s.execute("stitch.props", &json!({"ids": [g]})).unwrap()["objects"][0]["own"]["type"], json!("lettering"));
+        let made = s.execute("stitch.info", &json!({})).unwrap();
+        assert_eq!(made["trims"], live["trims"], "{made}");
+        let (a, b) = (live["stitches"].as_f64().unwrap(), made["stitches"].as_f64().unwrap());
+        assert!((b / a - 1.0).abs() <= 0.05, "{a} live, {b} converted");
+        // One object in the sewing order, in the type's place.
+        let seq = s.execute("stitch.sequence.list", &json!({})).unwrap();
+        assert_eq!(seq["objects"].as_array().map(Vec::len), Some(1), "{seq}");
+        // Two words: one trim between them, as the type has.
+        let two = hello(&mut s, "Hello you", 15.0);
+        let live = s.execute("stitch.info", &json!({})).unwrap()["trims"].clone();
+        s.execute("select.set", &json!({"ids": [two]})).unwrap();
+        s.execute("text.toStitches", &json!({})).unwrap();
+        assert_eq!(s.execute("stitch.info", &json!({})).unwrap()["trims"], live);
     }
 }
