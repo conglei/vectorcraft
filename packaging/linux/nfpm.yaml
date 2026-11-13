@@ -3,7 +3,11 @@
 # exports VERSION and NFPM_ARCH.
 #
 #   nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/release/
-name: vectorcraft
+#
+# package.sh fills in the app's own words, the names between at signs below: the app (vectorcraft
+# or stitchcraft), the CLI's installed name, the home page and the description (the lines of
+# packaging/linux/<app>.description).
+name: "@APP@"
 arch: ${NFPM_ARCH}
 platform: linux
 version: ${VERSION}
@@ -14,13 +18,10 @@ section: graphics
 priority: optional
 maintainer: ${VECTORCRAFT_MAINTAINER}
 vendor: Learning Machines LLC
-homepage: https://getartcraft.com/apps/vectorcraft
+homepage: "@HOMEPAGE@"
 license: MIT OR Apache-2.0
 description: |-
-  Open-source, native vector illustration app.
-  Pen, shape and brush tools, artboards, type, gradients, symbols and live
-  effects; opens and saves SVG and PDF.
-  Includes vectorcraft-cli, a headless converter and command runner.
+  @DESCRIPTION@
 
 # The binaries link only glibc and libgcc_s directly. Windowing (X11/Wayland, xkbcommon) and the
 # GPU (Vulkan, EGL/GL) are loaded at runtime, so they are dependencies/recommendations here
@@ -63,11 +64,11 @@ overrides:
       - xdg-desktop-portal
 
 contents:
-  - src: ${STAGE}/usr/bin/vectorcraft
-    dst: /usr/bin/vectorcraft
+  - src: ${STAGE}/usr/bin/@APP@
+    dst: /usr/bin/@APP@
     file_info: { mode: 0755 }
-  - src: ${STAGE}/usr/bin/vectorcraft-cli
-    dst: /usr/bin/vectorcraft-cli
+  - src: ${STAGE}/usr/bin/@CLI@
+    dst: /usr/bin/@CLI@
     file_info: { mode: 0755 }
   - src: ${STAGE}/usr/share/
     dst: /usr/share/

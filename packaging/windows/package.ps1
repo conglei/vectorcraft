@@ -1,11 +1,18 @@
 <#
 .SYNOPSIS
-  Build, sign and package VectorCraft for Windows.
+  Build, sign and package VectorCraft (or StitchCraft, with -App stitchcraft) for Windows.
 
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
     vectorcraft-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
     vectorcraft-<version>-windows-<arch>-portable.zip   vectorcraft.exe + vectorcraft-cli.exe + portable.txt
+
+  With -App stitchcraft the same two files for StitchCraft, from the same WiX sources with the
+  app's names, ids and icon filled in (ConvertTo-StitchCraft) and its own upgrade code:
+    stitchcraft-<version>-windows-<arch>.msi
+    stitchcraft-<version>-windows-<arch>.zip            stitchcraft.exe + stitchcraft-cli.exe, no portable.txt
+  (portable mode, which settings in a folder beside the exe need, is VectorCraft's alone:
+  apps/vectorcraft/src/profile.rs).
 
   The binaries link the C runtime statically (+crt-static), so neither the MSI nor the portable
   zip needs the Visual C++ redistributable. Signing is delegated to sign.ps1 (skipped with a
@@ -17,10 +24,12 @@
 
 .EXAMPLE
   pwsh packaging/windows/package.ps1 -Arch x64
+  pwsh packaging/windows/package.ps1 -App stitchcraft -Arch x64
   pwsh packaging/windows/package.ps1 -Arch x86 -SkipBuild
   pwsh packaging/windows/package.ps1 -Arch arm64     # cross-compiled; needs the MSVC ARM64 build tools
 #>
 param(
+  [ValidateSet('vectorcraft', 'stitchcraft')] [string] $App = 'vectorcraft',
   [ValidateSet('x64', 'x86', 'arm64')] [string] $Arch = 'x64',
   [switch] $SkipBuild
 )
@@ -32,6 +41,11 @@ function Invoke-Native([string] $What, [scriptblock] $Block) {
   & $Block
   if ($LASTEXITCODE -ne 0) { throw "$What failed with exit code $LASTEXITCODE" }
 }
+
+# What differs between the apps: the name people see, and the CLI's name in the package (the build
+# is always vectorcraft-cli.exe; StitchCraft's is installed as stitchcraft-cli.exe).
+$Name = if ($App -eq 'stitchcraft') { 'StitchCraft' } else { 'VectorCraft' }
+$Cli = "$App-cli"
 
 # The version lives in one place: [workspace.package] version in the root Cargo.toml.
 $Version = $env:VECTORCRAFT_VERSION
@@ -54,7 +68,7 @@ New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 if (-not $env:VECTORCRAFT_BUILD_SHA) { $env:VECTORCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null) }
 if (-not $env:VECTORCRAFT_BUILD_DATE) { $env:VECTORCRAFT_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
 
-Write-Output "VectorCraft $Version for Windows $Arch ($Target)"
+Write-Output "$Name $Version for Windows $Arch ($Target)"
 
 if (-not $SkipBuild) {
   # Static CRT: no VC++ redistributable needed. Scoped to the target so host build scripts and
@@ -63,7 +77,7 @@ if (-not $SkipBuild) {
   [Environment]::SetEnvironmentVariable($flagVar, '-C target-feature=+crt-static')
   # Fail the build (rather than warn) if the icon/VERSIONINFO can't be embedded.
   $env:VECTORCRAFT_REQUIRE_WINRES = '1'
-  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p vectorcraft -p vectorcraft-cli --target $Target }
+  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p $App -p vectorcraft-cli --target $Target }
 }
 
 $Bin = Join-Path $TargetDir "$Target\release"
@@ -78,7 +92,7 @@ function Get-PeHeader([string] $Path) {
   return @{ Machine = [BitConverter]::ToUInt16($bytes, $pe + 4); Subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C) }
 }
 $Machine = switch ($Arch) { 'x64' { 0x8664 } 'x86' { 0x14C } 'arm64' { 0xAA64 } }
-foreach ($check in @(@('vectorcraft.exe', 2), @('vectorcraft-cli.exe', 3))) {
+foreach ($check in @(@("$App.exe", 2), @('vectorcraft-cli.exe', 3))) {
   $h = Get-PeHeader (Join-Path $Bin $check[0])
   if ($h.Machine -ne $Machine) { throw "$($check[0]) is for machine 0x$('{0:X}' -f $h.Machine), expected 0x$('{0:X}' -f $Machine) ($Arch)" }
   if ($h.Subsystem -ne $check[1]) { throw "$($check[0]) has PE subsystem $($h.Subsystem), expected $($check[1])" }
@@ -87,9 +101,10 @@ foreach ($check in @(@('vectorcraft.exe', 2), @('vectorcraft-cli.exe', 3))) {
 $Stage = Join-Path $TargetDir "windows-package\$Arch"
 Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
-Copy-Item (Join-Path $Bin 'vectorcraft.exe'), (Join-Path $Bin 'vectorcraft-cli.exe') $Stage
+Copy-Item (Join-Path $Bin "$App.exe") $Stage
+Copy-Item (Join-Path $Bin 'vectorcraft-cli.exe') (Join-Path $Stage "$Cli.exe")
 
-& (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'vectorcraft.exe') (Join-Path $Stage 'vectorcraft-cli.exe')
+& (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage "$App.exe") (Join-Path $Stage "$Cli.exe")
 
 # Documentation and dependency licences shared by the MSI and portable ZIP.
 $Docs = Join-Path $Stage 'docs'
@@ -109,7 +124,7 @@ if (Test-Path (Join-Path $Root 'licenses')) {
 }
 
 # ---- MSI ---------------------------------------------------------------------------------------
-# The setup wizard's art, drawn here from the app icon so the MSI shows VectorCraft rather than
+# The setup wizard's art, drawn here from the app icon so the MSI shows the app rather than
 # WiX's stock bitmaps: a 493x58 banner across the top of the inner pages (the page title is drawn
 # over its left side, so that stays white) and a 493x312 backdrop for the Welcome and Finish pages
 # (their text sits on the right; the left 164 px are ours). Both must be 24-bit BMPs.
@@ -144,33 +159,73 @@ function New-InstallerArt([string] $IconPng, [string] $BannerOut, [string] $Dial
 }
 $Banner = Join-Path $Stage 'installer-banner.bmp'
 $Dialog = Join-Path $Stage 'installer-dialog.bmp'
-New-InstallerArt (Join-Path $Root 'assets\app-icon\hicolor\256x256\apps\ai.storyteller.vectorcraft.png') $Banner $Dialog
+New-InstallerArt (Join-Path $Root "assets\app-icon\hicolor\256x256\apps\ai.storyteller.$App.png") $Banner $Dialog
 
-$Msi = Join-Path $Dist "vectorcraft-$Version-windows-$Arch.msi"
+# StitchCraft's installer is VectorCraft's, written again with StitchCraft's own words: the sources
+# (the WiX file, its include, the wizard's strings and the install policy the check below reads) are
+# copied into the stage with the names, ids and registry keys changed, so the two cannot drift apart.
+# What stays VectorCraft's is the page ARP links to (StitchCraft has none yet). Every source must
+# hold what is replaced, or the build stops.
+$VectorCraftUpgradeCode = '601C6437-08AE-4645-ADCC-27F036C2EA2F'
+$StitchCraftIds = @{
+  $VectorCraftUpgradeCode                = '777F2F5E-782C-4B5B-B05D-E0ACB06CFEB1'  # the product
+  '0E8C6C5E-DE4A-4E1D-9DB0-44E8E38C2103' = '73E34536-F54B-4492-8B26-ABF426AB6D98'  # the app's component
+  '498F2D4C-E655-47F6-B406-2D4C449B8D26' = '9E2CC842-1B2C-41F9-9CBF-60FE282B7FD0'  # the desktop shortcut's
+}
+function ConvertTo-StitchCraft([string] $Text, [string] $What) {
+  foreach ($id in $StitchCraftIds.Keys) {
+    # The policy file names only the product; the WiX file names all three.
+    if ($Text.Contains($id)) { $Text = $Text.Replace($id, $StitchCraftIds[$id]) }
+  }
+  $page = 'https://getartcraft.com/apps/vectorcraft'
+  # The CLI keeps the build's name until here, and the page its own, through the renames.
+  $Text = $Text.Replace('vectorcraft-cli', '@@CLI@@').Replace($page, '@@PAGE@@')
+  $Text = $Text.Replace('Vectorcraft', 'Stitchcraft').Replace('VectorCraft', 'StitchCraft').Replace('vectorcraft', 'stitchcraft')
+  if ($Text -match '(?i)vectorcraft') { throw "$What still names VectorCraft after the rename" }
+  return $Text.Replace('@@CLI@@', 'stitchcraft-cli').Replace('@@PAGE@@', $page)
+}
+$Wix = $PSScriptRoot
+$PolicyPath = Join-Path $PSScriptRoot 'install-policy.json'
+$IconIco = Join-Path $Root "assets\app-icon\$App.ico"
+if ($App -eq 'stitchcraft') {
+  $Wix = Join-Path $Stage 'wix'
+  New-Item -ItemType Directory -Force -Path $Wix | Out-Null
+  foreach ($pair in @(@('vectorcraft.wxs', 'stitchcraft.wxs'), @('install-policy.wxi', 'install-policy.wxi'),
+                      @('vectorcraft.en-us.wxl', 'stitchcraft.en-us.wxl'), @('install-policy.json', 'install-policy.json'))) {
+    $text = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot $pair[0])
+    if ($text -notmatch 'vectorcraft') { throw "$($pair[0]) no longer names VectorCraft: package.ps1 cannot make StitchCraft's from it" }
+    Set-Content -LiteralPath (Join-Path $Wix $pair[1]) -Value (ConvertTo-StitchCraft $text $pair[0]) -NoNewline -Encoding utf8
+  }
+  $PolicyPath = Join-Path $Wix 'install-policy.json'
+}
+
+$Msi = Join-Path $Dist "$App-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
-  wix build (Join-Path $PSScriptRoot 'vectorcraft.wxs') -arch $Arch `
+  wix build (Join-Path $Wix "$App.wxs") -arch $Arch `
     -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
-    -culture en-US -loc (Join-Path $PSScriptRoot 'vectorcraft.en-us.wxl') `
-    -d "Version=$MsiVersion" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\vectorcraft.ico')" `
+    -culture en-US -loc (Join-Path $Wix "$App.en-us.wxl") `
+    -d "Version=$MsiVersion" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$IconIco" `
     -d "DocsDir=$Docs" -d "BannerBmp=$Banner" -d "DialogBmp=$Dialog" `
     -o $Msi
 }
 # Check the compiled scope, path and registration contract before signing.
-& (Join-Path $PSScriptRoot 'check-install-policy.ps1') -MsiPath $Msi
+& (Join-Path $PSScriptRoot 'check-install-policy.ps1') -MsiPath $Msi -PolicyPath $PolicyPath
 # wix writes its debug symbols (.wixpdb) next to the MSI; keep them out of the release assets.
 Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Msi, '.wixpdb'))
 & (Join-Path $PSScriptRoot 'sign.ps1') $Msi
 
-# ---- portable zip ------------------------------------------------------------------------------
-$Portable = Join-Path $TargetDir "windows-package\vectorcraft-$Version-windows-$Arch-portable"
+# ---- zip ---------------------------------------------------------------------------------------
+# VectorCraft's is portable; StitchCraft's holds the same files without the marker (see above).
+$ZipName = if ($App -eq 'vectorcraft') { "vectorcraft-$Version-windows-$Arch-portable" } else { "$App-$Version-windows-$Arch" }
+$Portable = Join-Path $TargetDir "windows-package\$ZipName"
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
 Copy-Item -Recurse (Join-Path $Docs '*') $Portable
 # portable.txt beside vectorcraft.exe switches on portable mode: settings, libraries, recovery
 # files and logs go to VectorCraftData\ next to the exe instead of %APPDATA% (#1366; see profile.rs).
-Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable
-$Zip = Join-Path $Dist "vectorcraft-$Version-windows-$Arch-portable.zip"
+if ($App -eq 'vectorcraft') { Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable }
+$Zip = Join-Path $Dist "$ZipName.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $Portable -DestinationPath $Zip
 
@@ -178,8 +233,8 @@ Compress-Archive -Path $Portable -DestinationPath $Zip
 # here; .github/workflows/windows-arm64.yml installs and runs it on ARM64 instead.
 $HostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
 if ($Arch -ne 'arm64' -or $HostArch -eq 'arm64') {
-  Invoke-Native 'vectorcraft-cli --version' { & (Join-Path $Stage 'vectorcraft-cli.exe') --version }
+  Invoke-Native "$Cli --version" { & (Join-Path $Stage "$Cli.exe") --version }
 } else {
-  Write-Output "skipping vectorcraft-cli --version: an $Arch build doesn't run on this $HostArch machine"
+  Write-Output "skipping $Cli --version: an $Arch build doesn't run on this $HostArch machine"
 }
 Get-Item $Msi, $Zip | Format-Table Name, Length

@@ -1,0 +1,4 @@
+  Open-source, native embroidery digitizing app.
+  Turns drawings and pictures into stitches (satin, fill and run), previews
+  them, and writes the DST, EXP and DSB files that embroidery machines read.
+  Includes stitchcraft-cli, a headless converter and command runner.

@@ -397,3 +397,194 @@ fn auto_digitize_image_runs_the_command_and_shows_what_it_made() {
     crate::menus::invoke(&mut app, "ui.autoDigitizeTool", json!({}));
     assert_eq!(app.session.tool_id(), "autoDigitize");
 }
+
+/// An app with the file services a desktop host gives: files read from disk, and an open dialog
+/// answering `picked` (the `FilePick`s it was asked for are kept in the second value).
+fn app_with_files(picked: Option<String>) -> (VectorcraftApp, std::rc::Rc<std::cell::RefCell<Vec<crate::FilePick>>>) {
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let log = asked.clone();
+    let services = crate::Services {
+        read_head: Some(Box::new(|p: &str, max: usize| {
+            use std::io::Read;
+            let mut out = vec![];
+            std::fs::File::open(p).and_then(|f| f.take(max as u64).read_to_end(&mut out)).map_err(|e| e.to_string())?;
+            Ok(out)
+        })),
+        pick_open: Some(Box::new(move |pick: &crate::FilePick| {
+            log.borrow_mut().push(pick.clone());
+            picked.clone()
+        })),
+        ..Default::default()
+    };
+    (VectorcraftApp::new(vectorcraft_engine::Session::new(), services), asked)
+}
+
+/// A PNG of `w` × `h` pixels in a folder of its own.
+fn png_file(name: &str, w: u32, h: u32) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("vc-photostitch-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("photo.png");
+    let img = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba([(x * 255 / w.max(1)) as u8, (y * 255 / h.max(1)) as u8, 90, 255]));
+    img.save(&path).unwrap();
+    path
+}
+
+/// Egui frames of the dialog layer that keep their context, so a texture made in one is there in the next.
+fn frames(app: &mut VectorcraftApp, ctx: &egui::Context, n: usize) {
+    for _ in 0..n {
+        let mut out = ctx.run_ui(Default::default(), |ui| show(app, ui.ctx()));
+        out.textures_delta.clear();
+    }
+}
+
+fn thumbnail_kept(ctx: &egui::Context) -> bool {
+    ctx.data(|m| m.get_temp::<(String, egui::TextureHandle)>(egui::Id::unique("photo-stitch-thumbnail"))).is_some()
+}
+
+/// The photo field is typed or filled; once it names a photo the dialog knows its pixel size and
+/// holds a thumbnail, and a path that isn't a photo says so instead.
+#[test]
+fn photo_to_stitches_shows_the_size_and_a_thumbnail_of_the_photo() {
+    let photo = png_file("thumb", 400, 300);
+    let (mut app, _) = app_with_files(None);
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    photo_stitch::open(&mut app, &json!({}));
+    frames(&mut app, &ctx, 2);
+    assert!(app.ui.dialog.as_ref().unwrap().fields.get("__preview").is_none(), "no photo, nothing to show");
+    set(&mut app, "file", json!(photo));
+    frames(&mut app, &ctx, 2);
+    let preview = app.ui.dialog.as_ref().unwrap().fields["__preview"].clone();
+    assert_eq!((preview["width"].as_u64(), preview["height"].as_u64()), (Some(400), Some(300)), "{preview}");
+    assert!(thumbnail_kept(&ctx), "the thumbnail is kept");
+    // Not read again while the path stays.
+    set(&mut app, "__preview", json!({"path": photo, "width": 1, "height": 1}));
+    frames(&mut app, &ctx, 1);
+    assert_eq!(app.ui.dialog.as_ref().unwrap().fields["__preview"]["width"], 1);
+    // A file that is no photo, and one that is not there, say so and show no thumbnail.
+    let text = photo.with_file_name("notes.png");
+    std::fs::write(&text, b"just words").unwrap();
+    for bad in [text, photo.with_file_name("missing.png")] {
+        set(&mut app, "file", json!(bad));
+        frames(&mut app, &ctx, 2);
+        let preview = &app.ui.dialog.as_ref().unwrap().fields["__preview"];
+        assert!(preview.get("width").is_none() && !preview["note"].as_str().unwrap().is_empty(), "{preview}");
+        assert!(!thumbnail_kept(&ctx));
+    }
+    // Cleared: nothing.
+    set(&mut app, "file", json!(""));
+    frames(&mut app, &ctx, 1);
+    assert!(app.ui.dialog.as_ref().unwrap().fields.get("__preview").is_none());
+    let _ = std::fs::remove_dir_all(photo.parent().unwrap());
+}
+
+/// A photo of more pixels than the thumbnail decodes is sized from its header only.
+#[test]
+fn photo_to_stitches_sizes_a_huge_photo_without_decoding_it() {
+    // A PNG header that claims 20000 × 20000 pixels (400 megapixels) and has no pixels.
+    fn crc(bytes: &[u8]) -> u32 {
+        let mut c = !0u32;
+        for &b in bytes {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+        }
+        !c
+    }
+    let mut ihdr = b"IHDR".to_vec();
+    ihdr.extend(20_000u32.to_be_bytes());
+    ihdr.extend(20_000u32.to_be_bytes());
+    ihdr.extend([8, 6, 0, 0, 0]);
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    for chunk in [ihdr, b"IDAT".to_vec(), b"IEND".to_vec()] {
+        bytes.extend((chunk.len() as u32 - 4).to_be_bytes());
+        bytes.extend(&chunk);
+        bytes.extend(crc(&chunk).to_be_bytes());
+    }
+    let (size, image) = photo_stitch::thumbnail(&bytes, 192).unwrap();
+    assert_eq!(size, (20_000, 20_000));
+    assert!(image.is_none());
+}
+
+/// Choose… asks the host's open dialog for a photo type, and the file picked fills the field, in
+/// the folder of the last one the next time.
+#[test]
+fn photo_to_stitches_choose_fills_the_field_and_remembers_the_folder() {
+    let photo = png_file("choose", 64, 48);
+    let (mut app, asked) = app_with_files(Some(photo.to_string_lossy().to_string()));
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    photo_stitch::open(&mut app, &json!({}));
+    frames(&mut app, &ctx, 1);
+    let mut d = app.ui.dialog.clone().unwrap();
+    photo_stitch::choose(&mut app, &mut d);
+    app.ui.dialog = Some(d);
+    let pick = asked.borrow()[0].clone();
+    assert_eq!(pick.filters.len(), 1);
+    let exts = &pick.filters[0].1;
+    for e in ["png", "jpg", "jpeg", "heic", "tif", "tiff", "webp"] {
+        assert!(exts.iter().any(|x| x == e), "{e} in {exts:?}");
+    }
+    assert_eq!(pick.folder, None, "nothing chosen before");
+    let d = app.ui.dialog.as_ref().unwrap();
+    assert_eq!(d.str("file"), photo.to_string_lossy());
+    assert_eq!(app.ui.photo_folder.as_deref(), photo.parent().and_then(|p| p.to_str()));
+    frames(&mut app, &ctx, 2);
+    assert_eq!(app.ui.dialog.as_ref().unwrap().fields["__preview"]["width"], 64);
+    // The folder is where the picker starts the next time.
+    app.ui.dialog = None;
+    photo_stitch::open(&mut app, &json!({}));
+    let mut d = app.ui.dialog.clone().unwrap();
+    photo_stitch::choose(&mut app, &mut d);
+    assert_eq!(asked.borrow()[1].folder.as_deref(), photo.parent().and_then(|p| p.to_str()));
+    let _ = std::fs::remove_dir_all(photo.parent().unwrap());
+}
+
+/// A cancelled picker leaves the field as it was.
+#[test]
+fn photo_to_stitches_choose_cancelled_changes_nothing() {
+    let (mut app, asked) = app_with_files(None);
+    photo_stitch::open(&mut app, &json!({"file": "/some/where/a.jpg"}));
+    let mut d = app.ui.dialog.clone().unwrap();
+    photo_stitch::choose(&mut app, &mut d);
+    assert_eq!(d.str("file"), "/some/where/a.jpg");
+    assert_eq!(asked.borrow()[0].folder.as_deref(), Some("/some/where"), "the picker starts where the photo is");
+    assert_eq!(app.ui.photo_folder, None);
+}
+
+/// A photo dropped on the window while Photo to Stitches is open goes to its field and opens no
+/// document; a drop with no photo in it changes nothing and says so.
+#[test]
+fn a_photo_dropped_on_photo_to_stitches_fills_the_field() {
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    let handle = |p: &std::path::Path| std::sync::Arc::new(Dropped(p.into())) as egui::DroppedFileHandle;
+    let photo = png_file("drop", 32, 32);
+    let svg = photo.with_file_name("art.svg");
+    std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="5" height="5"/>"#).unwrap();
+    let (mut app, _) = app_with_files(None);
+    photo_stitch::open(&mut app, &json!({}));
+    app.open_dropped_files(vec![handle(&svg)], None, false);
+    assert!(app.session.documents().is_empty(), "no document opens");
+    assert_eq!(app.ui.dialog.as_ref().unwrap().str("file"), "");
+    assert!(app.ui.status.contains("Drop a PNG"), "{}", app.ui.status);
+    app.open_dropped_files(vec![handle(&svg), handle(&photo)], None, false);
+    assert!(app.session.documents().is_empty(), "no document opens");
+    assert_eq!(kind(&app), Some("photoStitch"));
+    assert_eq!(app.ui.dialog.as_ref().unwrap().str("file"), photo.to_string_lossy());
+    assert_eq!(app.ui.photo_folder.as_deref(), photo.parent().and_then(|p| p.to_str()));
+    // The dialog closed, a drop opens documents as before.
+    app.ui.dialog = None;
+    app.open_dropped_files(vec![handle(&svg)], None, false);
+    assert_eq!(app.session.documents().len(), 1);
+    let _ = std::fs::remove_dir_all(photo.parent().unwrap());
+}

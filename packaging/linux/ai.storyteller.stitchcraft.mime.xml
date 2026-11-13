@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This package declares the embroidery machine file types for the formats in the desktop entry's
+     MimeType line that shared-mime-info lacks. The types are named for what the files are. The
+     .vectorcraft and SVG types belong to VectorCraft's package and shared-mime-info. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-embroidery-dst">
+    <comment>Embroidery machine file (DST)</comment>
+    <icon name="ai.storyteller.stitchcraft"/>
+    <glob pattern="*.dst"/>
+  </mime-type>
+  <mime-type type="application/x-embroidery-exp">
+    <comment>Embroidery machine file (EXP)</comment>
+    <icon name="ai.storyteller.stitchcraft"/>
+    <glob pattern="*.exp"/>
+  </mime-type>
+  <mime-type type="application/x-embroidery-dsb">
+    <comment>Embroidery machine file (DSB)</comment>
+    <icon name="ai.storyteller.stitchcraft"/>
+    <glob pattern="*.dsb"/>
+  </mime-type>
+</mime-info>

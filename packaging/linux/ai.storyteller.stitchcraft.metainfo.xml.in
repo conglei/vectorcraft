@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (software centres). Template: package.sh substitutes @VERSION@ and @DATE@
+     from Cargo.toml and the build date. -->
+<component type="desktop-application">
+  <id>ai.storyteller.stitchcraft</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>StitchCraft</name>
+  <summary>Turn drawings and pictures into embroidery stitches</summary>
+  <developer id="ai.storyteller">
+    <name>Learning Machines LLC</name>
+  </developer>
+  <description>
+    <p>
+      StitchCraft is an open-source embroidery digitizing app. Draw or open art, turn it into satin,
+      fill and run stitches, preview the stitching, and write the DST, EXP and DSB files that
+      embroidery machines read.
+    </p>
+  </description>
+  <launchable type="desktop-id">ai.storyteller.stitchcraft.desktop</launchable>
+  <icon type="stock">ai.storyteller.stitchcraft</icon>
+  <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser.
+       StitchCraft has no page of its own on getartcraft.com yet: its source is VectorCraft's. -->
+  <url type="homepage">https://github.com/storytold/vectorcraft</url>
+  <url type="bugtracker">https://github.com/storytold/vectorcraft/issues</url>
+  <url type="contact">https://discord.gg/artcraft</url>
+  <categories>
+    <category>Graphics</category>
+    <category>2DGraphics</category>
+    <category>VectorGraphics</category>
+  </categories>
+  <keywords>
+    <keyword>embroidery</keyword>
+    <keyword>stitch</keyword>
+    <keyword>digitizing</keyword>
+    <keyword>sewing</keyword>
+    <keyword>dst</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#9ad4cf</color>
+    <color type="primary" scheme_preference="dark">#2f7d78</color>
+  </branding>
+  <requires>
+    <display_length compare="ge">760</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>tablet</control>
+  </supports>
+  <provides>
+    <binary>stitchcraft</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

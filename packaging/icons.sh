@@ -6,7 +6,7 @@
 # .icns. The outputs are committed, so building and packaging never need these tools.
 #
 #   packaging/icons.sh               # VectorCraft
-#   packaging/icons.sh stitchcraft   # StitchCraft: its runtime icons and its .icns only
+#   packaging/icons.sh stitchcraft   # StitchCraft: the same set from stitchcraft.svg
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIR="$ROOT/assets/app-icon"
@@ -35,32 +35,18 @@ render "$SVG" 1024 "$DIR/$APP-1024.png"
 # by apps/stitchcraft/src/main.rs).
 render "$MAC" 512 "$DIR/$APP-macos-512.png"
 
-# StitchCraft is packaged for macOS only so far: its runtime icons (the 256 px window icon on
-# Windows and Linux, the 128 px brand mark in the app bar and About box) and its .icns.
-if [ "$APP" = stitchcraft ]; then
-  for s in 128 256; do
-    mkdir -p "$DIR/hicolor/${s}x${s}/apps"
-    render "$SVG" "$s" "$DIR/hicolor/${s}x${s}/apps/$ID.png"
-  done
-  command -v iconutil >/dev/null || { echo "warning: iconutil not found (macOS only); $APP.icns not regenerated" >&2; exit 0; }
-  SET="$TMP/$APP.iconset"
-  mkdir -p "$SET"
-  for s in 16 32 128 256 512; do
-    render "$MAC" "$s" "$SET/icon_${s}x${s}.png"
-    render "$MAC" $((s * 2)) "$SET/icon_${s}x${s}@2x.png"
-  done
-  iconutil -c icns -o "$DIR/$APP.icns" "$SET"
-  echo "icons written to $DIR"
-  exit 0
-fi
-
 # Linux hicolor theme (the 256 one is also the runtime icon on Windows and Linux).
 for s in 16 24 32 48 64 128 256 512; do
   mkdir -p "$DIR/hicolor/${s}x${s}/apps"
   render "$SVG" "$s" "$DIR/hicolor/${s}x${s}/apps/$ID.png"
 done
 mkdir -p "$DIR/hicolor/scalable/apps"
-cp "$DIR/vectorcraft-small.svg" "$DIR/hicolor/scalable/apps/$ID.svg"
+# VectorCraft's scalable icon is its small-size drawing; StitchCraft's is its one SVG.
+if [ "$APP" = vectorcraft ]; then
+  cp "$DIR/vectorcraft-small.svg" "$DIR/hicolor/scalable/apps/$ID.svg"
+else
+  cp "$SVG" "$DIR/hicolor/scalable/apps/$ID.svg"
+fi
 
 # Windows .ico.
 ICO_PNGS=()
@@ -68,18 +54,18 @@ for s in 16 20 24 32 40 48 64 128 256; do
   render "$SVG" "$s" "$TMP/ico-$s.png"
   ICO_PNGS+=("$TMP/ico-$s.png")
 done
-(cd "$ROOT" && cargo run -q -p xtask -- ico "$DIR/vectorcraft.ico" "${ICO_PNGS[@]}")
+(cd "$ROOT" && cargo run -q -p xtask -- ico "$DIR/$APP.ico" "${ICO_PNGS[@]}")
 
 # macOS .icns.
 if command -v iconutil >/dev/null; then
-  SET="$TMP/vectorcraft.iconset"
+  SET="$TMP/$APP.iconset"
   mkdir -p "$SET"
   for s in 16 32 128 256 512; do
     render "$MAC" "$s" "$SET/icon_${s}x${s}.png"
     render "$MAC" $((s * 2)) "$SET/icon_${s}x${s}@2x.png"
   done
-  iconutil -c icns -o "$DIR/vectorcraft.icns" "$SET"
+  iconutil -c icns -o "$DIR/$APP.icns" "$SET"
 else
-  echo "warning: iconutil not found (macOS only); vectorcraft.icns not regenerated" >&2
+  echo "warning: iconutil not found (macOS only); $APP.icns not regenerated" >&2
 fi
 echo "icons written to $DIR"

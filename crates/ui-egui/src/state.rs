@@ -618,6 +618,9 @@ pub struct UiState {
     /// File → Open Recent Files, most recent first.
     #[serde(default)]
     pub recent_files: Vec<String>,
+    /// The folder of the last photo chosen or dropped in Photo to Stitches: its picker starts there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_folder: Option<String>,
     /// Type → Recent Fonts, most recent first.
     #[serde(default)]
     pub recent_fonts: Vec<String>,
@@ -1101,6 +1104,7 @@ impl Default for UiState {
             custom_workspaces: vec![],
             workspace_changes: vec![],
             recent_files: vec![],
+            photo_folder: None,
             recent_fonts: vec![],
             favorite_fonts: vec![],
             engine_prefs: Value::Null,

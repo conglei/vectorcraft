@@ -190,3 +190,21 @@ fn a_large_result_needs_out() {
     assert!(e.contains("pass path"), "{e}");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// A HEIC photo (what a phone makes) is read as File → Open reads it, so Photo to Stitches takes it.
+#[cfg(feature = "heif")]
+#[test]
+fn a_heic_photo_is_read() {
+    let dir = std::env::temp_dir().join(format!("vc-photo-{}-heic", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("phone.heic");
+    std::fs::write(&path, include_bytes!("../../../tests/fixtures/heif/quadrants.heic")).unwrap();
+    let mut s = Session::new();
+    let r = s.execute("photo.palette", &json!({"file": path.to_string_lossy()})).unwrap();
+    assert!(r["width"].as_u64().unwrap() > 0 && !r["colors"].as_array().unwrap().is_empty(), "{r}");
+    // A file that is no image still says what the first reader said.
+    let junk = dir.join("junk.heic");
+    std::fs::write(&junk, b"not an image").unwrap();
+    assert!(s.execute("photo.palette", &json!({"file": junk.to_string_lossy()})).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

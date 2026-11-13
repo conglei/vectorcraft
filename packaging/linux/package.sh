@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Build and package VectorCraft for Linux (<arch> is x86_64 or aarch64, or riscv64 when cross-compiling):
+# Build and package VectorCraft (or StitchCraft, with --app stitchcraft) for Linux (<arch> is x86_64
+# or aarch64, or riscv64 when cross-compiling; <app> is vectorcraft or stitchcraft):
 #
-#   $DIST/vectorcraft-<version>-linux-<arch>.AppImage  any distro with glibc >= the build host's
-#   $DIST/vectorcraft-<version>-linux-<arch>.AppImage.zsync  delta updates (needs zsyncmake)
-#   $DIST/vectorcraft-<version>-linux-<arch>.deb       Debian, Ubuntu, Mint, Pop!_OS, ...
-#   $DIST/vectorcraft-<version>-linux-<arch>.rpm       Fedora, openSUSE, RHEL, ...
-#   $DIST/vectorcraft-<version>-linux-<arch>.tar.gz    plain FHS-style tree (bin/, share/)
+#   $DIST/<app>-<version>-linux-<arch>.AppImage  any distro with glibc >= the build host's
+#   $DIST/<app>-<version>-linux-<arch>.AppImage.zsync  delta updates (VectorCraft only; needs zsyncmake)
+#   $DIST/<app>-<version>-linux-<arch>.deb       Debian, Ubuntu, Mint, Pop!_OS, ...
+#   $DIST/<app>-<version>-linux-<arch>.rpm       Fedora, openSUSE, RHEL, ...
+#   $DIST/<app>-<version>-linux-<arch>.tar.gz    plain FHS-style tree (bin/, share/)
 #
-# Usage: packaging/linux/package.sh [--skip-build] [--formats "appimage deb rpm tar"]
+# Usage: packaging/linux/package.sh [--app vectorcraft|stitchcraft] [--skip-build] [--formats "appimage deb rpm tar"]
+#
+# StitchCraft is the same program under its own name: its own desktop entry, AppStream metadata and
+# icon (ai.storyteller.stitchcraft), its CLI installed as stitchcraft-cli so that it never collides
+# with VectorCraft's vectorcraft-cli, and no AppImage update information (it has no release feed).
 #
 # Cross-compiling (release.yml's linux-riscv64 job): set CROSS_ARCH (riscv64), CROSS_TARGET (the Rust
 # target), CROSS_COMPILE (the binutils prefix, for strip) and EMULATOR (e.g. qemu-riscv64, to
@@ -21,18 +26,28 @@ set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/linux"
-APP_ID=ai.storyteller.vectorcraft
 
+APP=vectorcraft
 SKIP_BUILD=0
 FORMATS="appimage deb rpm tar"
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --app) APP="${2:?--app needs vectorcraft or stitchcraft}"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --formats) FORMATS="$2"; shift 2 ;;
-    -h | --help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# What differs between the apps: the name people see, the id of the desktop entry and the icon, and
+# the CLI's installed name.
+case "$APP" in
+  vectorcraft) NAME=VectorCraft ;;
+  stitchcraft) NAME=StitchCraft ;;
+  *) echo "unknown --app $APP (vectorcraft or stitchcraft)" >&2; exit 2 ;;
+esac
+APP_ID=ai.storyteller.$APP
+CLI="$APP-cli"
 
 ARCH="${CROSS_ARCH:-$(uname -m)}"
 case "$ARCH" in
@@ -42,15 +57,15 @@ case "$ARCH" in
   *) echo "unsupported architecture $ARCH" >&2; exit 2 ;;
 esac
 export VECTORCRAFT_MAINTAINER="${VECTORCRAFT_MAINTAINER:-VectorCraft maintainers <vectorcraft@storyteller.ai>}"
-BASENAME="vectorcraft-$VERSION-linux-$ARCH"
+BASENAME="$APP-$VERSION-linux-$ARCH"
 
-echo "==> VectorCraft $VERSION for Linux $ARCH ($FORMATS)"
+echo "==> $NAME $VERSION for Linux $ARCH ($FORMATS)"
 
 if [[ "$SKIP_BUILD" = 0 ]]; then
   if [[ -n "${CROSS_TARGET:-}" ]]; then
-    (cd "$ROOT" && cargo build --release --locked -p vectorcraft -p vectorcraft-cli --target "$CROSS_TARGET")
+    (cd "$ROOT" && cargo build --release --locked -p "$APP" -p vectorcraft-cli --target "$CROSS_TARGET")
   else
-    (cd "$ROOT" && cargo build --release --locked -p vectorcraft -p vectorcraft-cli)
+    (cd "$ROOT" && cargo build --release --locked -p "$APP" -p vectorcraft-cli)
   fi
 fi
 BIN="$CARGO_TARGET_DIR/${CROSS_TARGET:+$CROSS_TARGET/}release"
@@ -59,18 +74,21 @@ STAGE="$WORK/root"
 rm -rf "$WORK"
 
 # ---- stage an FHS tree (shared by every format) -------------------------------------------------
-install -Dm755 "$BIN/vectorcraft" "$STAGE/usr/bin/vectorcraft"
-install -Dm755 "$BIN/vectorcraft-cli" "$STAGE/usr/bin/vectorcraft-cli"
-"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/vectorcraft" "$STAGE/usr/bin/vectorcraft-cli" 2>/dev/null || true
+install -Dm755 "$BIN/$APP" "$STAGE/usr/bin/$APP"
+install -Dm755 "$BIN/vectorcraft-cli" "$STAGE/usr/bin/$CLI"
+"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/$APP" "$STAGE/usr/bin/$CLI" 2>/dev/null || true
 install -Dm644 "$HERE/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"
 install -Dm644 "$HERE/$APP_ID.mime.xml" "$STAGE/usr/share/mime/packages/$APP_ID.xml"
 mkdir -p "$STAGE/usr/share/metainfo"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$VECTORCRAFT_BUILD_DATE/g" \
   "$HERE/$APP_ID.metainfo.xml.in" >"$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
-mkdir -p "$STAGE/usr/share/icons"
-cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/usr/share/icons/"
-mkdir -p "$STAGE/usr/share/doc/vectorcraft"
-copy_docs "$STAGE/usr/share/doc/vectorcraft"
+# This app's icons only (every size and the scalable one): the other app's belong to its package,
+# and the same file in two packages would make them conflict.
+while IFS= read -r icon; do
+  install -Dm644 "$ROOT/assets/app-icon/$icon" "$STAGE/usr/share/icons/$icon"
+done < <(cd "$ROOT/assets/app-icon" && find hicolor -type f -name "$APP_ID.*" | sort)
+mkdir -p "$STAGE/usr/share/doc/$APP"
+copy_docs "$STAGE/usr/share/doc/$APP"
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$STAGE/usr/share/applications/$APP_ID.desktop"
@@ -95,8 +113,16 @@ if has deb || has rpm; then
   command -v nfpm >/dev/null || { echo "error: nfpm not found (https://nfpm.goreleaser.com/install/)" >&2; exit 1; }
   export VERSION
   export NFPM_ARCH="$DEB_ARCH"
-  # nfpm expands env vars in fields like `version` and `arch`, but not in `contents[].src`.
-  sed "s|\${STAGE}|$STAGE|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
+  # nfpm expands env vars in fields like `version` and `arch`, but not in `contents[].src`. The
+  # app's own words: its package name, binaries and home page, and its description (the lines of
+  # $APP.description, which nfpm.yaml marks with @DESCRIPTION@).
+  case "$APP" in
+    vectorcraft) HOMEPAGE=https://getartcraft.com/apps/vectorcraft ;;
+    # No page of its own on getartcraft.com yet: the source is VectorCraft's repository.
+    stitchcraft) HOMEPAGE=https://github.com/storytold/vectorcraft ;;
+  esac
+  sed -e "s|\${STAGE}|$STAGE|g" -e "s|@APP@|$APP|g" -e "s|@CLI@|$CLI|g" -e "s|@HOMEPAGE@|$HOMEPAGE|g" \
+    -e "/@DESCRIPTION@/{r $HERE/$APP.description" -e "d;}" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
   for fmt in deb rpm; do
     if has "$fmt"; then (cd "$ROOT" && nfpm package -f "$WORK/nfpm.yaml" -p "$fmt" -t "$DIST/$BASENAME.$fmt"); fi
   done
@@ -121,9 +147,9 @@ if has appimage; then
     echo "no pinned AppImage runtime for $ARCH; build the AppImage on x86_64 or aarch64" >&2
     exit 2
   fi
-  APPDIR="$WORK/VectorCraft.AppDir"
+  APPDIR="$WORK/$NAME.AppDir"
   cp -R "$STAGE" "$APPDIR"
-  ln -s usr/bin/vectorcraft "$APPDIR/AppRun"
+  ln -s "usr/bin/$APP" "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
@@ -166,14 +192,20 @@ if has appimage; then
   # fetch only the blocks that changed in a newer release, through the .zsync published next to
   # each AppImage on GitHub Releases. `latest` is the newest published release that is not a
   # pre-release. A fork's builds point at its own releases through GITHUB_REPOSITORY.
+  # StitchCraft has no release feed of its own, and VectorCraft's would offer VectorCraft: none.
   REPO="${GITHUB_REPOSITORY:-storytold/vectorcraft}"
-  UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest|vectorcraft-*-linux-$ARCH.AppImage.zsync"
+  UPDATE_ARGS=()
+  if [[ "$APP" = vectorcraft ]]; then
+    UPDATE_ARGS=(-u "gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest|vectorcraft-*-linux-$ARCH.AppImage.zsync")
+  fi
   # Extract-and-run: works without FUSE (containers, CI). The output embeds the static runtime,
   # so users don't need libfuse2 either. With zsyncmake on the host (CI installs the zsync
   # package) appimagetool also writes the .zsync, into its working directory, hence the cd.
-  (cd "$DIST" && ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream --runtime-file "$RUNTIME" -u "$UPDATE_INFO" "$APPDIR" "$OUT")
+  (cd "$DIST" && ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream --runtime-file "$RUNTIME" ${UPDATE_ARGS[@]+"${UPDATE_ARGS[@]}"} "$APPDIR" "$OUT")
   echo "wrote $OUT"
-  if [[ -s "$OUT.zsync" ]]; then
+  if [[ ${#UPDATE_ARGS[@]} = 0 ]]; then
+    echo "no update information in $OUT ($NAME has no release feed)"
+  elif [[ -s "$OUT.zsync" ]]; then
     echo "wrote $OUT.zsync"
   else
     warn "zsyncmake not found, so $OUT.zsync was not written; AppImage delta updates need it"
@@ -181,9 +213,9 @@ if has appimage; then
 fi
 
 if [[ -z "${CROSS_TARGET:-}" ]]; then
-  "$STAGE/usr/bin/vectorcraft-cli" --version
+  "$STAGE/usr/bin/$CLI" --version
 elif [[ -n "${EMULATOR:-}" ]]; then
-  "$EMULATOR" "$STAGE/usr/bin/vectorcraft-cli" --version
+  "$EMULATOR" "$STAGE/usr/bin/$CLI" --version
 fi
 echo "==> done"
 ls -lh "$DIST"
