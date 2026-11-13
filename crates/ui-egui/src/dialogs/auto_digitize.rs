@@ -83,7 +83,7 @@ fn number(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, unit: &str,
 fn summary(r: &Value) -> String {
     let n = |k: &str| r.get(k).and_then(Value::as_u64).unwrap_or(0);
     format!(
-        "{} regions in {} colours: {} fills, {} satin columns, {} runs; {} colour changes, {} trims.",
+        "Regions: {} in {} colours. Fills: {}, satin columns: {}, runs: {}. Colour changes: {}, trims: {}.",
         n("regions"),
         n("colors"),
         n("fills"),

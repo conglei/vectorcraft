@@ -81,6 +81,25 @@ fn the_new_objects_take_the_sources_place_in_the_sewing_order() {
 }
 
 #[test]
+fn a_ring_is_one_closed_column_sewn_across_its_width() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 600, "height": 600})).unwrap();
+    s.execute("paint.setStroke", &json!({"none": true})).unwrap();
+    s.execute("paint.setFill", &json!({"color": "#334455"})).unwrap();
+    // A ring 3 mm wide: two circles drawn opposite ways.
+    let c = |r: f64, sweep: u8| {
+        let (cx, cy, r) = (40.0 * MM, 40.0 * MM, r * MM);
+        format!("M{} {cy} A{r} {r} 0 1 {sweep} {} {cy} A{r} {r} 0 1 {sweep} {} {cy} Z", cx + r, cx - r, cx + r)
+    };
+    let id = s.execute("path.create", &json!({"d": format!("{} {}", c(14.0, 1), c(11.0, 0))})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("stitch.autoDigitize", &json!({"ids": [id]})).unwrap();
+    assert_eq!((r["columns"].as_u64(), r["fills"].as_u64(), r["runs"].as_u64()), (Some(1), Some(0), Some(0)), "{r}");
+    // Paired across the ring, not across its hole: no stitch near the 3 mm width's limit is long.
+    let info = s.execute("stitch.info", &json!({})).unwrap();
+    assert!(info["warnings"].as_array().unwrap().iter().all(|w| !w.as_str().unwrap().contains("longer than")), "{info}");
+}
+
+#[test]
 fn a_stroked_line_is_classed_by_its_weight() {
     let mut s = Session::new();
     s.execute("file.new", &json!({"width": 600, "height": 600})).unwrap();

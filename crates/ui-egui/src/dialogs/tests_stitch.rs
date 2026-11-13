@@ -370,3 +370,30 @@ fn production_worksheet_and_export_dialogs_run_their_commands() {
     assert!(none.run("ui.stitchProduction", json!({})).is_err());
     assert!(!crate::menus::enabled(&none, "ui.stitchProduction"));
 }
+
+#[test]
+fn auto_digitize_image_runs_the_command_and_shows_what_it_made() {
+    let (mut app, _) = app(1);
+    // No image selected: off, and an error.
+    assert!(!crate::menus::enabled(&app, "ui.autoDigitizeImageDialog"));
+    assert!(app.run("ui.autoDigitizeImageDialog", json!({})).is_err());
+    let dir = std::env::temp_dir().join(format!("vc-autodigitize-dialog-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let photo = dir.join("fur.png");
+    app.run("photo.syntheticFur", json!({"path": photo, "width": 120, "height": 90})).unwrap();
+    app.run("file.place", json!({"path": photo, "link": false})).unwrap();
+    assert!(crate::menus::enabled(&app, "ui.autoDigitizeImageDialog"));
+    crate::menus::invoke(&mut app, "ui.autoDigitizeImageDialog", json!({"colors": 3}));
+    assert_eq!(kind(&app), Some("autoDigitizeImage"));
+    frame(&mut app);
+    let r = confirm(&mut app).unwrap();
+    assert!(r["regions"].as_u64().unwrap() >= 1, "{r}");
+    // The dialog stays to say what it made; OK again closes it.
+    assert!(app.ui.dialog.as_ref().unwrap().str("__result").contains("Fills:"));
+    frame(&mut app);
+    confirm(&mut app).unwrap();
+    assert_eq!(kind(&app), None);
+    // The tool: a menu item chooses it.
+    crate::menus::invoke(&mut app, "ui.autoDigitizeTool", json!({}));
+    assert_eq!(app.session.tool_id(), "autoDigitize");
+}

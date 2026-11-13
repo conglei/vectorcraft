@@ -68,6 +68,10 @@ fn an_l_is_columns_without_fill() {
     let s = auto(vec![rect(0.0, 0.0, 4.0, 25.0), rect(0.0, 21.0, 20.0, 25.0)]);
     assert_eq!(s.kind, AutoKind::Satin, "{:?}", s.kind);
     assert!(!s.columns.is_empty() && s.fill.is_empty());
+    // A T: columns only; the stem's stretch inside the bar is the bar's, not a run.
+    let t = auto(vec![vec![(0.0, 0.0), (20.0, 0.0), (20.0, 4.0), (12.0, 4.0), (12.0, 26.0), (8.0, 26.0), (8.0, 4.0), (0.0, 4.0)]]);
+    assert_eq!(t.kind, AutoKind::Satin);
+    assert!(t.runs.is_empty(), "{:?}", t.runs);
 }
 
 #[test]
@@ -75,6 +79,9 @@ fn a_ring_is_a_closed_column_and_a_wide_ring_a_fill_with_its_hole() {
     let s = auto(vec![circle(10.0, 10.0, 10.0, false), circle(10.0, 10.0, 7.0, true)]);
     assert_eq!(s.kind, AutoKind::Satin, "{:?}", s.kind);
     assert_eq!(s.columns.len(), 1);
+    let c = &s.columns[0];
+    let widest = c.left.iter().zip(&c.right).map(|(a, b)| dist(*a, *b)).fold(0.0, f64::max);
+    assert!(widest < 3.5, "every rung crosses the ring, not its hole: {widest}");
     let s = auto(vec![circle(20.0, 20.0, 20.0, false), circle(20.0, 20.0, 5.0, true)]);
     assert_eq!(s.kind, AutoKind::Fill);
     assert_eq!(s.fill.len(), 2, "the hole stays");

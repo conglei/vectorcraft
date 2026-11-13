@@ -185,7 +185,8 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
     let Some(gr) = sk.graph else { return Ok(whole_fill()) };
     let g = &sk.grid;
     // A column only where it is measurably (a pixel) wider than the minimum.
-    let strokes = columns::strokes(&gr, g, &sk.segs, |w| w > p.min_column + g.px);
+    let run_max = p.min_column + g.px;
+    let strokes = columns::strokes(&gr, g, &sk.segs, |w| w > run_max);
     // The wide part: within half the widest satin of a pixel whose half width is at least that.
     let r_px = p.max_satin / 2.0 / g.px;
     let centres: Vec<bool> = g.dist.iter().map(|d| d - 0.5 >= r_px).collect();
@@ -198,7 +199,7 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
         }
         let mut out = AutoShape::of(AutoKind::Run);
         for s in &strokes {
-            add_pieces(&mut out, s);
+            add_pieces(&mut out, s, run_max);
         }
         out.kind = if out.columns.is_empty() { AutoKind::Run } else { AutoKind::Satin };
         if out.columns.is_empty() && out.runs.is_empty() {
@@ -224,7 +225,7 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
                 continue;
             }
             kept_px.extend(part.centre.iter().filter_map(|q| pixel(g, *q)));
-            add_pieces(&mut out, &part);
+            add_pieces(&mut out, &part, run_max);
         }
     }
     if out.columns.is_empty() && out.runs.is_empty() {
@@ -286,15 +287,21 @@ pub fn auto_shape(rings: &[Vec<P>], p: &AutoParams) -> Result<AutoShape, String>
     Ok(out)
 }
 
-/// The columns and runs of stroke `s` added to `out`.
-fn add_pieces(out: &mut AutoShape, s: &Stroke) {
+/// The columns and runs of stroke `s` added to `out`. A run piece is kept only where the shape
+/// is thin (its median width at most `run_max`): a wide stretch that is no column is where a
+/// branch meets the stroke it runs into, which that stroke's column covers.
+fn add_pieces(out: &mut AutoShape, s: &Stroke, run_max: f64) {
     for (col, from, to) in pieces(s) {
         if col {
             if let (Some(l), Some(r)) = (s.left.get(from..=to), s.right.get(from..=to)) {
                 out.columns.push(Column { left: l.to_vec(), right: r.to_vec() });
             }
-        } else if let Some(c) = s.centre.get(from..=to) {
-            out.runs.push(c.to_vec());
+        } else if let (Some(c), Some(l), Some(r)) = (s.centre.get(from..=to), s.left.get(from..=to), s.right.get(from..=to)) {
+            let mut w: Vec<f64> = l.iter().zip(r).map(|(a, b)| dist(*a, *b)).collect();
+            w.sort_by(f64::total_cmp);
+            if w.get(w.len() / 2).is_none_or(|m| *m <= run_max) {
+                out.runs.push(c.to_vec());
+            }
         }
     }
 }

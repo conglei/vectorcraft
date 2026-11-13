@@ -532,12 +532,18 @@ impl<'o> Walk<'o> {
             return Ok(());
         }
         let (mut left, mut right) = (resample(&left, n), resample(&right, n));
-        // Rails drawn the opposite way round are turned to run together.
-        if let (Some(l0), Some(l1), Some(r0), Some(r1)) = (left.first(), left.last(), right.first(), right.last()) {
-            let d = |p: &(f64, f64), q: &(f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
-            if d(l0, r1) + d(l1, r0) < d(l0, r0) + d(l1, r1) {
-                right.reverse();
-            }
+        // Rails drawn the opposite way round are turned to run together. Their ends and middles
+        // and quarters are compared: a closed column (a ring) starts and ends at one place, so only
+        // its quarters tell the two ways apart.
+        let pairing = |turned: bool| -> f64 {
+            [0, n / 4, n / 2, 3 * n / 4, n - 1]
+                .iter()
+                .filter_map(|&i| Some((left.get(i)?, right.get(if turned { n - 1 - i } else { i })?)))
+                .map(|(p, q)| (p.0 - q.0).hypot(p.1 - q.1))
+                .sum()
+        };
+        if pairing(true) < pairing(false) {
+            right.reverse();
         }
         let p = RailsParams {
             spacing: props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing),
