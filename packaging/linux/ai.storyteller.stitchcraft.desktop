@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=StitchCraft
+GenericName=Embroidery Digitizing
+Comment=Turn drawings and pictures into embroidery stitches and machine files
+Exec=stitchcraft %F
+TryExec=stitchcraft
+Icon=ai.storyteller.stitchcraft
+Terminal=false
+StartupNotify=true
+StartupWMClass=ai.storyteller.stitchcraft
+Categories=Graphics;2DGraphics;VectorGraphics;
+Keywords=embroidery;stitch;stitches;digitizing;sewing;dst;
+# MimeType lists the embroidery machine files StitchCraft reads and writes (declared by
+# ai.storyteller.stitchcraft.mime.xml) and the documents it opens that VectorCraft's package
+# declares: .vectorcraft files, which VectorCraft owns, and SVG.
+MimeType=application/x-embroidery-dst;application/x-embroidery-exp;application/x-embroidery-dsb;application/x-vectorcraft;image/svg+xml;

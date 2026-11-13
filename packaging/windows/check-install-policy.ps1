@@ -5,10 +5,12 @@
   Uses Windows Installer's safe session (OpenPackage option 1). Only property-setting custom
   actions are exercised. No AppSearch, install, repair, removal or file-writing action runs.
 #>
-param([Parameter(Mandatory = $true)] [string] $MsiPath)
+param([Parameter(Mandatory = $true)] [string] $MsiPath, [string] $PolicyPath = '')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$policy = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'install-policy.json') | ConvertFrom-Json
+# -PolicyPath: the policy of a package made from this one's sources (StitchCraft's, written by package.ps1).
+if (-not $PolicyPath) { $PolicyPath = Join-Path $PSScriptRoot 'install-policy.json' }
+$policy = Get-Content -Raw -LiteralPath $PolicyPath | ConvertFrom-Json
 function Read-Rows($Database, [string] $Sql, [int] $Columns) {
   $view = $Database.OpenView($Sql)
   try {

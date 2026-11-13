@@ -14,6 +14,10 @@ workspace = true
 # (docs/superpowers/specs/2026-11-11-stitchcraft-app-shell.md).
 vectorcraft = { path = "../vectorcraft" }
 
+[build-dependencies]
+# Icon + VERSIONINFO for stitchcraft.exe; build.rs only uses it when targeting Windows.
+winresource = "0.1"
+
 [dev-dependencies]
 vectorcraft-ui-egui = { workspace = true }
 vectorcraft-engine = { workspace = true }

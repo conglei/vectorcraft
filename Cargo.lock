@@ -5491,6 +5491,7 @@ dependencies = [
  "vectorcraft",
  "vectorcraft-engine",
  "vectorcraft-ui-egui",
+ "winresource",
 ]
 
 [[package]]

@@ -38,7 +38,7 @@ commands:
   corpus [--download] [--affinity]
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite,
                   --affinity the pinned public Affinity documents into corpus/affinity
-  bundle [--app vectorcraft|stitchcraft]
+  bundle [--app vectorcraft|stitchcraft] [--debug]
                   build dist/VectorCraft.app (macOS) with assets/app-icon/vectorcraft.icns, or
                   dist/StitchCraft.app with stitchcraft.icns (--app stitchcraft)
   ico <out.ico> <png>...
@@ -68,7 +68,7 @@ fn main() -> ExitCode {
         Some("ci") => cmd_ci(),
         Some("corpus") if rest.contains(&"--affinity") => affinity_corpus::fetch(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
-        Some("bundle") => bundle::App::from_args(&rest).and_then(|app| bundle::run(&root(), app)),
+        Some("bundle") => bundle::Options::from_args(&rest).and_then(|options| bundle::run(&root(), options)),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
