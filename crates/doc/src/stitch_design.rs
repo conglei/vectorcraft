@@ -1,6 +1,7 @@
 //! Embroidery › Sequence: the document-wide sewing settings: the order objects are sewn in and
-//! where the design starts and ends, and the hoop it is sewn in. Saved in the native file; a file
-//! without them (every file before they existed) sews in document order, bottom to top, as before.
+//! where the design starts and ends, the hoop it is sewn in and the fabric it is sewn on. Saved in
+//! the native file; a file without them (every file before they existed) sews in document order,
+//! bottom to top, as before, on the default fabric.
 //!
 //! Each object's own entry and exit points are its stitch properties
 //! ([`crate::StitchProps::entry`]).
@@ -14,7 +15,7 @@ use crate::stitch_props::lenient;
 /// The most ids a saved order keeps: more than any document sews.
 pub const MAX_ORDER: usize = 1_000_000;
 
-/// The sewing order, the design's start and end points and its hoop. Read leniently: a field of
+/// The sewing order, the design's start and end points, its hoop and its fabric. Read leniently: a field of
 /// another kind (a later version's, or damage) reads as unset and the rest of the document still
 /// opens.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -35,6 +36,39 @@ pub struct StitchDesign {
     /// Embroidery › Hoop: the hoop the design is sewn in (`stitch.hoop.set`). `None`: none chosen.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub hoop: Option<Hoop>,
+    /// The fabric colour the stitches are previewed on (`stitch.setup {fabric}`), as `#rrggbb` in
+    /// the file. `None`: [`DEFAULT_FABRIC`]. A value that is not such a colour reads as `None`.
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "hex_out", deserialize_with = "hex_in")]
+    pub fabric: Option<[u8; 3]>,
+}
+
+/// The default fabric: a light, warm neutral.
+pub const DEFAULT_FABRIC: [u8; 3] = [236, 232, 222];
+
+/// `rgb` as `#rrggbb`.
+pub fn rgb_hex([r, g, b]: [u8; 3]) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// The colour `#rrggbb` (or `rrggbb`) names.
+pub fn parse_rgb_hex(v: &str) -> Option<[u8; 3]> {
+    let h = v.strip_prefix('#').unwrap_or(v);
+    if h.len() != 6 || !h.is_ascii() {
+        return None;
+    }
+    let byte = |i: usize| h.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok());
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+fn hex_out<S: serde::Serializer>(v: &Option<[u8; 3]>, s: S) -> Result<S::Ok, S::Error> {
+    match v {
+        Some(c) => s.serialize_str(&rgb_hex(*c)),
+        None => s.serialize_none(),
+    }
+}
+
+fn hex_in<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<[u8; 3]>, D::Error> {
+    Ok(lenient::<D, String>(d)?.as_deref().and_then(parse_rgb_hex))
 }
 
 /// The largest hoop side kept, in mm.
@@ -181,15 +215,22 @@ impl StitchDesign {
     pub fn hoop(&self) -> Option<&Hoop> {
         self.hoop.as_ref().filter(|h| h.valid())
     }
+
+    /// The fabric colour: the one set, else [`DEFAULT_FABRIC`].
+    pub fn fabric(&self) -> [u8; 3] {
+        self.fabric.unwrap_or(DEFAULT_FABRIC)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
     fn round_trips_and_reads_leniently() {
-        let d = StitchDesign { order: vec![NodeId(3), NodeId(1)], start: Some(Point::new(1.0, 2.0)), end: None, hoop: None };
+        let d = StitchDesign { order: vec![NodeId(3), NodeId(1)], start: Some(Point::new(1.0, 2.0)), end: None, hoop: None, fabric: None };
         let v = serde_json::to_value(&d).unwrap();
         assert_eq!(v["order"], serde_json::json!([3, 1]));
         assert!(v.get("end").is_none());
@@ -223,6 +264,22 @@ mod tests {
         let long: StitchDesign =
             serde_json::from_value(serde_json::json!({"hoop": {"name": "n".repeat(500), "widthMm": 10, "heightMm": 10}})).unwrap();
         assert_eq!(long.hoop().unwrap().name.len(), MAX_HOOP_NAME);
+    }
+
+    #[test]
+    fn the_fabric_round_trips_as_hex_and_damage_reads_as_the_default() {
+        let d = StitchDesign { fabric: Some([10, 200, 255]), ..Default::default() };
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["fabric"], "#0ac8ff");
+        assert_eq!(serde_json::from_value::<StitchDesign>(v).unwrap().fabric(), [10, 200, 255]);
+        assert!(serde_json::to_value(StitchDesign::default()).unwrap().get("fabric").is_none());
+        assert_eq!(StitchDesign::default().fabric(), DEFAULT_FABRIC);
+        for bad in [json!(7), json!("#12345"), json!("#gggggg"), json!([1, 2, 3]), json!("#ééé")] {
+            let back: StitchDesign = serde_json::from_value(json!({"fabric": bad, "order": [2]})).unwrap();
+            assert_eq!((back.fabric, back.order.len()), (None, 1), "{bad}");
+        }
+        assert_eq!(parse_rgb_hex("ECE8DE"), Some(DEFAULT_FABRIC));
+        assert_eq!(rgb_hex(DEFAULT_FABRIC), "#ece8de");
     }
 
     #[test]

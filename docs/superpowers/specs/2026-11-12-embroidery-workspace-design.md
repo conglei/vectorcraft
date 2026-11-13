@@ -1,6 +1,6 @@
 # Embroidery workspace: design
 
-> **Status:** items 1 to 4 implemented (STI-31), without the sequence link of item 2 and with the design read-out on the thread bar; item 5 not started · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
+> **Status:** items 1 to 4 implemented (STI-31), without the sequence link of item 2 and with the design read-out on the thread bar; item 5 implemented by STI-34 ([embroidery document setup](2026-11-13-embroidery-document-setup.md)), with the out-of-hoop warning on the thread bar rather than red marks on the canvas · **Date:** 2026-11-12 · **Covers:** how StitchCraft's window is arranged for embroidery: the stitch view on the main canvas, the stitch player bar, the Embroidery workspace, the status readout and the thread bar. The stitch features themselves are in [embroidery-parity.md](../../embroidery-parity.md); the preview renderer is in [the preview design](2026-11-11-embroidery-preview-design.md); the app shell is in [the app shell design](2026-11-11-stitchcraft-app-shell.md)
 
 ## Goal
 
@@ -192,6 +192,9 @@ the bar is later work (E6).
 The hoop's sewing field drawn on the canvas, the design centred in it, and whatever is outside
 marked in red on the canvas and counted in the status bar. This needs the hoop model of STI-16
 (E7) and is not designed here beyond naming it. It is a follow-up issue once STI-16 lands.
+Designed and built in [the embroidery document setup design](2026-11-13-embroidery-document-setup.md)
+(STI-34): the outside of the sewing field is dimmed rather than marked red, and the warning is on
+the thread bar.
 
 ## Order of work
 

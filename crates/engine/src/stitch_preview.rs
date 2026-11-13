@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use vectorcraft_doc::Document;
+pub use vectorcraft_stitch::{DEFAULT_MARGIN_MM as HOOP_MARGIN_MM, Hoop, HoopShape, Placement};
 use vectorcraft_stitch::{
     MARGIN_MM, MAX_SCALE, MIN_SCALE, PreviewMode, PreviewOptions, Region, Step, StitchPlan, UNITS_PER_MM, preview_prefix, preview_region,
     preview_size, stats,
@@ -47,6 +48,9 @@ pub struct PlanSummary {
     pub color_changes: usize,
     pub width_mm: f64,
     pub height_mm: f64,
+    /// Where the stitches are: (left, top, right, bottom) in millimetres of the document's space;
+    /// `None` without stitches.
+    pub bounds_mm: Option<(f64, f64, f64, f64)>,
     pub blocks: Vec<BlockInfo>,
     /// The trims and stops in sewing order, each with the number of stitches sewn before it. A
     /// colour change is where a block starts ([`BlockInfo::first`]).
@@ -82,10 +86,26 @@ pub struct FrameOptions {
     pub show_functions: bool,
     /// Only the first this many stitches (`None`: all of them).
     pub stitches: Option<usize>,
+    /// The fabric under the stitches (`None`: [`FABRIC`]); a region leaves it out.
+    pub fabric: Option<[u8; 3]>,
 }
 
-/// The fabric colour pictures are drawn on, and a canvas showing a [`BuiltPlan::region`] paints.
+/// The default fabric colour pictures are drawn on, and a canvas showing a [`BuiltPlan::region`]
+/// paints: a document's own is [`vectorcraft_doc::StitchDesign::fabric`].
 pub const FABRIC: [u8; 3] = vectorcraft_stitch::DEFAULT_FABRIC;
+
+/// Where stitches spanning `bounds_mm` (a [`PlanSummary::bounds_mm`]) lie in `doc`'s hoop,
+/// centred on the first artboard, with the default margin ([`HOOP_MARGIN_MM`]): `None` without
+/// a hoop. As `stitch.check`'s `outsideHoop` finds it.
+pub fn hoop_placement(doc: &Document, bounds_mm: (f64, f64, f64, f64)) -> Option<(Hoop, Placement)> {
+    crate::cmd::stitch::setup::hoop_placement(doc, bounds_mm)
+}
+
+/// Where the centre of `doc`'s hoop is on the page, in document units: the first artboard's
+/// centre, where `stitch.hoop.center` centres the design.
+pub fn hoop_center(doc: &Document) -> vectorcraft_geom::Point {
+    crate::cmd::stitch::production::hoop_center(doc)
+}
 /// The most pixels a side of a region.
 pub const MAX_REGION_SIDE: u32 = vectorcraft_stitch::MAX_SIDE;
 /// The pixels per millimetre a region can be drawn at.
@@ -131,6 +151,13 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
     let p = Value::Object(p);
     let (plan, warnings) = stitchfile::plan("stitch.preview", doc, &p, "dst", None).map_err(|e| e.to_string())?;
     let st = stats(&plan);
+    let mut bounds: Option<(f64, f64, f64, f64)> = None;
+    for p in plan.blocks.iter().flat_map(|b| b.steps.iter()).filter_map(|s| if let Step::Stitch(p) = s { Some(p.to_mm()) } else { None }) {
+        bounds = Some(match bounds {
+            None => (p.0, p.1, p.0, p.1),
+            Some((x0, y0, x1, y1)) => (x0.min(p.0), y0.min(p.1), x1.max(p.0), y1.max(p.1)),
+        });
+    }
     let mut first = 0;
     let mut marks = Vec::new();
     let blocks = plan
@@ -172,6 +199,7 @@ pub fn build_plan(doc: &Document, options: &Value) -> Result<BuiltPlan, String> 
         color_changes: st.color_changes,
         width_mm: st.width_mm,
         height_mm: st.height_mm,
+        bounds_mm: bounds,
         blocks,
         marks,
         warnings,
@@ -188,6 +216,7 @@ impl BuiltPlan {
             show_needles: o.show_needles,
             show_functions: o.show_functions,
             mode: if o.density { PreviewMode::Density } else { PreviewMode::Realistic },
+            fabric: o.fabric.unwrap_or(FABRIC),
             ..PreviewOptions::default()
         };
         // Start from the design's size, then correct once for what the layout adds (jumps widen it).

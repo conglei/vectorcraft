@@ -44,6 +44,7 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "view.outline" => app.outline_view(),
         "view.stitches" => app.stitch_view(),
         "view.pixelPreview" => v.pixel_preview,
+        "view.hoop" => v.hoop,
         "view.trimView" => v.trim_view,
         "view.snapToPixel" => v.snap_to_pixel,
         "view.snapToGlyph" => v.snap_to_glyph,

@@ -55,6 +55,7 @@ pub mod graph_data;
 pub mod graph_design;
 pub mod graphic_style_options;
 pub mod halftone;
+pub(crate) mod hoop_setup;
 pub mod hyphenation;
 pub mod import_pdf;
 pub mod javascript_files;
@@ -872,6 +873,9 @@ mod tests_eps;
 
 #[cfg(test)]
 mod tests_stitch;
+
+#[cfg(test)]
+mod tests_hoop;
 
 #[cfg(test)]
 mod tests_metafile;

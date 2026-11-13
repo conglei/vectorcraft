@@ -513,6 +513,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
             "Embroidery",
             vec![
                 c("Stitches on the Canvas", "view.stitches"),
+                c("Hoop on the Canvas", "view.hoop"),
                 c("Stitch Info…", "ui.stitchInfo"),
                 panel("Stitch Preview", crate::panels::stitch_preview::ID),
                 panel("Stitch Properties", crate::panels::stitch_props::ID),
@@ -533,6 +534,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
             let mut v = vec![
                 c("Outline", "view.outline"),
                 c("Stitches", "view.stitches"),
+                c("Hoop", "view.hoop"),
                 c("Overprint Preview", "view.overprintPreview"),
                 c("Pixel Preview", "view.pixelPreview"),
                 c("Trim View", "view.trimView"),

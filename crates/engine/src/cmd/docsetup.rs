@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Document Setup",
         [],
         None,
-        "{units?: \"Points\"|\"Inches\"|\"Millimeters\"|…, bleed?: pt (all sides)|[top, bottom, left, right]|{top?, bottom?, left?, right?} (0–72 pt), outlineImages?: bool (show images in Outline mode), highlightSubstitutedGlyphs?: bool (Highlight Substituted Fonts is a preference: prefs.set highlightSubstitutedFonts; a highlightSubstitutedFonts key is ignored and the reply carries a warning),gridSize?: \"small\"|\"medium\"|\"large\", gridColors?: \"Light\"|\"Medium\"|\"Dark\"|\"Red\"|\"Orange\"|\"Green\"|\"Blue\"|\"Purple\"|[colour, colour] (transparency grid; the first is also the paper colour; #rrggbbaa and #rgba are refused), simulatePaper?: bool, flattenerPreset?: \"High Resolution\"|\"Medium Resolution\"|\"Low Resolution\"|a saved preset (flattener.presets.list), discardWhiteOverprint?: bool, language?: \"English: USA\"|\"German\"|\"French\"|… (also picks its quotes), quotes?: {double?: \"“”\", single?: \"‘’\"} (beside a language: only if they differ from the current ones), typographersQuotes?: bool (typed straight quotes become the document's quotes), superscript?: {size?: %, position?: %}, subscript?: {size?: %, position?: %}, smallCapsSize?: %, exportText?: \"editable\"|\"appearance\" (SVG text as text or as outlines), backgroundContents?: \"transparent\"|\"white\" (white: raster exports are white behind the art), …the keys of its own reply (it can be passed back; the values it only reports are ignored)} change the document setup in one undo step; no params → the current setup",
+        "{units?: \"Points\"|\"Inches\"|\"Millimeters\"|…, bleed?: pt (all sides)|[top, bottom, left, right]|{top?, bottom?, left?, right?} (0–72 pt), outlineImages?: bool (show images in Outline mode), highlightSubstitutedGlyphs?: bool (Highlight Substituted Fonts is a preference: prefs.set highlightSubstitutedFonts; a highlightSubstitutedFonts key is ignored and the reply carries a warning),gridSize?: \"small\"|\"medium\"|\"large\", gridColors?: \"Light\"|\"Medium\"|\"Dark\"|\"Red\"|\"Orange\"|\"Green\"|\"Blue\"|\"Purple\"|[colour, colour] (transparency grid; the first is also the paper colour; #rrggbbaa and #rgba are refused), simulatePaper?: bool, flattenerPreset?: \"High Resolution\"|\"Medium Resolution\"|\"Low Resolution\"|a saved preset (flattener.presets.list), discardWhiteOverprint?: bool, language?: \"English: USA\"|\"German\"|\"French\"|… (also picks its quotes), quotes?: {double?: \"“”\", single?: \"‘’\"} (beside a language: only if they differ from the current ones), typographersQuotes?: bool (typed straight quotes become the document's quotes), superscript?: {size?: %, position?: %}, subscript?: {size?: %, position?: %}, smallCapsSize?: %, exportText?: \"editable\"|\"appearance\" (SVG text as text or as outlines), backgroundContents?: \"transparent\"|\"white\" (white: raster exports are white behind the art), embroidery?: {hoop?, fabric?, resizeArtboard?} (the design's hoop and fabric, as stitch.setup takes and reports them; in the same undo step), …the keys of its own reply (it can be passed back; the values it only reports are ignored)} change the document setup in one undo step; no params → the current setup",
         has_doc,
         setup
     )]
@@ -46,6 +46,7 @@ pub(crate) fn setup_json(d: &Document) -> Value {
         "smallCapsSize": s.small_caps_size,
         "exportText": s.export_text.id(),
         "backgroundContents": s.background.id(),
+        "embroidery": super::stitch::setup::setup_json(d),
     })
 }
 
@@ -62,9 +63,15 @@ fn setup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut new = st.doc.setup.clone();
     let mut units = st.doc.units;
+    // The design's hoop and fabric (the first artboard resized to the hoop when asked).
+    let (stitch, board) = match o.get("embroidery") {
+        None | Some(Value::Null) => (st.doc.stitch.clone(), None),
+        Some(Value::Object(e)) => super::stitch::setup::EmbroiderySetup::parse(e, C)?.result(&st.doc, C)?,
+        Some(other) => return Err(bad(C, format!("embroidery must be {{hoop?, fabric?, resizeArtboard?}}, not {other}"))),
+    };
     // The language goes first: it picks its quotes, which `quotes` may then override.
     let current = st.doc.setup.quotes;
-    for (k, v) in o.iter().filter(|(k, _)| *k == "language").chain(o.iter().filter(|(k, _)| *k != "language")) {
+    for (k, v) in o.iter().filter(|(k, _)| *k == "language").chain(o.iter().filter(|(k, _)| *k != "language" && *k != "embroidery")) {
         // With a language, unchanged quotes (a report fed back) don't undo the language's quotes.
         if k == "quotes" && o.contains_key("language") && quotes_param(v, current)? == current {
             continue;
@@ -82,10 +89,11 @@ fn setup(s: &mut Session, p: &Value) -> Result<Value> {
         r
     };
     let st = s.doc()?;
-    if new == st.doc.setup && units == st.doc.units {
+    if new == st.doc.setup && units == st.doc.units && stitch == st.doc.stitch && board.is_none() {
         return Ok(reply(&st.doc));
     }
     s.edit("Document Setup", |d, _| {
+        super::stitch::setup::apply(d, stitch, board);
         let scripts_changed =
             (new.superscript, new.subscript, new.small_caps_size) != (d.setup.superscript, d.setup.subscript, d.setup.small_caps_size);
         d.setup = new;

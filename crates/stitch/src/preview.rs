@@ -27,8 +27,8 @@ pub const MAX_THREAD_MM: f64 = 2.0;
 pub const MAX_SIDE: u32 = 8192;
 /// The fabric around the stitches, in mm.
 pub const MARGIN_MM: f64 = 2.0;
-/// The default fabric: a light, warm neutral.
-pub const DEFAULT_FABRIC: [u8; 3] = [236, 232, 222];
+/// The default fabric: a light, warm neutral (the document's when it sets none).
+pub const DEFAULT_FABRIC: [u8; 3] = vectorcraft_doc::stitch_design::DEFAULT_FABRIC;
 /// The density map's cell side in mm, unless the design is so large that more than
 /// [`MAX_DENSITY_CELLS`] cells would be needed along a side; then cells grow to fit.
 pub const DENSITY_CELL_MM: f64 = 1.0;

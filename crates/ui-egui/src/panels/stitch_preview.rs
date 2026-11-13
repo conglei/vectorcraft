@@ -208,15 +208,21 @@ fn plan_options(app: &VectorcraftApp) -> Value {
     if app.ui.stitch_options.is_object() { crate::dialogs::stitch_options::export_params_of(app.ui.stitch_options.clone()) } else { json!({}) }
 }
 
-/// The frame options for the settings and the stitches shown.
-pub(crate) fn frame_options(set: &Settings, position: Option<usize>) -> FrameOptions {
+/// The frame options for the settings, the stitches shown and the fabric (`None`: the default).
+pub(crate) fn frame_options(set: &Settings, position: Option<usize>, fabric: Option<[u8; 3]>) -> FrameOptions {
     FrameOptions {
         density: set.view == View::Density,
         show_jumps: set.jumps,
         show_needles: set.needles,
         show_functions: set.jumps,
         stitches: position,
+        fabric,
     }
+}
+
+/// The active design's fabric, when it sets one.
+fn fabric_of(app: &VectorcraftApp) -> Option<[u8; 3]> {
+    app.session.active().and_then(|st| st.doc.stitch.fabric)
 }
 
 impl Runtime {
@@ -283,6 +289,8 @@ pub(crate) struct Player {
     pub marks: Vec<(usize, Mark)>,
     /// The design's width and height in millimetres, and its trims.
     pub size_mm: (f64, f64),
+    /// Where the stitches are, in millimetres of the document (left, top, right, bottom).
+    pub bounds_mm: Option<(f64, f64, f64, f64)>,
     pub trims: usize,
     /// Where the needle stands, in millimetres of the document, while fewer than all stitches show.
     pub needle_mm: Option<(f64, f64)>,
@@ -300,6 +308,7 @@ pub(crate) fn player() -> Option<Player> {
             blocks: plan.summary.blocks.clone(),
             marks: plan.summary.marks.clone(),
             size_mm: (plan.summary.width_mm, plan.summary.height_mm),
+            bounds_mm: plan.summary.bounds_mm,
             trims: plan.summary.trims,
             needle_mm: position.and_then(|n| plan.needle_mm(n)),
         })
@@ -352,6 +361,7 @@ fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings, panel: bool
     let Some(st) = app.session.active() else { return };
     let (uid, doc) = (st.uid, st.doc.clone());
     let key = PlanKey { uid, doc, options: plan_options(app).to_string() };
+    let fabric = fabric_of(app);
     let now = ctx.input(|i| i.time);
     with_rt(|rt| {
         if rt.uid != Some(uid) {
@@ -435,7 +445,7 @@ fn update(app: &VectorcraftApp, ctx: &egui::Context, set: &Settings, panel: bool
         // The picture the plan on show wants.
         let shown = rt.plan.as_ref().and_then(|p| p.plan.as_ref().ok().map(|plan| (p.generation, plan.clone())));
         if let Some((generation, plan)) = shown {
-            let want = FrameKey { generation, options: frame_options(set, rt.shown()) };
+            let want = FrameKey { generation, options: frame_options(set, rt.shown(), fabric) };
             let have = rt.frame.as_ref().map(|f| f.key) == Some(want) || rt.frame_error.as_ref().map(|e| e.0) == Some(want);
             if !have && rt.frame_job.is_none() {
                 let o = want.options;
@@ -551,6 +561,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     let mut set = app.ui.stitch_preview.clone();
     update(app, ui.ctx(), &set, true);
+    let fabric = fabric_of(app);
     let mut position = with_rt(|rt| rt.position);
     let (total, playing) = with_rt(|rt| (rt.total(), rt.playing));
     let mut play_clicked = false;
@@ -589,7 +600,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         let want = rt
             .plan
             .as_ref()
-            .and_then(|p| p.plan.as_ref().ok().map(|_| FrameKey { generation: p.generation, options: frame_options(&set, rt.shown()) }));
+            .and_then(|p| p.plan.as_ref().ok().map(|_| FrameKey { generation: p.generation, options: frame_options(&set, rt.shown(), fabric) }));
         let summary = rt.plan.as_ref().and_then(|p| p.plan.as_ref().ok()).map(|p| p.summary.clone());
         let error = match rt.plan.as_ref().map(|p| &p.plan) {
             Some(Err(e)) => Some(e.clone()),

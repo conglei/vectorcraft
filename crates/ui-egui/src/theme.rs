@@ -167,6 +167,13 @@ pub struct Tokens {
     pub axis_x: Color32,
     pub axis_y: Color32,
     pub axis_z: Color32,
+    /// The embroidery hoop on the canvas (View › Hoop): its inner edge and its name, drawn over the
+    /// fabric or the paper in every brightness.
+    pub hoop: Color32,
+    /// The hoop's sewing field: the dashed line its margin inside the edge.
+    pub hoop_field: Color32,
+    /// Laid over the canvas outside the hoop's sewing field.
+    pub hoop_outside: Color32,
 }
 
 impl Tokens {
@@ -218,6 +225,9 @@ impl Tokens {
             axis_x: hex(0xef6058),
             axis_y: hex(0x45af63),
             axis_z: hex(0x378ef0),
+            hoop: hex(0x4b5263),
+            hoop_field: hex(0x6f788a),
+            hoop_outside: Color32::from_black_alpha(46),
         };
         match b {
             Brightness::Dark => base,

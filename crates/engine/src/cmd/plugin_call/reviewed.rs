@@ -550,6 +550,7 @@ pub(super) const ALLOWED: &[&str] = &[
     "stitch.sequence.sortByColor",
     "stitch.setParams",
     "stitch.setType",
+    "stitch.setup",
     "stitch.threads.list",
     "stitch.threads.match",
     "stroke.set",

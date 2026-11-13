@@ -282,6 +282,10 @@ pub struct ViewFlags {
     /// View → Hide/Show Template: template layers drawn (dimmed) or left out of the canvas.
     #[serde(default = "yes")]
     pub templates: bool,
+    /// View › Hoop: the embroidery hoop of a design that has one, its sewing field and a dimming
+    /// outside it, drawn on the canvas in every view.
+    #[serde(default = "yes")]
+    pub hoop: bool,
 }
 
 impl Default for ViewFlags {
@@ -308,6 +312,7 @@ impl Default for ViewFlags {
             hidden_chars: false,
             auto_spell_check: false,
             templates: true,
+            hoop: true,
         }
     }
 }

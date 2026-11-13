@@ -601,6 +601,23 @@ pub(crate) fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
         Some(name) => find(s, name).ok_or_else(|| bad(C, format!("no preset called `{name}` (see file.newPresets)")))?,
         None => s.default_settings(),
     };
+    // An embroidery design: its hoop and fabric, and without a size the hoop's size.
+    let emb = super::stitch::setup::EmbroiderySetup::parse(p.as_object().unwrap_or(&serde_json::Map::new()), C)?;
+    if emb.resize_artboard {
+        return Err(bad(C, "resizeArtboard is stitch.setup's: a new design without width and height is the hoop's size"));
+    }
+    let hoop = emb.hoop.clone().flatten().filter(vectorcraft_doc::Hoop::valid);
+    let sized;
+    let p = match &hoop {
+        Some(h) if p.get("width").is_none_or(Value::is_null) && p.get("height").is_none_or(Value::is_null) => {
+            let mut q = p.clone();
+            q["width"] = json!(h.width_mm * vectorcraft_stitch::PT_PER_MM);
+            q["height"] = json!(h.height_mm * vectorcraft_stitch::PT_PER_MM);
+            sized = q;
+            &sized
+        }
+        _ => p,
+    };
     // A preset keeps its name in Recent unless its size changed (turning it doesn't count).
     let sorted = |d: &DocSettings| (d.width.min(d.height), d.width.max(d.height), d.units);
     let size = str_param(p, "preset").map(|_| sorted(&base));
@@ -617,6 +634,9 @@ pub(crate) fn file_new(s: &mut Session, p: &Value) -> Result<Value> {
         None => s.next_untitled(),
     };
     d.metadata.created = clock_date(s, "created", date_param(p, "created", C)?);
+    // Born with its hoop and fabric: no undo step.
+    d.stitch.hoop = hoop;
+    d.stitch.fabric = emb.fabric.flatten();
     let i = s.add_document(d, None);
     // Overprint Preview is the engine's (the UI turns Pixel Preview on from `previewMode`). Both
     // are views of the whole app, so Default leaves them as they are.

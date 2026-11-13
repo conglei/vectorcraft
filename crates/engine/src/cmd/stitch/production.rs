@@ -1,5 +1,5 @@
 //! Embroidery production: the hoop (`stitch.hoops.list`, `stitch.hoop.set`, `stitch.hoop.get`,
-//! `stitch.hoop.fit`, `stitch.hoop.center`), the estimates `stitch.info` adds (bobbin, run time,
+//! `stitch.hoop.fit`, `stitch.hoop.center`; with the fabric, `stitch.setup` in [`super::setup`]), the estimates `stitch.info` adds (bobbin, run time,
 //! needles) and the design checker (`stitch.check`). The worksheet and the production folder are
 //! in [`super::worksheet`].
 //!
@@ -11,12 +11,12 @@ use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_geom::{Affine, Point};
 use vectorcraft_stitch::hoop as hoops;
 use vectorcraft_stitch::{
-    CELL_RANGE, CheckLimits, DEFAULT_MARGIN_MM, DENSITY_RANGE, Finding, Hoop, HoopShape, LONG_RANGE, Level, MAX_MARGIN_MM, MAX_TRIMS_LIMIT,
-    MachineProfile, PT_PER_MM, Pt, SHORT_RANGE, Stats, StitchPlan, UNITS_PER_MM, assign_needles, check_plan, profile,
+    CELL_RANGE, CheckLimits, DEFAULT_MARGIN_MM, DENSITY_RANGE, Finding, Hoop, LONG_RANGE, Level, MAX_MARGIN_MM, MAX_TRIMS_LIMIT, MachineProfile,
+    PT_PER_MM, Placement, Pt, SHORT_RANGE, Stats, StitchPlan, UNITS_PER_MM, assign_needles, check_plan, profile,
 };
 
 use super::super::fileio::stitchfile;
-use super::super::{CommandSpec, Result, Session, bad, cmd, has_doc, number_or, switch_or, text_param};
+use super::super::{CommandSpec, Result, Session, always, bad, cmd, has_doc, number_or, switch_or, text_param};
 
 const LIST: &str = "stitch.hoops.list";
 const SET: &str = "stitch.hoop.set";
@@ -43,8 +43,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Hoops",
             [],
             None,
-            "{machine?: commercial15 (default) | bai_mirror | generic} the built-in hoops and frames that fit the machine's field, smallest first: generic sizes by their inner dimensions, no maker's catalogue → {machine, field: {widthMm, heightMm}|null, hoops: [{id, name, widthMm, heightMm, shape: rectangle|round (round: the ellipse inside width × height), cap (a cap frame: never chosen by stitch.hoop.fit)}], chosen: the document's hoop (stitch.hoop.get)|null}",
-            has_doc,
+            "{machine?: commercial15 (default) | bai_mirror | generic} the built-in hoops and frames that fit the machine's field, smallest first: generic sizes by their inner dimensions, no maker's catalogue → {machine, field: {widthMm, heightMm}|null, hoops: [{id, name, widthMm, heightMm, shape: rectangle|round (round: the ellipse inside width × height), cap (a cap frame: never chosen by stitch.hoop.fit)}], chosen: the document's hoop (stitch.hoop.get)|null (also without a document)}",
+            always,
             list
         ),
         cmd!(
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Hoop",
             [],
             None,
-            "{} the document's hoop → {hoop: {id (null: custom), name, widthMm, heightMm, shape: rectangle|round, cap}|null, center: {x, y} (where the hoop's centre is on the page, document units: the first artboard's centre)}",
+            "{} the document's hoop → {hoop: {id (null: custom), name, widthMm, heightMm, shape: rectangle|round, cap}|null, center: {x, y} (where the hoop's centre is on the page, document units: the first artboard's centre), fabric: \"#rrggbb\" (stitch.setup)}",
             has_doc,
             get
         ),
@@ -88,7 +88,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Design Check",
             [],
             None,
-            "{marginMm?: 10 (the hoop fit's clearance, 0–100), thresholds?: {shortMm?: 0.3 (stitches shorter are reported, 0–5; the export drops those under its minStitch, 0.3 by default, so these come from a lower minStitch or an opened file), longMm?: 7 (stitches longer are reported, 1–12.7), densityCellMm?: 2 (the density grid's cell, 0.5–10), maxDensity?: 4 (needle points per mm² in a cell, 0.1–100), maxTrims?: 50}, …the plan options of stitch.info} check the stitch plan an export would write → {findings: [{level: info|warning|error, code: empty|overMaxStitch|shortStitches|longStitches|density|trims|colors|hoopTooSmall|noHoopFits|fieldTooSmall|offCenter|hoop, message, count?, where?: {x, y} (document units: the first case, or the densest cell's centre)}] (errors first), errors, warnings}; a document with nothing to sew is an `empty` error finding, not a command error",
+            "{marginMm?: 10 (the hoop fit's clearance, 0–100), thresholds?: {shortMm?: 0.3 (stitches shorter are reported, 0–5; the export drops those under its minStitch, 0.3 by default, so these come from a lower minStitch or an opened file), longMm?: 7 (stitches longer are reported, 1–12.7), densityCellMm?: 2 (the density grid's cell, 0.5–10), maxDensity?: 4 (needle points per mm² in a cell, 0.1–100), maxTrims?: 50}, …the plan options of stitch.info} check the stitch plan an export would write → {findings: [{level: info|warning|error, code: empty|overMaxStitch|shortStitches|longStitches|density|trims|colors|hoopTooSmall|noHoopFits|fieldTooSmall|offCenter (no hoop chosen: the stitches are over the edge of the fitted hoop centred on the page)|outsideHoop (the stitches, where they are, cross the chosen hoop's edge: error; or come within marginMm of it: warning; art that sews nothing does not count)|hoop, message, count?, where?: {x, y} (document units: the first case, or the densest cell's centre)}] (errors first), errors, warnings}; a document with nothing to sew is an `empty` error finding, not a command error",
             has_doc,
             check_cmd
         ),
@@ -144,13 +144,16 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let prof = machine(p, LIST)?;
     let list: Vec<Value> = hoops::for_field(prof.field_mm).iter().map(hoop_json).collect();
     let field = prof.field_mm.map_or(Value::Null, |(w, h)| json!({"widthMm": w, "heightMm": h}));
-    Ok(json!({"machine": prof.id, "field": field, "hoops": list, "chosen": chosen_json(&s.doc()?.doc)}))
+    // New Document lists the hoops before there is a document.
+    let chosen = s.active().map_or(Value::Null, |st| chosen_json(&st.doc));
+    Ok(json!({"machine": prof.id, "field": field, "hoops": list, "chosen": chosen}))
 }
 
 fn get(s: &mut Session, _: &Value) -> Result<Value> {
     let doc = &s.doc()?.doc;
     let c = hoop_center(doc);
-    Ok(json!({"hoop": chosen_json(doc), "center": {"x": c.x, "y": c.y}}))
+    let fabric = vectorcraft_doc::stitch_design::rgb_hex(doc.stitch.fabric());
+    Ok(json!({"hoop": chosen_json(doc), "center": {"x": c.x, "y": c.y}, "fabric": fabric}))
 }
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
@@ -164,19 +167,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         next.hoop = Some(match (id, has_size) {
             (Some(_), true) => return Err(bad(SET, "give id or widthMm and heightMm, not both")),
             (Some(id), false) => hoops::find(id).ok_or_else(|| bad(SET, format!("no hoop `{id}`: stitch.hoops.list lists them")))?,
-            (None, true) => {
-                let w = number_or(p, "widthMm", f64::NAN, SET)?;
-                let h = number_or(p, "heightMm", f64::NAN, SET)?;
-                let shape = match text_param(p, "shape", SET)? {
-                    None => HoopShape::Rectangle,
-                    Some(v) => HoopShape::parse(v).ok_or_else(|| bad(SET, format!("shape `{v}`: rectangle or round")))?,
-                };
-                let name = text_param(p, "name", SET)?.unwrap_or("");
-                if name.chars().count() > vectorcraft_doc::stitch_design::MAX_HOOP_NAME {
-                    return Err(bad(SET, "the name is too long"));
-                }
-                hoops::custom(name, w, h, shape).map_err(|e| bad(SET, e))?
-            }
+            (None, true) => super::setup::custom_hoop(p, SET)?,
             (None, false) => return Err(bad(SET, "give id, widthMm and heightMm, or clear")),
         });
     }
@@ -343,15 +334,40 @@ fn hoop_findings(doc: &Document, plan: &StitchPlan, prof: &MachineProfile, margi
             }
         },
     }
-    if f.in_place == Some(false) && f.fits_chosen != Some(false) && (f.chosen.is_some() || f.fitted.is_some()) {
-        let (x, y) = f.offset_mm;
-        out.push(finding(
-            Level::Info,
-            "offCenter",
-            format!("the design is {x:.1}, {y:.1} mm from the hoop's centre and over its edge there: Center Design in Hoop moves it"),
-        ));
+    match &f.chosen {
+        // The chosen hoop: where the stitches are, over its edge or into its margin.
+        Some(h) => out.extend(outside_hoop(doc, plan, h, margin, f.fits_chosen == Some(true))),
+        None if f.in_place == Some(false) && f.fitted.is_some() => {
+            let (x, y) = f.offset_mm;
+            out.push(finding(
+                Level::Info,
+                "offCenter",
+                format!("the design is {x:.1}, {y:.1} mm from the hoop's centre and over its edge there: Center Design in Hoop moves it"),
+            ));
+        }
+        None => {}
     }
     out
+}
+
+/// The `outsideHoop` finding: the stitches of `plan`, where they are, cross the edge of `hoop`
+/// centred on the first artboard (an error: the needle would strike the frame) or come within
+/// `margin` mm of it (a warning). `fits`: centred they would fit, so centring is the remedy.
+fn outside_hoop(doc: &Document, plan: &StitchPlan, hoop: &Hoop, margin: f64, fits: bool) -> Option<Finding> {
+    let (x0, y0, x1, y1) = extents(plan)?;
+    let mm = |v: i32| f64::from(v) / UNITS_PER_MM;
+    let c = hoop_center(doc);
+    let (cx, cy) = (c.x / PT_PER_MM, c.y / PT_PER_MM);
+    let rel = (mm(x0) - cx, mm(y0) - cy, mm(x1) - cx, mm(y1) - cy);
+    let remedy = if fits { ": Center Design in Hoop moves it in" } else { "" };
+    let (level, message) = match hoops::placement(hoop, rel, margin) {
+        Placement::Inside => return None,
+        Placement::InMargin => (Level::Warning, format!("the stitches come within {margin} mm of the {}'s edge{remedy}", hoop.name)),
+        Placement::Outside => (Level::Error, format!("the stitches go outside the {}{remedy}", hoop.name)),
+    };
+    // Where to look: the corner of the stitches' box furthest from the hoop's centre.
+    let at = Pt { x: if rel.0.abs() > rel.2.abs() { x0 } else { x1 }, y: if rel.1.abs() > rel.3.abs() { y0 } else { y1 } };
+    Some(Finding { level, code: "outsideHoop", message, count: None, at: Some(at) })
 }
 
 /// The design checker's findings for `p` (`marginMm`, `thresholds`, `machine` and the plan

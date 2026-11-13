@@ -4,8 +4,9 @@
 
 mod lettering;
 mod objects;
-mod production;
+pub(crate) mod production;
 mod sequence;
+pub(crate) mod setup;
 mod worksheet;
 
 use std::sync::Arc;
@@ -55,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Preview",
             [],
             None,
-            "{…the plan options of stitch.info (format, machine, mode, stitchLength, minStitch, maxStitch, locks, jumpsPerTrim, trimBeforeColorChange, start, returnToStart, name, selectedOnly: the preview shows the stitches that export would write), view?: realistic (default: each stitch a lit thread from needle point to needle point, later stitches over earlier ones) | density (1 mm cells coloured by thread coverage, stitched length × thread width / cell area: pale green little, green 1 (one layer), yellow 1.5, red 2 and above: too dense), scale?: 10 (pixels per mm, 0.5–50), threadWidth?: 0.4 (mm, 0.1–2), fabric?: \"#ece8de\" (the background), showJumps?: false (jumps as dashed lines), showNeedles?: false (a dot at each needle point), showFunctions?: false (rings: red at trims, the new thread's colour at colour changes, orange at stops), path?: (write the PNG there)} a PNG of the stitches with a 2 mm margin, at most 8192 pixels a side → {width, height, path, warnings (the plan's: stitch.info's less those of the file writer)}; without path {width, height, pngBase64, warnings} (at most 2048 × 2048 pixels: pass path or a lower scale for more); the density view adds {maxCoverage, denseCells}; a document with no stroked paths is an error",
+            "{…the plan options of stitch.info (format, machine, mode, stitchLength, minStitch, maxStitch, locks, jumpsPerTrim, trimBeforeColorChange, start, returnToStart, name, selectedOnly: the preview shows the stitches that export would write), view?: realistic (default: each stitch a lit thread from needle point to needle point, later stitches over earlier ones) | density (1 mm cells coloured by thread coverage, stitched length × thread width / cell area: pale green little, green 1 (one layer), yellow 1.5, red 2 and above: too dense), scale?: 10 (pixels per mm, 0.5–50), threadWidth?: 0.4 (mm, 0.1–2), fabric?: \"#rrggbb\" (the background; default the document's fabric, stitch.setup, else #ece8de), showJumps?: false (jumps as dashed lines), showNeedles?: false (a dot at each needle point), showFunctions?: false (rings: red at trims, the new thread's colour at colour changes, orange at stops), path?: (write the PNG there)} a PNG of the stitches with a 2 mm margin, at most 8192 pixels a side → {width, height, path, warnings (the plan's: stitch.info's less those of the file writer)}; without path {width, height, pngBase64, warnings} (at most 2048 × 2048 pixels: pass path or a lower scale for more); the density view adds {maxCoverage, denseCells}; a document with no stroked paths is an error",
             has_doc,
             preview_cmd
         ),
@@ -63,6 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
     v.extend(objects::specs());
     v.extend(lettering::specs());
     v.extend(production::specs());
+    v.extend(setup::specs());
     v.extend(worksheet::specs());
     v.extend(sequence::specs());
     v
@@ -219,7 +221,11 @@ fn preview_png(plan: &StitchPlan, o: &PreviewOptions) -> Result<(Vec<u8>, Value)
 
 fn preview_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let format = text_param(p, "format", PREVIEW)?.unwrap_or("dst");
-    let o = preview_options(p)?;
+    let mut o = preview_options(p)?;
+    // Without a fabric given, the document's (stitch.setup).
+    if p.get("fabric").is_none_or(Value::is_null) {
+        o.fabric = s.doc()?.doc.stitch.fabric();
+    }
     let path = text_param(p, "path", PREVIEW)?;
     let selection = selected(s, p, PREVIEW)?;
     let (plan, warnings) = stitchfile::plan(PREVIEW, &s.doc()?.doc, p, format, selection)?;
