@@ -281,3 +281,20 @@ fn bottom_join_leaves_letters_along_the_baseline() {
         assert_eq!(stats(&joined.plan).trims, stats(&plan_of(&text_doc(text, 15.0, StitchProps::default())).plan).trims, "{text}");
     }
 }
+
+/// STI-38: a 25 mm H's legs keep their width through the junctions with its bar (they bulged
+/// into the bar, looked at in StitchCraft): no rung of a column is much wider than its median.
+#[test]
+fn an_h_keeps_its_legs_even_at_the_junctions() {
+    let doc = text_doc("H", 38.0, StitchProps::default());
+    let l = lettered(&doc);
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let letters = letters_of(t).unwrap();
+    let s = crate::lettering::shape_letter(&letters[0].rings, l.mode, &l.params).unwrap();
+    for c in &s.columns {
+        let mut w: Vec<f64> = c.left.iter().zip(&c.right).map(|(a, b)| (a.0 - b.0).hypot(a.1 - b.1)).collect();
+        w.sort_by(f64::total_cmp);
+        let (median, widest) = (w[w.len() / 2], w[w.len() - 1]);
+        assert!(widest < 1.25 * median, "a column {median:.2} mm wide reaches {widest:.2} mm");
+    }
+}

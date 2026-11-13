@@ -622,7 +622,7 @@ pub(crate) fn strokes(gr: &Graph, grid: &Grid, segs: &[(P, P)], column_at: impl 
         out.push(s);
     }
     out.retain(|s| s.centre.len() >= 2);
-    trim_branches(&mut out, gr);
+    trim_branches(&mut out, gr, &column_at);
     out
 }
 
@@ -666,11 +666,15 @@ fn assemble(a: usize, b: usize, sides: Vec<Arm>, turns: &[Option<Turn>]) -> Stro
 /// How far a branch's column reaches into the stroke it meets, mm: enough overlap that no gap
 /// shows, without its stitches lying across the other column.
 const BRANCH_OVERLAP_MM: f64 = 0.2;
+/// How far from a junction, in its half widths, a through stroke's rails are held even.
+const JUNCTION_REACH: f64 = 2.5;
+/// How much wider than its median a stroke may be near a junction.
+const EVEN_PLAY: f64 = 1.15;
 
 /// At a junction where two strokes run on through (the stem of an H, the bar of a T), the other
 /// strokes meeting there are branches: their columns start at the through stroke's edge, a
 /// little inside it, rather than at its centre, where their stitches would lie across it.
-fn trim_branches(strokes: &mut [Stroke], gr: &Graph) {
+fn trim_branches(strokes: &mut [Stroke], gr: &Graph, column_at: &impl Fn(f64) -> bool) {
     for (n, node) in gr.nodes.iter().enumerate() {
         // The stroke ends at this node: (stroke, at its start?), with the direction into it.
         let mut ends: Vec<(usize, bool, P)> = vec![];
@@ -705,6 +709,36 @@ fn trim_branches(strokes: &mut [Stroke], gr: &Graph) {
             }
         }
         let Some((x, y, _)) = best else { continue };
+        // Near the junction a normal can reach into another stroke meeting there, and the rung
+        // bulges into it: each stroke's rails are held there to its own width (its median half
+        // width, with some play), the other stroke covering its own side.
+        for &(i, start, _) in &ends {
+            let Some(s) = strokes.get_mut(i) else { continue };
+            let mut half: Vec<f64> = s.left.iter().zip(&s.right).map(|(l, r)| dist(*l, *r) / 2.0).collect();
+            half.sort_by(f64::total_cmp);
+            let hold = half.get(half.len() / 2).copied().unwrap_or(0.0) * EVEN_PLAY;
+            if hold <= 0.0 {
+                continue;
+            }
+            let n = s.centre.len();
+            for j in 0..n {
+                let idx = if start { j } else { n - 1 - j };
+                let Some(q) = s.centre.get(idx).copied() else { break };
+                if dist(q, node.pos) >= node.r * JUNCTION_REACH {
+                    break;
+                }
+                for side in [s.left.get_mut(idx), s.right.get_mut(idx)].into_iter().flatten() {
+                    let d = dist(q, *side);
+                    if d > hold {
+                        *side = (q.0 + (side.0 - q.0) * hold / d, q.1 + (side.1 - q.1) * hold / d);
+                    }
+                }
+                // Narrower now: still a column only where wide enough.
+                if let (Some(l), Some(r), Some(f)) = (s.left.get(idx).copied(), s.right.get(idx).copied(), s.column.get_mut(idx)) {
+                    *f = *f && column_at(dist(l, r));
+                }
+            }
+        }
         let reach = node.r - BRANCH_OVERLAP_MM;
         if reach <= 0.0 {
             continue;

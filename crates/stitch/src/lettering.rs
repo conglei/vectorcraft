@@ -55,9 +55,14 @@ pub const UNDERLAY_LENGTH_MM: f64 = 2.0;
 /// shortened on curves to keep within it (estimated).
 pub const RUN_CHORD_MM: f64 = 0.1;
 /// The shortest running stitch a curve is cut into, mm (estimated).
-pub const RUN_MIN_MM: f64 = 0.6;
+pub const RUN_MIN_MM: f64 = 0.4;
 /// Smoothing passes over a running-stitch letter's centre lines, beyond the columns' own.
-const RUN_SMOOTHING: usize = 3;
+const RUN_SMOOTHING: usize = 6;
+/// A running-stitch letter's corner stays one where its line turns by more than this, measured
+/// [`RUN_CORNER_REACH_MM`] each side (a thin stroke's skeleton marks many small bends as corners).
+const RUN_CORNER_TURN_DEG: f64 = 75.0;
+/// How far each side of a corner its turn is measured, mm.
+const RUN_CORNER_REACH_MM: f64 = 0.3;
 /// Letters closer than this, mm, are joined by a stitch rather than a jump.
 pub const NO_TRIM_GAP_MM: f64 = 1.2;
 /// How far apart the points are that check whether a walk stays inside a letter, mm.
@@ -734,6 +739,24 @@ fn sew_letter(l: &Prepared, p: &LetteringParams, from: Option<Pt>, target: P, bu
 /// A running-stitch letter's centre line smoothed further: its skeleton is only a few pixels
 /// wide and steps show at a short stitch. Its ends and corners stay where they are.
 fn smooth_run(s: &mut Stroke) {
+    let n = s.centre.len();
+    let reach = (RUN_CORNER_REACH_MM / columns::STEP_MM).ceil() as usize;
+    for i in 0..n {
+        if !s.bend.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        let (Some(a), Some(b), Some(c)) = (s.centre.get(i.saturating_sub(reach)), s.centre.get(i), s.centre.get((i + reach).min(n - 1))) else {
+            continue;
+        };
+        let (u, v) = ((b.0 - a.0, b.1 - a.1), (c.0 - b.0, c.1 - b.1));
+        let (lu, lv) = (u.0.hypot(u.1), v.0.hypot(v.1));
+        let turn = if lu > 1e-9 && lv > 1e-9 { ((u.0 * v.0 + u.1 * v.1) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees() } else { 0.0 };
+        if turn < RUN_CORNER_TURN_DEG
+            && let Some(f) = s.bend.get_mut(i)
+        {
+            *f = false;
+        }
+    }
     for _ in 0..RUN_SMOOTHING {
         let prev = s.centre.clone();
         for i in 1..prev.len().saturating_sub(1) {
