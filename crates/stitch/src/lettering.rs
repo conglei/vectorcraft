@@ -357,7 +357,7 @@ impl Router<'_> {
                 if !forward {
                     c.reverse();
                 }
-                run_stitches(&c, &[], false, units(self.p.run_length))
+                run_stitches(&c, &[], false, units(self.p.run_length.min(self.out.max)))
             };
             self.out.add(&pts)?;
         }
@@ -390,7 +390,8 @@ impl Router<'_> {
             let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
             let (forward, v) = if s.a == u { (true, s.b) } else { (false, s.a) };
             let under = self.p.underlay && self.a.mode == LetterMode::Satin && self.has_column(i);
-            let walk = if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM };
+            // Held under the longest stitch, which rounding to plan units would otherwise pass.
+            let walk = (if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM }).min(self.out.max);
             if last {
                 if under {
                     self.travel(i, forward, walk)?;
