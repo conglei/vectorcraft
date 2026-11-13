@@ -326,7 +326,12 @@ fn saved_views_round_trip_and_from_a_file_are_tidied() {
 fn arb_stitch_props() -> impl Strategy<Value = vectorcraft_doc::StitchProps> {
     use vectorcraft_doc::{StitchProps, StitchType};
     let num = || prop::option::of(-50.0f64..50.0);
-    (prop::sample::select(StitchType::ALL.to_vec()), (num(), num(), num(), num()), (num(), num(), num(), num()), prop::option::of(prop::sample::select(vectorcraft_doc::Underlay::ALL.to_vec())))
+    (
+        prop::sample::select(StitchType::ALL.to_vec()),
+        (num(), num(), num(), num()),
+        (num(), num(), num(), num()),
+        prop::option::of(prop::sample::select(vectorcraft_doc::Underlay::ALL.to_vec())),
+    )
         .prop_map(|(kind, (a, b, c, d), (e, f, g, h), underlay)| StitchProps {
             kind,
             fill_angle: a,
