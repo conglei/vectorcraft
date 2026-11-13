@@ -35,6 +35,8 @@ pub struct AppIdentity {
     /// Documents open in the stitch view (View › Stitches: the canvas shows the stitches an export
     /// would sew) instead of Preview.
     pub stitch_view: bool,
+    /// The line under the welcome on the Home screen: what the app is for.
+    pub tagline: &'static str,
 }
 
 /// VectorCraft, the vector illustration app.
@@ -50,6 +52,7 @@ pub const VECTORCRAFT: AppIdentity = AppIdentity {
     default_workspace: None,
     default_unit: None,
     stitch_view: false,
+    tagline: "Vector illustration — fast, open, scriptable.",
 };
 
 static CURRENT: OnceLock<&'static AppIdentity> = OnceLock::new();

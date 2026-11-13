@@ -243,7 +243,7 @@ pub fn run(ident: &'static AppIdentity) -> std::process::ExitCode {
     // First: the name, the settings folder and the brand mark every later step reads.
     identity::set(ident);
     prefs_dir::set_app_folder(ident.name, ident.lower);
-    vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand { name: ident.name, mark_png: ident.brand_png });
+    vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand { name: ident.name, mark_png: ident.brand_png, tagline: ident.tagline });
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
     if let Some(result) = craft_update::self_update::finish(&vectorcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {

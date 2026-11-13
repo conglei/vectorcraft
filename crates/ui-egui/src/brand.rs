@@ -15,7 +15,12 @@ pub struct AppBrand {
     pub name: &'static str,
     /// The brand mark: a 128 px PNG of the app icon, with its rounded corners.
     pub mark_png: &'static [u8],
+    /// The line under the welcome on the Home screen: what the app is for.
+    pub tagline: &'static str,
 }
+
+/// The tagline of VectorCraft, which is also the default.
+const TAGLINE: &str = "Vector illustration — fast, open, scriptable.";
 
 static BRAND: std::sync::OnceLock<AppBrand> = std::sync::OnceLock::new();
 
@@ -27,12 +32,28 @@ pub fn set_app_brand(brand: AppBrand) {
 }
 
 fn brand() -> AppBrand {
-    BRAND.get().copied().unwrap_or(AppBrand { name: "VectorCraft", mark_png: ICON_PNG })
+    BRAND.get().copied().unwrap_or(AppBrand { name: "VectorCraft", mark_png: ICON_PNG, tagline: TAGLINE })
 }
 
 /// The app's name ([`set_app_brand`]; VectorCraft by default).
 pub fn app_name() -> &'static str {
     brand().name
+}
+
+/// The line under the welcome on the Home screen ([`set_app_brand`]).
+pub fn tagline() -> &'static str {
+    brand().tagline
+}
+
+/// [`rename`] for a menu label, which stays as it is (without copying it) in VectorCraft and in a
+/// label that doesn't name the app.
+pub(crate) fn rename_label(label: std::borrow::Cow<'static, str>) -> std::borrow::Cow<'static, str> {
+    rename_with(app_name(), label)
+}
+
+/// [`rename_label`] for the app called `name`.
+fn rename_with(name: &str, label: std::borrow::Cow<'static, str>) -> std::borrow::Cow<'static, str> {
+    if name == "VectorCraft" || !label.contains("VectorCraft") { label } else { label.replace("VectorCraft", name).into() }
 }
 
 /// `text` with VectorCraft's name replaced by the running app's ([`app_name`]): for the few labels
@@ -80,6 +101,18 @@ pub fn texture_id(ctx: &Context) -> egui::TextureId {
 mod tests {
     use super::*;
     use crate::VectorcraftApp;
+
+    #[test]
+    fn a_label_that_names_the_app_names_the_running_one() {
+        use std::borrow::Cow;
+        let renamed = rename_with("StitchCraft", Cow::Borrowed("About VectorCraft"));
+        assert_eq!(renamed, "About StitchCraft");
+        // A label that doesn't name the app, and VectorCraft's own, are not copied.
+        assert!(matches!(rename_with("StitchCraft", Cow::Borrowed("Save As…")), Cow::Borrowed(_)));
+        assert!(matches!(rename_with("VectorCraft", Cow::Borrowed("About VectorCraft")), Cow::Borrowed(_)));
+        // The default brand is VectorCraft's (the tests of this crate run under it).
+        assert_eq!((app_name(), tagline()), ("VectorCraft", TAGLINE));
+    }
 
     #[test]
     fn the_icon_decodes_to_a_rounded_128_px_tile() {

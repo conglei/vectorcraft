@@ -28,6 +28,7 @@ const STITCHCRAFT: AppIdentity = AppIdentity {
     default_unit: Some("Millimeters"),
     // Embroidery is this app's work: the canvas shows the stitches, not the drawing they come from.
     stitch_view: true,
+    tagline: "Embroidery digitizing: art and photos to stitches.",
 };
 
 fn main() -> std::process::ExitCode {
@@ -53,7 +54,11 @@ mod tests {
     /// workspace in millimetres.
     #[test]
     fn the_window_says_stitchcraft_and_its_first_start_is_the_embroidery_workspace() {
-        vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand { name: STITCHCRAFT.name, mark_png: STITCHCRAFT.brand_png });
+        vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand {
+            name: STITCHCRAFT.name,
+            mark_png: STITCHCRAFT.brand_png,
+            tagline: STITCHCRAFT.tagline,
+        });
         let mut app = vectorcraft_ui_egui::VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
         assert_eq!(vectorcraft_ui_egui::chrome::window_title(&app), "StitchCraft");
         assert_eq!(vectorcraft_ui_egui::app_name(), "StitchCraft");
@@ -73,6 +78,32 @@ mod tests {
         // New documents are measured in millimetres.
         app.run("file.new", serde_json::json!({})).unwrap();
         assert_eq!(format!("{:?}", app.session.general_unit()), "Millimeters");
+    }
+
+    /// The menus (`ui.menu.list`, the in-window bar), the Home screen's tagline and the community links
+    /// name StitchCraft, not VectorCraft.
+    #[test]
+    fn the_menus_and_the_home_screen_name_stitchcraft() {
+        vectorcraft_ui_egui::set_app_brand(vectorcraft_ui_egui::AppBrand {
+            name: STITCHCRAFT.name,
+            mark_png: STITCHCRAFT.brand_png,
+            tagline: STITCHCRAFT.tagline,
+        });
+        let app = vectorcraft_ui_egui::VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        let entries = vectorcraft_ui_egui::menus::menu_entries(&app);
+        let named: Vec<String> = entries
+            .iter()
+            .filter(|e| e.label.contains("Craft") || e.path.iter().any(|p| p.contains("Craft")))
+            .map(|e| format!("{} / {}", e.path.join(" / "), e.label))
+            .collect();
+        assert!(named.iter().all(|n| !n.contains("VectorCraft")), "{named:?}");
+        for want in
+            ["StitchCraft / About StitchCraft", "Help / About StitchCraft", "Help / StitchCraft on getartcraft.com", "Help / StitchCraft on GitHub"]
+        {
+            assert!(named.iter().any(|n| n == want), "{want} in {named:?}");
+        }
+        assert_eq!(vectorcraft_ui_egui::tagline(), STITCHCRAFT.tagline);
+        assert!(!vectorcraft_ui_egui::tagline().contains("Vector"));
     }
 
     #[test]

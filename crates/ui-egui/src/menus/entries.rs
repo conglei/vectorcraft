@@ -39,7 +39,7 @@ pub fn entry<'a>(app: &VectorcraftApp, it: &'a Item) -> Option<Entry<'a>> {
         Item::Todo(label, sc) => Entry::Item(Row {
             command: None,
             source: label,
-            label: t(label).into(),
+            label: crate::brand::rename_label(t(label).into()),
             shortcut: Some(*sc).filter(|s| !s.is_empty()),
             enabled: false,
             checked: None,
@@ -49,11 +49,14 @@ pub fn entry<'a>(app: &VectorcraftApp, it: &'a Item) -> Option<Entry<'a>> {
             Entry::Item(Row {
                 command: Some((id, p)),
                 source: label,
-                label: effect_item_label(id, p)
-                    .or_else(|| unlock_item_label(app, id, p, crate::i18n::current()))
-                    .or_else(|| spelling_item_label(id, p))
-                    .unwrap_or_else(|| display_label(app, id, label))
-                    .into(),
+                // The items that name the app (About, Help) name the running one.
+                label: crate::brand::rename_label(
+                    effect_item_label(id, p)
+                        .or_else(|| unlock_item_label(app, id, p, crate::i18n::current()))
+                        .or_else(|| spelling_item_label(id, p))
+                        .unwrap_or_else(|| display_label(app, id, label))
+                        .into(),
+                ),
                 shortcut: item_shortcut(id, p),
                 enabled,
                 checked,
@@ -111,7 +114,9 @@ pub struct MenuEntry {
 pub fn menu_entries(app: &VectorcraftApp) -> Vec<MenuEntry> {
     let mut out = vec![];
     for (title, items) in menu_tree_named(app.session.prefs.font_names_in_english) {
-        flatten(app, vec![title.to_string()], &items, &mut out);
+        // The application menu is named for the running app, as the native bar names it.
+        let title = crate::brand::rename_label(title.into());
+        flatten(app, vec![title.into_owned()], &items, &mut out);
     }
     out
 }
@@ -130,9 +135,13 @@ fn flatten(app: &VectorcraftApp, path: Vec<String>, items: &[Item], out: &mut Ve
                 let Some((enabled, _)) = shown_state(app, id, p) else { continue };
                 out.push(MenuEntry {
                     path: path.clone(),
-                    label: unlock_item_label(app, id, p, crate::i18n::Lang::EN)
-                        .or_else(|| spelling_item_label(id, p))
-                        .unwrap_or_else(|| dynamic_label(app, id, l)),
+                    label: crate::brand::rename_label(
+                        unlock_item_label(app, id, p, crate::i18n::Lang::EN)
+                            .or_else(|| spelling_item_label(id, p))
+                            .unwrap_or_else(|| dynamic_label(app, id, l))
+                            .into(),
+                    )
+                    .into_owned(),
                     command: Some(id.to_string()),
                     params: p.clone(),
                     enabled,
@@ -141,7 +150,7 @@ fn flatten(app: &VectorcraftApp, path: Vec<String>, items: &[Item], out: &mut Ve
             }
             Item::Todo(l, sc) => out.push(MenuEntry {
                 path: path.clone(),
-                label: l.to_string(),
+                label: crate::brand::rename_label((*l).into()).into_owned(),
                 command: None,
                 params: Value::Null,
                 enabled: false,
