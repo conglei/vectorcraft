@@ -532,7 +532,7 @@ fn encode_files(doc: &Document, f: &Format, p: &Value) -> Result<Encoded> {
         "svg" | "svgz" => return super::svg::encode(doc, p, f.id == "svgz").map_err(|e| bad(C, e)),
         "dxf" => return super::dxf::encode(doc, p, use_artboards),
         // `selectedOnly` already left the rest out of `doc`.
-        "dst" | "dsb" | "exp" => return super::stitchfile::encode(doc, p, f.id, None),
+        "dst" | "dsb" | "exp" | "u01" | "tbf" | "pes" | "pec" => return super::stitchfile::encode(doc, p, f.id, None),
         // EPS reads its own `useArtboards` (the art's bounds unless asked).
         "eps" => return super::eps::encode(doc, p),
         "emf" => return super::metafile::encode(doc, p, use_artboards, vectorcraft_metafile::Kind::Emf),

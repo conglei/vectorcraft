@@ -1,4 +1,4 @@
-//! VectorCraft embroidery machine files: DST, DSB and EXP readers and writers.
+//! VectorCraft embroidery machine files: DST, DSB, EXP, U01, TBF and PES/PEC readers and writers.
 //!
 //! Writers take a [`StitchPlan`] that is already within the format's limits (the caller
 //! prepares it for the machine) and return the file's bytes. Readers treat their input as
@@ -10,10 +10,44 @@ pub mod dsb;
 pub mod dst;
 pub mod exp;
 mod palette;
+pub mod pes;
+pub mod tbf;
+pub mod u01;
 
 pub use palette::default_thread;
 
 use vectorcraft_stitch::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
+
+/// The ids of the machine file formats, as the engine's format table names them.
+pub const FORMATS: [&str; 7] = ["dst", "dsb", "exp", "u01", "tbf", "pes", "pec"];
+
+/// The file of format `format` (one of [`FORMATS`]) for `plan`.
+pub fn write_format(format: &str, plan: &StitchPlan, o: &WriteOptions) -> Result<Output, String> {
+    match format {
+        "dst" => dst::write(plan, o),
+        "dsb" => dsb::write(plan, o),
+        "exp" => exp::write(plan, o),
+        "u01" => u01::write(plan, o),
+        "tbf" => tbf::write(plan, o),
+        "pes" => pes::write(plan, o),
+        "pec" => pes::write_pec(plan, o),
+        other => Err(format!("{other} is not a stitch file format")),
+    }
+}
+
+/// The stitch plan in `bytes`, a file of format `format` (one of [`FORMATS`]). PES and PEC files
+/// are told apart by their content, so either id reads both.
+pub fn read_format(format: &str, bytes: &[u8], o: &ReadOptions) -> Result<Input, String> {
+    match format {
+        "dst" => dst::read(bytes, o),
+        "dsb" => dsb::read(bytes, o),
+        "exp" => exp::read(bytes, o),
+        "u01" => u01::read(bytes, o),
+        "tbf" => tbf::read(bytes, o),
+        "pes" | "pec" => pes::read(bytes, o),
+        other => Err(format!("{other} is not a stitch file format")),
+    }
+}
 
 /// The largest file a reader accepts.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -43,11 +77,27 @@ pub struct WriteOptions {
     pub jumps_per_trim: u8,
     /// Whether a trim is written before each colour change.
     pub trim_before_color_change: bool,
+    /// The needle (1–15) each block is sewn with, for the formats that name needles (U01, TBF).
+    /// A block past the end of the list, or given 0 or a needle over 15, takes the next needle in
+    /// turn: block `i` is needle `i % 15 + 1`, as DSB writes.
+    pub needles: Vec<u8>,
 }
 
 impl Default for WriteOptions {
     fn default() -> Self {
-        WriteOptions { start: Start::Center, return_to_start: true, jumps_per_trim: 3, trim_before_color_change: false }
+        WriteOptions { start: Start::Center, return_to_start: true, jumps_per_trim: 3, trim_before_color_change: false, needles: Vec::new() }
+    }
+}
+
+/// The most needles a format's needle codes name.
+pub const MAX_NEEDLE: u8 = 15;
+
+/// The needle block `block` is sewn with: see [`WriteOptions::needles`].
+fn needle(o: &WriteOptions, block: usize) -> u8 {
+    match o.needles.get(block) {
+        Some(&n) if (1..=MAX_NEEDLE).contains(&n) => n,
+        // `block % 15` is below 15, so it fits a u8.
+        _ => u8::try_from(block % usize::from(MAX_NEEDLE)).unwrap_or(0) + 1,
     }
 }
 
@@ -78,6 +128,9 @@ pub struct Output {
 #[derive(Debug)]
 pub struct Input {
     pub plan: StitchPlan,
+    /// The needle each block of `plan` names, for the formats that name needles (U01, TBF);
+    /// empty for the others. `None`: the file set no needle for that block.
+    pub needles: Vec<Option<u8>>,
     pub warnings: Vec<String>,
 }
 
@@ -89,7 +142,17 @@ trait Sink {
     fn stitch(&mut self, dx: i32, dy: i32) -> Result<(), String>;
     fn jump(&mut self, dx: i32, dy: i32) -> Result<(), String>;
     fn trim(&mut self) -> Result<(), String>;
+    /// The change to the next block's thread.
     fn color_change(&mut self) -> Result<(), String>;
+    /// Called once before the first record, for a format that sets the first needle.
+    fn begin(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    /// A stop in a format with a stop code of its own; `None` when it has none, and a stop is
+    /// written as a colour change.
+    fn stop(&mut self) -> Option<Result<(), String>> {
+        None
+    }
 }
 
 /// The origin of the file, in plan units: see [`Start`]. `None` when the plan has no stitch.
@@ -153,6 +216,7 @@ fn travel(sink: &mut impl Sink, a: Pt, b: Pt, max: i32) -> Result<(), String> {
 fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> Result<(), String> {
     plan.check()?;
     let start = origin(plan, o.start).ok_or("nothing to stitch")?;
+    sink.begin()?;
     let mut at = start;
     let mut started = false;
     // Whether stitches were written since the last trim or colour change: the thread is still
@@ -195,7 +259,10 @@ fn walk(plan: &StitchPlan, o: &WriteOptions, max: i32, sink: &mut impl Sink) -> 
                     attached = false;
                 }
                 // A stop pauses the machine; the thread stays attached.
-                Step::Stop => color_change(sink)?,
+                Step::Stop => match sink.stop() {
+                    Some(r) => r?,
+                    None => color_change(sink)?,
+                },
             }
         }
     }
@@ -255,6 +322,8 @@ impl Run {
 /// Builds a plan from records read from a file, with moves in file orientation.
 struct Builder {
     blocks: Vec<Block>,
+    /// The needle each block names, if any: one per block.
+    needles: Vec<Option<u8>>,
     threads: Vec<Thread>,
     /// The current position, in plan orientation (y down).
     at: Pt,
@@ -269,7 +338,7 @@ struct Builder {
 impl Builder {
     fn new(threads: Vec<Thread>, jumps_per_trim: Option<usize>) -> Builder {
         let first = Block { thread: threads.first().cloned().unwrap_or_else(|| default_thread(0)), steps: Vec::new() };
-        Builder { blocks: vec![first], threads, at: Pt::default(), run: None, jumps_per_trim, records: 0 }
+        Builder { blocks: vec![first], needles: vec![None], threads, at: Pt::default(), run: None, jumps_per_trim, records: 0 }
     }
 
     /// Counts one record and refuses a file with too many.
@@ -342,12 +411,41 @@ impl Builder {
         }
         let thread = self.threads.get(i).cloned().unwrap_or_else(|| default_thread(i));
         self.blocks.push(Block { thread, steps: Vec::new() });
+        self.needles.push(None);
         self.travel(dx, dy);
         Ok(())
     }
 
-    fn finish(mut self, name: String) -> StitchPlan {
+    /// A change to needle `n`, then the record's move, if any, as a jump. It names the needle of
+    /// the current block while that block has no stitch yet (the needle a file sets before its
+    /// first stitch, or after a stop), and starts the next block otherwise.
+    fn needle(&mut self, n: u8, dx: i32, dy: i32) -> Result<(), String> {
         self.flush(None);
-        StitchPlan { name, blocks: self.blocks }
+        let stitched = self.blocks.last().is_some_and(|b| b.steps.iter().any(|s| matches!(s, Step::Stitch(_))));
+        if stitched {
+            self.color_change(0, 0)?;
+        }
+        if let Some(last) = self.needles.last_mut() {
+            *last = Some(n);
+        }
+        self.travel(dx, dy);
+        Ok(())
+    }
+
+    /// A stop (the machine pauses, the thread stays), then the record's move, if any, as a jump.
+    fn stop(&mut self, dx: i32, dy: i32) {
+        self.flush(None);
+        self.push(Step::Stop);
+        self.travel(dx, dy);
+    }
+
+    fn finish(self, name: String) -> StitchPlan {
+        self.finish_with_needles(name).0
+    }
+
+    /// The plan, and the needle each block names.
+    fn finish_with_needles(mut self, name: String) -> (StitchPlan, Vec<Option<u8>>) {
+        self.flush(None);
+        (StitchPlan { name, blocks: self.blocks }, self.needles)
     }
 }

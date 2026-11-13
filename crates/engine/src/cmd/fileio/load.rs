@@ -93,8 +93,12 @@ pub fn detect(name: &str, bytes: &[u8]) -> Option<&'static Format> {
     if vectorcraft_cad::is_dxf(bytes) {
         return format("dxf");
     }
-    // EXP and DSB files have no signature: they are read by their extension. A DSB file has the
-    // DST header too, so a `.dsb` name wins over the content.
+    // PES and PEC files by their signature, whatever their name.
+    if vectorcraft_embroidery::pes::is_pes(bytes) {
+        return format(if bytes.starts_with(b"#PEC") { "pec" } else { "pes" });
+    }
+    // EXP, DSB, U01 and TBF files have no signature: they are read by their extension. A DSB file
+    // has the DST header too, so a `.dsb` name wins over the content.
     if vectorcraft_embroidery::dst::is_dst(bytes) {
         return by_name.filter(|f| f.id == "dsb").or_else(|| format("dst"));
     }
@@ -471,7 +475,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
             let (doc, warnings) = super::dxfimport::import(bytes, &opts.dxf)?;
             (doc, warnings, false)
         }
-        "dst" | "dsb" | "exp" => {
+        "dst" | "dsb" | "exp" | "u01" | "tbf" | "pes" | "pec" => {
             let (doc, warnings) = super::stitchfile::import(bytes, format.id, opts.stitch.as_ref())?;
             (doc, warnings, false)
         }

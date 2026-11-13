@@ -422,7 +422,11 @@ fn export_extensions_name_every_writable_format() {
             "psd",
             "dst",
             "dsb",
-            "exp"
+            "exp",
+            "u01",
+            "tbf",
+            "pes",
+            "pec"
         ]
     );
     for e in exts {
@@ -460,7 +464,11 @@ fn formats_query_lists_readers_writers_and_options() {
             "psd",
             "dst",
             "dsb",
-            "exp"
+            "exp",
+            "u01",
+            "tbf",
+            "pes",
+            "pec"
         ]
     );
     assert!(ids("readable").contains(&"tiff".to_string()) && ids("readable").contains(&"ait".to_string()));

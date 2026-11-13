@@ -150,7 +150,7 @@ pub fn read(bytes: &[u8], _o: &ReadOptions) -> Result<Input, String> {
     if !ended && warnings.is_empty() {
         warnings.push("the file has no end record".to_string());
     }
-    Ok(Input { plan: b.finish(fields.name), warnings })
+    Ok(Input { plan: b.finish(fields.name), needles: Vec::new(), warnings })
 }
 
 #[cfg(test)]

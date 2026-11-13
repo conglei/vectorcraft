@@ -81,7 +81,11 @@ fn export_tool_lists_engine_formats_and_options() {
             "psd",
             "dst",
             "dsb",
-            "exp"
+            "exp",
+            "u01",
+            "tbf",
+            "pes",
+            "pec"
         ])
     );
     for k in ["artboard", "range", "options"] {

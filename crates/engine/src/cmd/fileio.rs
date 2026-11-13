@@ -58,6 +58,8 @@ mod screens;
 pub(crate) mod stitchfile;
 /// The stitch options of a DST or EXP export, checked without exporting.
 pub use stitchfile::check as check_stitch_options;
+/// The ids of the stitch file formats (DST, DSB, EXP, U01, TBF, PES, PEC).
+pub use vectorcraft_embroidery::FORMATS as STITCH_FORMATS;
 mod svg;
 mod text;
 mod tgaread;

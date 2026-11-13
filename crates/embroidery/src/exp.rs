@@ -112,7 +112,7 @@ pub fn read(bytes: &[u8], _o: &ReadOptions) -> Result<Input, String> {
         };
         rest = rest.get(n..).unwrap_or_default();
     }
-    Ok(Input { plan: b.finish(String::new()), warnings })
+    Ok(Input { plan: b.finish(String::new()), needles: Vec::new(), warnings })
 }
 
 #[cfg(test)]

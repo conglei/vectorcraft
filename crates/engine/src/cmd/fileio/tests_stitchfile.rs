@@ -1,4 +1,4 @@
-//! DST, DSB and EXP stitch files through the commands: export with the stitch options, open by content
+//! DST, DSB, EXP, U01, TBF, PES and PEC stitch files through the commands: export with the stitch options, open by content
 //! or extension, `stitch.info`, refused options and the format table.
 
 use serde_json::{Value, json};
@@ -103,21 +103,65 @@ fn needle_points(plan: &vectorcraft_stitch::StitchPlan) -> Vec<Vec<vectorcraft_s
     plan.blocks.iter().map(|b| b.steps.iter().filter_map(|s| if let Step::Stitch(p) = s { Some(*p) } else { None }).collect()).collect()
 }
 
-/// The stitch plan in a DST or EXP file.
+/// The stitch plan in a stitch file.
 fn read_plan(format: &str, bytes: &[u8]) -> vectorcraft_stitch::StitchPlan {
-    let o = Default::default();
-    match format {
-        "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
-        "dsb" => vectorcraft_embroidery::dsb::read(bytes, &o),
-        _ => vectorcraft_embroidery::exp::read(bytes, &o),
+    vectorcraft_embroidery::read_format(format, bytes, &Default::default()).unwrap().plan
+}
+
+#[test]
+fn u01_tbf_pes_and_pec_export_and_reopen() {
+    round_trip("u01", "a.u01", Some(&[b'0'; 128]));
+    round_trip("tbf", "a.tbf", Some(b"3.00"));
+    round_trip("pes", "a.pes", Some(b"#PES0001"));
+    round_trip("pec", "a.pec", Some(b"#PEC0001"));
+    // PES and PEC open by their content whatever the name; U01 and TBF by their extension.
+    for (format, name, opened) in [("pes", "a.bin", "pes"), ("pec", "a.pes", "pec"), ("u01", "a.u01", "u01"), ("tbf", "a.tbf", "tbf")] {
+        let mut s = red_rectangle();
+        let bytes = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
+        let r = s.execute("document.open", &json!({"name": name, "dataBase64": vectorcraft_format::base64_encode(&bytes)})).unwrap();
+        assert_eq!(r["format"], opened, "{format} as {name}");
     }
-    .unwrap()
-    .plan
+}
+
+/// Three stroked rectangles, red, blue and red again, side by side.
+fn red_blue_red() -> Session {
+    let mut s = session();
+    s.execute("paint.setFill", &json!({"none": true})).unwrap();
+    for (i, colour) in ["#ff0000", "#0000ff", "#ff0000"].into_iter().enumerate() {
+        // Nothing selected: the colour is for the next shape, not the last one.
+        s.execute("select.set", &json!({"ids": []})).unwrap();
+        s.execute("paint.setStroke", &json!({"color": colour})).unwrap();
+        s.execute("shape.rectangle", &json!({"x": 60 * i, "y": 0, "width": 40, "height": 40})).unwrap();
+    }
+    s
+}
+
+#[test]
+fn u01_and_tbf_name_the_needles_the_machine_assigns() {
+    let mut s = red_blue_red();
+    let needles = s.execute("stitch.needles", &json!({})).unwrap();
+    assert_eq!(needles["needles"].as_array().unwrap().len(), 2, "{needles}");
+    for format in ["u01", "tbf"] {
+        let bytes = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
+        let input = vectorcraft_embroidery::read_format(format, &bytes, &Default::default()).unwrap();
+        assert!(input.warnings.is_empty(), "{format}: {:?}", input.warnings);
+        assert_eq!(input.needles, vec![Some(1), Some(2), Some(1)], "{format}: red goes back to needle 1");
+        assert_eq!(input.plan.blocks[0].thread.rgb, input.plan.blocks[2].thread.rgb, "{format}");
+    }
+    // TBF keeps the colours of its needles.
+    let bytes = b64(&s.execute("document.export", &json!({"format": "tbf"})).unwrap());
+    let plan = read_plan("tbf", &bytes);
+    assert_eq!(plan.blocks.iter().map(|b| b.thread.rgb).collect::<Vec<_>>(), vec![[255, 0, 0], [0, 0, 255], [255, 0, 0]]);
+    // PES maps them to the nearest Brother threads.
+    let bytes = b64(&s.execute("document.export", &json!({"format": "pes"})).unwrap());
+    let plan = read_plan("pes", &bytes);
+    let names: Vec<_> = plan.blocks.iter().map(|b| b.thread.name.clone().unwrap_or_default()).collect();
+    assert_eq!(names, ["Red", "Ultramarine", "Red"]);
 }
 
 #[test]
 fn an_opened_stitch_file_re_exports_its_needle_points_unchanged() {
-    for format in ["dst", "dsb", "exp"] {
+    for format in ["dst", "dsb", "exp", "u01", "tbf", "pes", "pec"] {
         let mut s = session();
         s.execute("stitch.calibration", &json!({})).unwrap();
         let first = b64(&s.execute("document.export", &json!({"format": format})).unwrap());
@@ -306,7 +350,7 @@ fn bad_stitch_options_are_refused() {
 fn an_empty_document_is_an_error_not_an_empty_file() {
     let mut s = session();
     for id in ["document.export", "stitch.info"] {
-        for format in ["dst", "dsb", "exp"] {
+        for format in ["dst", "dsb", "exp", "u01", "tbf", "pes", "pec"] {
             let e = s.execute(id, &json!({"format": format})).unwrap_err().to_string();
             assert!(e.contains("nothing to stitch"), "{id} {format}: {e}");
         }
@@ -327,7 +371,15 @@ fn a_file_of_too_many_colour_changes_is_refused() {
 fn the_formats_are_listed() {
     let mut s = Session::new();
     let r = s.execute("document.formats", &json!({})).unwrap();
-    for (id, label, max) in [("dst", "DST stitch file", 12.1), ("dsb", "DSB stitch file", 12.7), ("exp", "EXP stitch file", 12.7)] {
+    for (id, label, max) in [
+        ("dst", "DST stitch file", 12.1),
+        ("dsb", "DSB stitch file", 12.7),
+        ("exp", "EXP stitch file", 12.7),
+        ("u01", "U01 stitch file", 12.7),
+        ("tbf", "TBF stitch file", 12.7),
+        ("pes", "PES stitch file", 12.1),
+        ("pec", "PEC stitch file", 12.1),
+    ] {
         let f = r["formats"].as_array().unwrap().iter().find(|f| f["id"] == id).unwrap_or_else(|| panic!("{id} not listed"));
         assert_eq!((f["read"].as_bool(), f["write"].as_bool(), f["raster"].as_bool()), (Some(true), Some(true), Some(false)), "{f}");
         assert_eq!(f["label"], label);
@@ -344,6 +396,13 @@ fn the_formats_are_listed() {
     assert_eq!(detect("a.dsb", &[0x0A, 0x00]).map(|f| f.id), Some("dsb"), "DSB by its extension");
     assert_eq!(detect("a.dsb", b"LA:design").map(|f| f.id), Some("dsb"), "its DST-style header does not make it DST");
     assert_eq!(detect("a.exp", &[0x0A, 0x00]).map(|f| f.id), Some("exp"), "EXP by its extension");
+    assert_eq!(detect("a.u01", &[b'0'; 300]).map(|f| f.id), Some("u01"), "U01 by its extension");
+    assert_eq!(detect("a.tbf", b"3.00    ").map(|f| f.id), Some("tbf"), "TBF by its extension");
+    assert_eq!(detect("a.bin", b"#PES0060\0\0\0\0").map(|f| f.id), Some("pes"), "PES by its content");
+    assert_eq!(detect("a.pes", b"#PEC0001LA:").map(|f| f.id), Some("pec"), "PEC by its content");
+    // The longest stitch of each format.
+    assert!(check_stitch_options(&json!({"maxStitch": 12.7}), "u01").is_ok() && check_stitch_options(&json!({"maxStitch": 12.7}), "tbf").is_ok());
+    assert!(check_stitch_options(&json!({"maxStitch": 12.2}), "pes").is_err() && check_stitch_options(&json!({"maxStitch": 12.1}), "pec").is_ok());
 }
 
 #[test]
@@ -596,6 +655,11 @@ fn bai_mirror_warns_for_a_format_its_panel_does_not_read() {
     assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("panel reads DST and DSB, not EXP"))), "{exp}");
     let file = s.execute("document.export", &json!({"format": "exp", "machine": "bai_mirror"})).unwrap();
     assert!(file["warnings"].to_string().contains("not EXP"), "{file}");
+    // Nor U01, TBF or PES, which no public page lists for its panel.
+    for format in ["u01", "tbf", "pes"] {
+        let info = s.execute("stitch.info", &json!({"machine": "bai_mirror", "format": format})).unwrap();
+        assert!(info["warnings"].to_string().contains(&format!("not {}", format.to_uppercase())), "{info}");
+    }
     // The other machines do not know their formats, so they do not warn.
     let other = s.execute("stitch.info", &json!({"machine": "commercial15", "format": "exp"})).unwrap();
     assert!(!other["warnings"].to_string().contains("panel"), "{other}");
