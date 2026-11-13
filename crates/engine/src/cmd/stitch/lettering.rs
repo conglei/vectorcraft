@@ -108,13 +108,13 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A line in mm as an open or closed subpath in document points.
-fn subpath(pts: &[(f64, f64)], closed: bool) -> SubPath {
+pub(super) fn subpath(pts: &[(f64, f64)], closed: bool) -> SubPath {
     let pts: Vec<Point> = pts.iter().map(|q| Point::new(q.0 * PT_PER_MM, q.1 * PT_PER_MM)).collect();
     SubPath::polyline(&pts, closed)
 }
 
 /// A stitch object: a path, or a compound path of several subpaths, painted and with `props`.
-fn stitch_object(d: &mut Document, subpaths: Vec<SubPath>, look: Appearance, props: StitchProps) -> Node {
+pub(super) fn stitch_object(d: &mut Document, subpaths: Vec<SubPath>, look: Appearance, props: StitchProps) -> Node {
     let id = d.alloc_id();
     let mut n = if subpaths.len() == 1 {
         Node::path(id, PathData { subpaths }, look)

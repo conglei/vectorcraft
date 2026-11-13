@@ -13,6 +13,7 @@ pub mod action_playback;
 pub mod action_set_options;
 pub mod action_stop;
 pub mod artboard_options;
+pub mod auto_digitize;
 pub mod blend_options;
 mod brush_art_options;
 pub mod brush_delete;
@@ -397,6 +398,7 @@ registry! {
     DivideSlices: [slices::DIVIDE] => slices::DIVIDE_SPEC,
     EpsOptions: [eps_options::KIND] => eps_options::SPEC,
     PhotoStitch: [photo_stitch::KIND] => photo_stitch::SPEC,
+    AutoDigitizeImage: [auto_digitize::KIND] => auto_digitize::SPEC,
     StitchInfo: [stitch_info::KIND] => stitch_info::SPEC,
     StitchOptions: [stitch_options::KIND] => stitch_options::SPEC,
     StitchWorksheet: [stitch_production::WORKSHEET] => stitch_production::WORKSHEET_SPEC,

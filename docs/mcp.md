@@ -244,6 +244,11 @@ photo for embroidery faithfully and returns `provider`, `width`, `height`, `like
 and `path` (where it was written) or `pngBase64`; `run_command photo.providers` lists the providers. `nomodel` works on this computer
 only; `gemini` sends the photo to Google's Gemini API and runs only when named (`provider: "gemini"`) or chosen
 by the `photoProvider` preference, with `GEMINI_API_KEY` set where the server runs.
+Auto-digitizing has no tool of its own yet: `run_command stitch.autoDigitize.info {ids?, minColumn?, maxSatin?}`
+says what each shape would become (`run`, `satin`, `fill` or `mixed`, with counts),
+`run_command stitch.autoDigitize {ids?, minColumn?, maxSatin?, keepSource?}` replaces the shapes with satin
+columns, fills and runs chosen by width, and `run_command image.autoDigitize {id?, colors?, minRegionMm2?, maxSatin?, keepImage?}`
+does the same for every region of a traced image, then sorts by colour and joins closest.
 
 `photo_to_stitches {file | image, provider?, colors?, chart?, widthMm?, heightMm?, fill?: field|tatami|rows|meander,
 spacing?, color?, minLength?, maxLength?, feather?, featherEdges?, seed?, minArea?, mergeGapMm?, minRegionMm2?,

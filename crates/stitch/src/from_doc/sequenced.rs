@@ -541,3 +541,34 @@ pub fn outline_fraction(n: &Node, p: Pt) -> Option<f64> {
 pub(super) fn points_of(n: &Node, t: (Option<f64>, Option<f64>)) -> (Option<Pt>, Option<Pt>) {
     (t.0.and_then(|t| outline_point(n, t)), t.1.and_then(|t| outline_point(n, t)))
 }
+
+/// Sort by Colour of `seq`: the sewing order [`crate::sequence::colour_sort`] gives, as ids.
+pub fn colour_sort_order(seq: &Sequenced) -> Vec<NodeId> {
+    let items: Vec<Item> = seq.items.iter().map(|i| i.item.clone()).collect();
+    crate::sequence::colour_sort(&items).iter().filter_map(|&i| seq.items.get(i)).map(|i| i.id).collect()
+}
+
+/// An object's join entry and exit, as fractions along its outline.
+pub type JoinFractions = (Option<f64>, Option<f64>);
+
+/// Closest Join of `seq` ([`crate::sequence::closest_join`]): for each object of `doc` whose join
+/// entry and exit (outline fractions) it changes, the new ones. Objects with one way (pinned, or
+/// an opened stitch file's) are left out.
+pub fn closest_join_ways(doc: &Document, seq: &Sequenced) -> Vec<(NodeId, JoinFractions)> {
+    let items: Vec<Item> = seq.items.iter().map(|i| i.item.clone()).collect();
+    let current: Vec<usize> = seq.items.iter().map(|i| i.way).collect();
+    let ways = crate::sequence::closest_join(&items, &current, &seq.ends);
+    let mut out = vec![];
+    for (it, w) in seq.items.iter().zip(&ways) {
+        if it.item.ways.len() < 2 {
+            continue;
+        }
+        let (Some(way), Some(n)) = (it.item.ways.get(*w), doc.node(it.id)) else { continue };
+        let before = n.stitch_props().copied().unwrap_or_default();
+        let new = (outline_fraction(n, way.entry), outline_fraction(n, way.exit));
+        if (before.join_entry, before.join_exit) != new {
+            out.push((it.id, new));
+        }
+    }
+    out
+}

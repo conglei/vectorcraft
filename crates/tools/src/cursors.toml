@@ -820,3 +820,9 @@ why = "They show the Crosshair, and the app draws the brush's real size and tilt
 [[not_needed]]
 what = "Shape, line, grid, flare, graph, cut and gradient tools"
 why = "The generic Crosshair is the intended drawing cursor for them."
+
+[[cursor]]
+id = "AutoDigitize"
+group = "Embroidery tools"
+shown_when = ["The Auto-Digitize tool (StitchCraft) over an object: a click replaces the object with satin columns, fills and running stitch chosen by its width. Away from objects the tool shows NotAllowed."]
+hotspot = "The point clicked: the object under it is digitized."

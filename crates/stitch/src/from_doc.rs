@@ -30,7 +30,7 @@ mod tests_sequence;
 mod text;
 
 use sequenced::{FillSpec, Run, Unit, points_of};
-pub use sequenced::{SequenceItem, Sequenced, covered_fills, outline_fraction, outline_point, sequence};
+pub use sequenced::{SequenceItem, Sequenced, closest_join_ways, colour_sort_order, covered_fills, outline_fraction, outline_point, sequence};
 pub use text::{Lettered, lettering_of, lettering_params, letters_of, text_mode};
 
 /// Letters closer than [`crate::NO_TRIM_GAP_MM`], in plan units, are joined by a stitch.
@@ -532,12 +532,18 @@ impl<'o> Walk<'o> {
             return Ok(());
         }
         let (mut left, mut right) = (resample(&left, n), resample(&right, n));
-        // Rails drawn the opposite way round are turned to run together.
-        if let (Some(l0), Some(l1), Some(r0), Some(r1)) = (left.first(), left.last(), right.first(), right.last()) {
-            let d = |p: &(f64, f64), q: &(f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
-            if d(l0, r1) + d(l1, r0) < d(l0, r0) + d(l1, r1) {
-                right.reverse();
-            }
+        // Rails drawn the opposite way round are turned to run together. Their ends and middles
+        // and quarters are compared: a closed column (a ring) starts and ends at one place, so only
+        // its quarters tell the two ways apart.
+        let pairing = |turned: bool| -> f64 {
+            [0, n / 4, n / 2, 3 * n / 4, n - 1]
+                .iter()
+                .filter_map(|&i| Some((left.get(i)?, right.get(if turned { n - 1 - i } else { i })?)))
+                .map(|(p, q)| (p.0 - q.0).hypot(p.1 - q.1))
+                .sum()
+        };
+        if pairing(true) < pairing(false) {
+            right.reverse();
         }
         let p = RailsParams {
             spacing: props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing),
@@ -797,6 +803,26 @@ fn flatten(sp: &SubPath, budget: usize) -> Result<Flat, String> {
         corners.pop();
     }
     Ok((points, corners))
+}
+
+/// A subpath flattened to millimetres, and whether it is closed.
+pub type FlatLine = (Vec<(f64, f64)>, bool);
+
+/// The subpaths of path or compound path `n`, flattened to millimetres, each with whether it is
+/// closed (auto-digitizing reads shapes this way). More than `budget` points is an error.
+pub fn outline_mm(n: &Node, budget: usize) -> Result<Vec<FlatLine>, String> {
+    let mut sps = vec![];
+    collect_subpaths(n, &mut sps);
+    let mut out = Vec::with_capacity(sps.len());
+    let mut used = 0usize;
+    for sp in sps {
+        let (pts, _) = flatten(sp, budget.saturating_sub(used))?;
+        used = used.saturating_add(pts.len());
+        if pts.len() >= 2 {
+            out.push((pts, sp.closed && sp.segment_count() > 0));
+        }
+    }
+    Ok(out)
 }
 
 /// One needle point per anchor; a closed subpath returns to its first anchor. More than

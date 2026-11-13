@@ -157,6 +157,7 @@ pub(super) fn cursor_icon(c: Cursor) -> egui::CursorIcon {
         | Cursor::SlideAnchor
         | Cursor::SharedEdge
         | Cursor::SmartPen
-        | Cursor::StitchEntryExit => cursor_icon(c.stand_in().unwrap_or(Cursor::Crosshair)),
+        | Cursor::StitchEntryExit
+        | Cursor::AutoDigitize => cursor_icon(c.stand_in().unwrap_or(Cursor::Crosshair)),
     }
 }

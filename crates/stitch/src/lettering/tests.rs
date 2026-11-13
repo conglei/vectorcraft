@@ -148,6 +148,25 @@ fn hostile_outlines_are_refused_or_sewn_without_panicking() {
     assert_eq!(s.mode, LetterMode::Fill);
 }
 
+/// The underlay's 2 mm stitches, rounded to plan units, passed a 2 mm longest stitch (found by
+/// `random_outlines_keep_the_rules`): lettering's runs are held under the longest stitch.
+#[test]
+fn underlay_stitches_stay_under_a_short_longest_stitch() {
+    let pts = vec![
+        (0.0, 0.0),
+        (0.0, 11.171373038572924),
+        (14.225013028969077, 4.636847008723347),
+        (19.66455935951981, 1.6280633049364854),
+        (13.527165627949577, 15.26209117467225),
+    ];
+    let p = LetteringParams { min_column: 0.5, max_stitch: 2.0, ..Default::default() };
+    let sewn = sew_letters(&[letter(vec![pts])], LetterMode::Satin, &p, MAX_STEPS).unwrap();
+    assert_eq!(sewn[0].mode, LetterMode::Satin);
+    for w in sewn.iter().flat_map(|l| &l.runs).flat_map(|r| r.windows(2)) {
+        assert!(w[0].dist(w[1]) <= 20.0, "{w:?}");
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
 

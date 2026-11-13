@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4506e7982feee61ee0892f183e9af4ad3cb7467e1cd45840c9809cfe7181a185 # shrinks to pts = [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 11.171373038572924), (14.225013028969077, 4.636847008723347), (19.66455935951981, 1.6280633049364854), (13.527165627949577, 15.26209117467225)], min_column = 0.5, max = 2.0

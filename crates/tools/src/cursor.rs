@@ -205,6 +205,9 @@ pub enum Cursor {
     /// The Entry and Exit tool (Embroidery) over a selected object's entry or exit point: a drag
     /// moves it along the object's outline.
     StitchEntryExit,
+    /// The Auto-Digitize tool (StitchCraft) over an object: a click replaces it with the stitch
+    /// objects its width calls for.
+    AutoDigitize,
 }
 
 impl Cursor {
@@ -349,6 +352,7 @@ impl Cursor {
             Cursor::SmartPen => Some(Cursor::Pen),
             Cursor::ScissorsNotAllowed => Some(Cursor::NotAllowed),
             Cursor::StitchEntryExit => Some(Cursor::Crosshair),
+            Cursor::AutoDigitize => Some(Cursor::Crosshair),
             _ => None,
         }
     }
