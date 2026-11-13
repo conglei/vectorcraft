@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
-use vectorcraft_doc::{Appearance, Document, Node, NodeId, NodeKind, StitchProps, StitchType};
+use vectorcraft_doc::{Appearance, Document, Node, NodeId, NodeKind, StitchProps, StitchType, Underlay};
 use vectorcraft_geom::PathData;
 use vectorcraft_stitch::{
     AutoKind, AutoParams, COMPENSATION_MM, Column, MAX_STEPS, PT_PER_MM, StrokeKind, THREAD_WIDTH_MM, auto_shape, closest_join_ways,
@@ -258,7 +258,12 @@ fn make_parts(d: &mut Document, plan: Plan) -> Vec<Arc<Node>> {
                 stitch_object(d, rings.iter().map(|r| subpath(r, true)).collect(), Appearance::basic(thread, Paint::None, 1.0), props)
             }
             Part::Column(c) => {
-                let props = StitchProps { kind: StitchType::Satin, compensation: Some(COMPENSATION_MM), underlay: Some(true), ..Default::default() };
+                let props = StitchProps {
+                    kind: StitchType::Satin,
+                    compensation: Some(COMPENSATION_MM),
+                    underlay: Some(Underlay::Auto),
+                    ..Default::default()
+                };
                 stitch_object(d, vec![subpath(&c.left, false), subpath(&c.right, false)], stroke, props)
             }
             Part::Satin(pts, closed, width) => {

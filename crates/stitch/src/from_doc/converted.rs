@@ -4,7 +4,7 @@
 //! gathered back into strokes and sewn by lettering's router ([`crate::lettering::sew_pieces`]),
 //! with its walks, underlay and trims per word.
 
-use vectorcraft_doc::{Node, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Node, NodeKind, StitchParam, StitchProps, StitchType, Underlay};
 
 use super::{Under, Walk, collect_subpaths, flatten, paired_rails, thread, two_rails};
 use crate::MAX_STEPS;
@@ -105,7 +105,7 @@ impl Walk<'_> {
                 let style = PieceStyle {
                     spacing: props.number(StitchParam::SatinSpacing).unwrap_or(self.o.stroke.spacing),
                     compensation: props.number(StitchParam::Compensation).unwrap_or(0.0),
-                    underlay: props.underlay.unwrap_or_default(),
+                    underlay: props.underlay.unwrap_or(Underlay::None),
                 };
                 letter.columns.push((Column { left, right }, style));
                 Ok(Some(thread(&paint, &mut self.patterned)))

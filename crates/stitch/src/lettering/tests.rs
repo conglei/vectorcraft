@@ -350,3 +350,27 @@ fn a_wide_letter_with_serifs_is_a_fill_body_with_satin_serifs() {
     assert_eq!((sewn.mode, sewn.fills), (LetterMode::Satin, 1));
     assert!(sewn.columns >= 4, "{}", sewn.columns);
 }
+
+/// STI-38: automatic underlay follows the column's width: a centre run under a 2 mm bar, an edge
+/// walk under a 4 mm one, an edge walk and a zigzag under a 7 mm one; none when set so.
+#[test]
+fn underlay_is_chosen_by_the_column_width() {
+    // The x of every needle point of a bar `w` mm wide and 20 mm tall.
+    let xs = |w: f64, underlay: Underlay| -> Vec<f64> {
+        let p = LetteringParams { underlay, ..Default::default() };
+        let s = sew_letters(&[letter(vec![rect(0.0, 0.0, w, 20.0)])], LetterMode::Satin, &p, MAX_STEPS).unwrap().remove(0);
+        s.runs.iter().flatten().map(|q| q.to_mm().0).collect()
+    };
+    // Needle points at `x`, give or take a plan unit.
+    let at = |v: &[f64], x: f64| v.iter().filter(|a| (*a - x).abs() < 0.06).count();
+    let centre = xs(2.0, Underlay::Auto);
+    assert!(at(&centre, 1.0) >= 18, "a centre run there and back: {}", at(&centre, 1.0));
+    let edge = xs(4.0, Underlay::Auto);
+    assert!(at(&edge, 0.5) >= 9 && at(&edge, 3.5) >= 9, "edge walks 0.5 mm in: {} and {}", at(&edge, 0.5), at(&edge, 3.5));
+    assert_eq!(at(&edge, 2.0), 0, "no centre run");
+    let wide = xs(7.0, Underlay::Auto);
+    let edge_points = at(&wide, 0.5) + at(&wide, 6.5);
+    assert!(edge_points >= 18 + 20, "edge walks and a zigzag's points: {edge_points}");
+    let none = xs(4.0, Underlay::None);
+    assert_eq!(at(&none, 0.5) + at(&none, 2.0), 0);
+}

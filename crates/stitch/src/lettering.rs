@@ -27,14 +27,14 @@
 #[cfg(test)]
 mod tests;
 
-use vectorcraft_doc::LetterTrims;
+use vectorcraft_doc::{LetterTrims, Underlay};
 use vectorcraft_geom::FillRule;
 
 use crate::autodigitize::{Split, split_wide};
 use crate::columns::{self, Stroke, dist, extend_nodes, finite, pieces};
 use crate::fill::{FillParams, tatami};
 use crate::run::run_stitches;
-use crate::satin::{RailsParams, rails_satin};
+use crate::satin::{Pass, RailsParams, pass_stitches, passes, rails_satin, underlay_for};
 use crate::{MAX_STEPS, Pt, TOO_MANY_STEPS, UNITS_PER_MM};
 
 pub(crate) type P = (f64, f64);
@@ -75,8 +75,8 @@ pub struct LetteringParams {
     pub run_under: f64,
     /// The widest satin column.
     pub max_satin: f64,
-    /// A centre run under satin columns.
-    pub underlay: bool,
+    /// The underlay under satin columns (automatic: by each column's width).
+    pub underlay: Underlay,
     pub trims: LetterTrims,
     /// The longest stitch.
     pub max_stitch: f64,
@@ -93,7 +93,7 @@ impl Default for LetteringParams {
             min_column: MIN_COLUMN_MM,
             run_under: RUN_UNDER_MM,
             max_satin: MAX_SATIN_MM,
-            underlay: true,
+            underlay: Underlay::Auto,
             trims: LetterTrims::Word,
             max_stitch: 12.1,
             fill: FillParams::default(),
@@ -216,8 +216,8 @@ pub struct PieceStyle {
     pub spacing: f64,
     /// Pull compensation each side, mm.
     pub compensation: f64,
-    /// A centre run under it.
-    pub underlay: bool,
+    /// The underlay under it.
+    pub underlay: Underlay,
 }
 
 /// A converted letter (`text.toStitches`): its pieces as stitch objects hold them, to be sewn as
@@ -537,6 +537,43 @@ impl Router<'_> {
         self.a.strokes.get(i).is_some_and(|s| pieces(s).iter().any(|p| p.0))
     }
 
+    /// The underlay stroke `i` takes (resolved by its columns' median width): none for running
+    /// stitch and for strokes with no column.
+    fn underlay(&self, i: usize) -> Underlay {
+        if self.a.mode != LetterMode::Satin || !self.has_column(i) {
+            return Underlay::None;
+        }
+        let kind = self.a.style.get(i).copied().flatten().map_or(self.p.underlay, |o| o.underlay);
+        let Some(s) = self.a.strokes.get(i) else { return Underlay::None };
+        let mut w: Vec<f64> = s.left.iter().zip(&s.right).zip(&s.column).filter(|(_, c)| **c).map(|((a, b), _)| dist(*a, *b)).collect();
+        w.sort_by(f64::total_cmp);
+        underlay_for(kind, w.get(w.len() / 2).copied().unwrap_or(0.0))
+    }
+
+    /// Underlay pass `pass` along stroke `i`'s columns, forwards or back; a centre pass runs
+    /// along the whole centre line, as travel does.
+    fn pass(&mut self, i: usize, pass: Pass, forward: bool, walk: f64) -> Result<(), String> {
+        if pass == Pass::Centre {
+            return self.travel(i, forward, walk);
+        }
+        let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
+        let mut ps: Vec<(usize, usize)> = pieces(s).into_iter().filter(|p| p.0).map(|p| (p.1, p.2)).collect();
+        if !forward {
+            ps.reverse();
+        }
+        for (from, to) in ps {
+            let (Some(l), Some(r)) = (s.left.get(from..=to), s.right.get(from..=to)) else { continue };
+            let (mut l, mut r) = (l.to_vec(), r.to_vec());
+            if !forward {
+                l.reverse();
+                r.reverse();
+            }
+            let pts = pass_stitches(&l, &r, pass, units(walk), units(self.out.max));
+            self.out.add(&pts)?;
+        }
+        Ok(())
+    }
+
     /// Sew the strokes reached from node `u`; `back`: end at `u`. Depth is bounded by the
     /// number of strokes ([`MAX_EDGES`] and the dots of one letter).
     fn visit(&mut self, u: usize, back: bool) -> Result<(), String> {
@@ -558,14 +595,13 @@ impl Router<'_> {
             }
             let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
             let (forward, v) = if s.a == u { (true, s.b) } else { (false, s.a) };
-            let underlay = self.a.style.get(i).copied().flatten().map_or(self.p.underlay, |o| o.underlay);
-            let under = underlay && self.a.mode == LetterMode::Satin && self.has_column(i);
+            let under = self.underlay(i);
             // Held under the longest stitch, which rounding to plan units would otherwise pass.
             let walk = (if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM }).min(self.out.max);
             if last {
-                if under {
-                    self.travel(i, forward, walk)?;
-                    self.travel(i, !forward, walk)?;
+                // The underlay's passes out and back, then the satin out.
+                for (k, pass) in passes(under).iter().enumerate() {
+                    self.pass(i, *pass, forward == (k % 2 == 0), walk)?;
                 }
                 self.cover(i, forward)?;
                 if let Some(f) = self.seen.get_mut(v) {
@@ -579,6 +615,13 @@ impl Router<'_> {
                     *f = true;
                 }
                 self.visit(v, true)?;
+            }
+            // The travel out was a centre run; an edge walk or a zigzag is sewn back and out
+            // from here, then the satin back.
+            if under != Underlay::Center {
+                for (k, pass) in passes(under).iter().enumerate() {
+                    self.pass(i, *pass, forward != (k % 2 == 0), walk)?;
+                }
             }
             self.cover(i, !forward)?;
         }

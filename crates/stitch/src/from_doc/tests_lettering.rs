@@ -128,7 +128,7 @@ fn two_rails_with_satin_sew_one_column_between_them() {
     assert!(st.stitches > 90 && st.stitches < 110, "{}", st.stitches);
     // With underlay, a centre run first.
     let mut under = n;
-    under.set_stitch_props(StitchProps { underlay: Some(true), ..props });
+    under.set_stitch_props(StitchProps { underlay: Some(vectorcraft_doc::Underlay::Center), ..props });
     if let Some(c) = layer.children_mut() {
         *c = vec![Arc::new(under)];
     }

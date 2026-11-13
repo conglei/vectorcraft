@@ -116,6 +116,113 @@ impl LetterTrims {
     }
 }
 
+/// The underlay under a satin column ([`StitchProps::underlay`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Underlay {
+    /// Chosen by the column's width: a centre run when narrow, an edge walk when wider, and an
+    /// edge walk with a zigzag when wide.
+    #[default]
+    Auto,
+    /// No underlay.
+    None,
+    /// A run down the middle and back.
+    Center,
+    /// A run along each edge, inset from it.
+    Edge,
+    /// An edge walk, then a zigzag between the edges out and back.
+    Zigzag,
+}
+
+impl Underlay {
+    pub const ALL: [Underlay; 5] = [Underlay::Auto, Underlay::None, Underlay::Center, Underlay::Edge, Underlay::Zigzag];
+
+    /// The id in commands and files.
+    pub fn id(self) -> &'static str {
+        match self {
+            Underlay::Auto => "auto",
+            Underlay::None => "none",
+            Underlay::Center => "center",
+            Underlay::Edge => "edge",
+            Underlay::Zigzag => "zigzag",
+        }
+    }
+
+    /// The value named `id` ([`Underlay::id`]).
+    pub fn parse(id: &str) -> Option<Underlay> {
+        Underlay::ALL.into_iter().find(|u| u.id() == id)
+    }
+
+    /// The name in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            Underlay::Auto => "Automatic",
+            Underlay::None => "None",
+            Underlay::Center => "Center run",
+            Underlay::Edge => "Edge walk",
+            Underlay::Zigzag => "Edge walk and zigzag",
+        }
+    }
+}
+
+impl Serialize for Underlay {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.id())
+    }
+}
+
+/// Read from its id, or from the on/off of files before underlay types: on is automatic.
+impl<'de> Deserialize<'de> for Underlay {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            On(bool),
+            Id(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::On(true) => Ok(Underlay::Auto),
+            Raw::On(false) => Ok(Underlay::None),
+            Raw::Id(id) => Underlay::parse(&id).ok_or_else(|| serde::de::Error::custom(format!("unknown underlay `{id}`"))),
+        }
+    }
+}
+
+/// How lettering joins one letter to the next ([`StitchProps::letter_join`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LetterJoin {
+    /// Each letter starts at its point nearest where the last one ended.
+    #[default]
+    Closest,
+    /// Letters start and end near the baseline, joined along it.
+    Bottom,
+}
+
+impl LetterJoin {
+    pub const ALL: [LetterJoin; 2] = [LetterJoin::Closest, LetterJoin::Bottom];
+
+    /// The id in commands and files.
+    pub fn id(self) -> &'static str {
+        match self {
+            LetterJoin::Closest => "closest",
+            LetterJoin::Bottom => "bottom",
+        }
+    }
+
+    /// The value named `id` ([`LetterJoin::id`]).
+    pub fn parse(id: &str) -> Option<LetterJoin> {
+        LetterJoin::ALL.into_iter().find(|u| u.id() == id)
+    }
+
+    /// The name in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            LetterJoin::Closest => "Closest",
+            LetterJoin::Bottom => "Bottom",
+        }
+    }
+}
+
 /// A number an object may set ([`StitchProps::number`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StitchParam {
@@ -246,10 +353,11 @@ pub struct StitchProps {
     pub satin_width: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub run_length: Option<f64>,
-    /// Underlay: a centre run under two-rail satin columns and satin lettering (on by default for
-    /// lettering); not yet sewn under fills or single-path satin.
+    /// Underlay under two-rail satin columns and satin lettering (automatic by default for
+    /// lettering, by the column's width); not yet sewn under fills or single-path satin. Files
+    /// from before underlay types hold `true` (automatic) or `false` (none).
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
-    pub underlay: Option<bool>,
+    pub underlay: Option<Underlay>,
     /// Pull compensation in mm each side ([`StitchParam::Compensation`]).
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub compensation: Option<f64>,
@@ -263,6 +371,12 @@ pub struct StitchProps {
     /// Lettering: where the thread is trimmed between letters.
     #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub letter_trims: Option<LetterTrims>,
+    /// Lettering: where one letter is joined to the next.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub letter_join: Option<LetterJoin>,
+    /// Lettering: running-stitch letters are sewn as a bean (triple) run.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    pub bean: Option<bool>,
     /// Embroidery › Sequence: where sewing enters the object, as a fraction 0–1 of the way along
     /// its outline (its subpaths one after another, by arc length), so the point moves with the
     /// object when it is moved, scaled or reshaped. Only the object's own: never inherited.
@@ -426,6 +540,8 @@ impl StitchProps {
             kind: if self.kind == StitchType::Auto { outer.kind } else { self.kind },
             underlay: self.underlay.or(outer.underlay),
             letter_trims: self.letter_trims.or(outer.letter_trims),
+            letter_join: self.letter_join.or(outer.letter_join),
+            bean: self.bean.or(outer.bean),
             ..StitchProps::default()
         };
         for p in StitchParam::ALL {
@@ -533,6 +649,30 @@ mod tests {
         for t in LetterTrims::ALL {
             assert_eq!(LetterTrims::parse(t.id()), Some(t));
         }
+    }
+
+    /// STI-38: underlay types; files from before them hold true or false.
+    #[test]
+    fn underlay_types_read_old_files_and_round_trip() {
+        let old: StitchProps = serde_json::from_value(serde_json::json!({"underlay": true})).unwrap();
+        assert_eq!(old.underlay, Some(Underlay::Auto));
+        let off: StitchProps = serde_json::from_value(serde_json::json!({"underlay": false})).unwrap();
+        assert_eq!(off.underlay, Some(Underlay::None));
+        for u in Underlay::ALL {
+            let p = StitchProps { underlay: Some(u), letter_join: Some(LetterJoin::Bottom), bean: Some(true), ..Default::default() };
+            let v = serde_json::to_value(p).unwrap();
+            assert_eq!(v["underlay"], serde_json::json!(u.id()));
+            assert_eq!(serde_json::from_value::<StitchProps>(v).unwrap(), p);
+            assert_eq!(Underlay::parse(u.id()), Some(u));
+        }
+        let odd: StitchProps = serde_json::from_value(serde_json::json!({"underlay": "tatami", "letterJoin": "top", "bean": "yes"})).unwrap();
+        assert!(odd.is_empty());
+        let inner = StitchProps::default().inherit(&StitchProps {
+            underlay: Some(Underlay::Edge),
+            letter_join: Some(LetterJoin::Bottom),
+            ..Default::default()
+        });
+        assert_eq!((inner.underlay, inner.letter_join), (Some(Underlay::Edge), Some(LetterJoin::Bottom)));
     }
 
     #[test]

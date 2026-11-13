@@ -9,14 +9,14 @@
 use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType, Underlay};
 use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathData, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
 use crate::lettering::UNDERLAY_LENGTH_MM;
 use crate::plan::MM_PER_PT;
 use crate::run::run_stitches;
-use crate::satin::{RailsParams, SatinParams, rails_satin, resample, satin};
+use crate::satin::{Pass, RailsParams, SatinParams, pass_stitches, passes, rails_satin, resample, satin, underlay_for};
 use crate::to_doc::{follows_trim, is_marked};
 use crate::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
@@ -549,11 +549,32 @@ impl<'o> Walk<'o> {
             compensation: props.number(StitchParam::Compensation).unwrap_or(0.0),
         };
         let mut run: Vec<Pt> = vec![];
-        if props.underlay == Some(true) {
-            let centre: Vec<(f64, f64)> = left.iter().zip(&right).map(|(l, r)| ((l.0 + r.0) / 2.0, (l.1 + r.1) / 2.0)).collect();
-            run = run_stitches(&centre, &[], false, mm_units(UNDERLAY_LENGTH_MM));
-            left.reverse();
-            right.reverse();
+        // The underlay first: a centre run out (the satin then comes back over it), or passes out
+        // and back (the satin then goes out). Unset is none on a column of its own.
+        let width = {
+            let mut w: Vec<f64> = left.iter().zip(&right).map(|(l, r)| (l.0 - r.0).hypot(l.1 - r.1)).collect();
+            w.sort_by(f64::total_cmp);
+            w.get(w.len() / 2).copied().unwrap_or(0.0)
+        };
+        let kind = underlay_for(props.underlay.unwrap_or(Underlay::None), width);
+        let ways: &[Pass] = if kind == Underlay::Center { &[Pass::Centre] } else { passes(kind) };
+        for (k, pass) in ways.iter().enumerate() {
+            let (mut l, mut r) = (left.clone(), right.clone());
+            if k % 2 == 1 {
+                l.reverse();
+                r.reverse();
+            }
+            for q in pass_stitches(&l, &r, *pass, mm_units(UNDERLAY_LENGTH_MM), self.o.max_stitch) {
+                if run.last() != Some(&q) {
+                    run.push(q);
+                }
+            }
+        }
+        if !ways.is_empty() {
+            if ways.len() % 2 == 1 {
+                left.reverse();
+                right.reverse();
+            }
             // Turned round, the underlay would be sewn over the satin: the column is sewn forwards.
             if let Some(u) = self.units.last_mut() {
                 u.fixed = true;

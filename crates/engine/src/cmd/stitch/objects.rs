@@ -5,7 +5,7 @@
 //! ([`vectorcraft_stitch::from_document`]).
 
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{Document, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, LetterJoin, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType, Underlay};
 use vectorcraft_stitch::{FromDocOptions, effective_number, inherited_props, sewn_as};
 
 use super::super::fileio::stitchfile;
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Stitch Parameters",
             [],
             None,
-            "{params: {fillAngle?: degrees -360–360 (tatami row direction, counter-clockwise), fillSpacing?: mm 0.2–5 (between tatami rows), fillStitchLength?: mm 1–8 (along a row), stagger?: 0–1 (row offset, a fraction of the stitch length), satinSpacing?: mm 0.2–5 (peak to peak), satinWidth?: mm 0.5–20 (rail to rail; unset: the stroke weight), runLength?: mm 0.5–12 (running stitch length; lettering's runs 1.5), underlay?: bool (a centre run under two-rail satin columns and satin lettering, on by default for lettering; not yet under fills), compensation?: mm 0–2 (pull compensation each side, for two-rail satin columns (default 0) and lettering (default 0.2)), minColumn?: mm 0.3–3 (lettering: narrower strokes are running stitch; default 1), runUnder?: mm 0–20 (lettering: letters shorter than this are running stitch; default 5), letterTrims?: word (default) | letter | none (lettering: where the thread is trimmed between letters)} (null unsets one: it is inherited again, from the groups holding the object, else from the document's stitch options), ids?|id? (default: the selection)} the stitch parameters of paths, compound paths and groups, over the document's stitch options (the export's fill, stroke and stitchLength); what is not given stays as it was; one undo step → {changed: [id…]}",
+            "{params: {fillAngle?: degrees -360–360 (tatami row direction, counter-clockwise), fillSpacing?: mm 0.2–5 (between tatami rows), fillStitchLength?: mm 1–8 (along a row), stagger?: 0–1 (row offset, a fraction of the stitch length), satinSpacing?: mm 0.2–5 (peak to peak), satinWidth?: mm 0.5–20 (rail to rail; unset: the stroke weight), runLength?: mm 0.5–12 (running stitch length; lettering's runs 1.5), underlay?: auto | none | center | edge | zigzag (under two-rail satin columns and satin lettering; auto, lettering's default, chooses by the column's width as drawn: a centre run under 3 mm, an edge walk from 3 mm, an edge walk and a zigzag from 6 mm; true is auto and false none; not yet under fills), compensation?: mm 0–2 (pull compensation each side, for two-rail satin columns (default 0) and lettering (default 0.2)), minColumn?: mm 0.3–3 (lettering: narrower strokes are running stitch; default 1), runUnder?: mm 0–20 (lettering: letters shorter than this are running stitch; default 5), letterTrims?: word (default) | letter | none (lettering: where the thread is trimmed between letters), letterJoin?: closest (default) | bottom (lettering: each letter starts at its point nearest the needle, or near its bottom left, joined along the baseline), bean?: bool (lettering: running-stitch letters sewn as a bean run, each stitch three times; default false)} (null unsets one: it is inherited again, from the groups holding the object, else from the document's stitch options), ids?|id? (default: the selection)} the stitch parameters of paths, compound paths and groups, over the document's stitch options (the export's fill, stroke and stitchLength); what is not given stays as it was; one undo step → {changed: [id…]}",
             has_doc,
             set_params
         ),
@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Properties",
             [],
             None,
-            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; for a group or layer, what the objects in it sew, each type once; [] when nothing is sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay, compensation (null: none)} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there), overlapMm: the allowance stitch.overlap.remove left on it (null: sewn whole), routeMm: the longest travel stitch.route lets it be entered by (null: a trim)}]}; objects of other kinds are left out",
+            "{ids?|id? (default: the selection), options?: {…the stitch options of stitch.info (stitchLength, mode, fill, stroke…): the document's defaults; default: the export's}} what each path, compound path and group sews with → {objects: [{id, kind: path|compound|group|layer, own: {type?, fillAngle?…} (what it sets itself), type: the type it sews with after inheritance (auto: the options decide), sews: [tatami|run|satin|manual…] (what an export sews, in order; for a group or layer, what the objects in it sew, each type once; [] when nothing is sewn), params: {fillAngle, fillSpacing, fillStitchLength, stagger, satinSpacing, satinWidth (null: the stroke weight), runLength, underlay (auto|none|center|edge|zigzag; unset reads none, lettering's default auto), compensation (null: none), letterTrims, letterJoin, bean} (after inheritance and the options), opened: true when on the layer an opened stitch file made (stitch properties are not used there), overlapMm: the allowance stitch.overlap.remove left on it (null: sewn whole), routeMm: the longest travel stitch.route lets it be entered by (null: a trim)}]}; objects of other kinds are left out",
             has_doc,
             props
         ),
@@ -116,14 +116,16 @@ fn set_type(s: &mut Session, p: &Value) -> Result<Value> {
 /// One change `stitch.setParams` makes: a number set or unset, the underlay, or lettering's trims.
 enum Edit {
     Number(StitchParam, Option<f64>),
-    Underlay(Option<bool>),
+    Underlay(Option<Underlay>),
     LetterTrims(Option<LetterTrims>),
+    LetterJoin(Option<LetterJoin>),
+    Bean(Option<bool>),
 }
 
 /// The changes `params` asks for, checked: an unknown key, a value of the wrong kind or out of
 /// range is an error and nothing changes.
 fn param_edits(params: &Map<String, Value>) -> Result<Vec<Edit>> {
-    let keys = || StitchParam::ALL.iter().map(|p| p.key()).chain(["underlay", "letterTrims"]).collect::<Vec<_>>().join(", ");
+    let keys = || StitchParam::ALL.iter().map(|p| p.key()).chain(["underlay", "letterTrims", "letterJoin", "bean"]).collect::<Vec<_>>().join(", ");
     let mut edits = vec![];
     for (k, v) in params {
         if k == "letterTrims" {
@@ -139,12 +141,36 @@ fn param_edits(params: &Map<String, Value>) -> Result<Vec<Edit>> {
             continue;
         }
         if k == "underlay" {
+            let kind = match v {
+                Value::Null => None,
+                Value::Bool(true) => Some(Underlay::Auto),
+                Value::Bool(false) => Some(Underlay::None),
+                v => Some(v.as_str().and_then(Underlay::parse).ok_or_else(|| {
+                    bad(SET_PARAMS, format!("params.underlay must be auto, none, center, edge, zigzag, true, false or null, not {v}"))
+                })?),
+            };
+            edits.push(Edit::Underlay(kind));
+            continue;
+        }
+        if k == "letterJoin" {
+            let join = match v {
+                Value::Null => None,
+                v => Some(
+                    v.as_str()
+                        .and_then(LetterJoin::parse)
+                        .ok_or_else(|| bad(SET_PARAMS, format!("params.letterJoin must be closest, bottom or null, not {v}")))?,
+                ),
+            };
+            edits.push(Edit::LetterJoin(join));
+            continue;
+        }
+        if k == "bean" {
             let on = match v {
                 Value::Null => None,
                 Value::Bool(b) => Some(*b),
-                _ => return Err(bad(SET_PARAMS, format!("params.underlay must be true, false or null, not {v}"))),
+                _ => return Err(bad(SET_PARAMS, format!("params.bean must be true, false or null, not {v}"))),
             };
-            edits.push(Edit::Underlay(on));
+            edits.push(Edit::Bean(on));
             continue;
         }
         let param = StitchParam::parse(k).ok_or_else(|| bad(SET_PARAMS, format!("unknown parameter `params.{k}`; params takes: {}", keys())))?;
@@ -172,6 +198,8 @@ fn set_params(s: &mut Session, p: &Value) -> Result<Value> {
                 Edit::Number(param, v) => props.set_number(param, v),
                 Edit::Underlay(v) => props.underlay = v,
                 Edit::LetterTrims(v) => props.letter_trims = v,
+                Edit::LetterJoin(v) => props.letter_join = v,
+                Edit::Bean(v) => props.bean = v,
             }
         }
     })
@@ -205,10 +233,16 @@ fn props_json(props: &StitchProps, number: impl Fn(StitchParam) -> Option<f64>, 
         }
     }
     if all || props.underlay.is_some() {
-        m.insert("underlay".into(), json!(props.underlay.unwrap_or(false)));
+        m.insert("underlay".into(), json!(props.underlay.unwrap_or(Underlay::None).id()));
     }
     if all || props.letter_trims.is_some() {
         m.insert("letterTrims".into(), json!(props.letter_trims.unwrap_or_default().id()));
+    }
+    if all || props.letter_join.is_some() {
+        m.insert("letterJoin".into(), json!(props.letter_join.unwrap_or_default().id()));
+    }
+    if all || props.bean.is_some() {
+        m.insert("bean".into(), json!(props.bean.unwrap_or(false)));
     }
     m
 }
@@ -311,7 +345,7 @@ mod tests {
         s.execute("stitch.setParams", &json!({"params": {"satinWidth": 4, "underlay": true}})).unwrap();
         let p = props_of(&mut s, id);
         assert_eq!((p["type"].as_str(), p["sews"].clone()), (Some("satin"), json!(["satin"])));
-        assert_eq!(p["own"], json!({"type": "satin", "satinWidth": 4.0, "underlay": true}));
+        assert_eq!(p["own"], json!({"type": "satin", "satinWidth": 4.0, "underlay": "auto"}));
         assert_eq!(p["params"]["satinWidth"], json!(4.0));
         // Each was one undo step.
         s.execute("edit.undo", &json!({})).unwrap();

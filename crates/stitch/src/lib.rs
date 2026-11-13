@@ -56,7 +56,7 @@ pub use preview::{
 pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
-pub use satin::{RailsParams, SatinParams, rails_satin, satin};
+pub use satin::{EDGE_WALK_FROM_MM, RailsParams, SatinParams, ZIGZAG_FROM_MM, ZIGZAG_SPACING_MM, rails_satin, satin, underlay_for};
 pub use stats::{Stats, TagStats, ThreadStats, stats, stats_by_tag};
 pub use thread::{
     JSON_FORMAT, MAX_BRAND, MAX_CHART_BYTES, MAX_CHART_NAME, MAX_CHART_THREADS, MAX_CODE, MAX_NAME, MAX_WEIGHT, NeedleUse, Needles, STARTER_BRAND,
