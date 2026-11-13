@@ -247,3 +247,37 @@ fn pieces_sew_as_the_letters_do() {
         assert!((b / a - 1.0).abs() <= within, "{text}: {a} live, {b} from pieces");
     }
 }
+
+/// STI-38: bottom join: each letter is left near its baseline, towards the next one's bottom
+/// left, so the walks between letters run along the baseline; still no bare jump, and trims as
+/// closest join has them.
+#[test]
+fn bottom_join_leaves_letters_along_the_baseline() {
+    let bottom = StitchProps { letter_join: Some(vectorcraft_doc::LetterJoin::Bottom), ..Default::default() };
+    let doc = text_doc("Hello", 15.0, StitchProps::default());
+    let NodeKind::Text(t) = &doc.node(NodeId(1)).unwrap().kind else { panic!("not type") };
+    let boxes: Vec<(f64, f64)> = letters_of(t)
+        .unwrap()
+        .iter()
+        .map(|l| l.rings.iter().flatten().fold((f64::MAX, f64::MIN), |(lo, hi), q| (lo.min(q.1), hi.max(q.1))))
+        .collect();
+    // How far up from its bottom each letter but the last is left, as a fraction of its height.
+    let exits = |props: StitchProps| -> Vec<f64> {
+        let l = lettered(&text_doc("Hello", 15.0, props));
+        l.letters
+            .iter()
+            .zip(&boxes)
+            .take(l.letters.len() - 1)
+            .map(|(s, (top, foot))| (foot - s.runs.last().unwrap().last().unwrap().to_mm().1) / (foot - top))
+            .collect()
+    };
+    let low = exits(bottom);
+    assert!(low.iter().all(|f| *f < 0.3), "left near the baseline: {low:?}");
+    let closest = exits(StitchProps::default());
+    assert!(closest.iter().sum::<f64>() > low.iter().sum::<f64>(), "{closest:?} then {low:?}");
+    for text in ["Hello", "Hello you"] {
+        let joined = plan_of(&text_doc(text, 15.0, bottom));
+        assert_eq!(bare_jumps(&joined.plan), Vec::<f64>::new(), "{text}");
+        assert_eq!(stats(&joined.plan).trims, stats(&plan_of(&text_doc(text, 15.0, StitchProps::default())).plan).trims, "{text}");
+    }
+}

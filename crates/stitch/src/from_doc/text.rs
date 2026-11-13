@@ -27,6 +27,7 @@ pub fn lettering_params(props: &StitchProps, o: &FromDocOptions) -> LetteringPar
         max_satin: MAX_SATIN_MM,
         underlay: props.underlay.unwrap_or(Underlay::Auto),
         trims: props.letter_trims.unwrap_or(LetterTrims::Word),
+        join: props.letter_join.unwrap_or_default(),
         max_stitch,
         fill: FillParams {
             angle: n(StitchParam::FillAngle, f.angle),

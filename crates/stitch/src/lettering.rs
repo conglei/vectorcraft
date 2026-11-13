@@ -27,7 +27,7 @@
 #[cfg(test)]
 mod tests;
 
-use vectorcraft_doc::{LetterTrims, Underlay};
+use vectorcraft_doc::{LetterJoin, LetterTrims, Underlay};
 use vectorcraft_geom::FillRule;
 
 use crate::autodigitize::{Split, split_wide};
@@ -78,6 +78,8 @@ pub struct LetteringParams {
     /// The underlay under satin columns (automatic: by each column's width).
     pub underlay: Underlay,
     pub trims: LetterTrims,
+    /// Where one letter is joined to the next: closest, or along the baseline.
+    pub join: LetterJoin,
     /// The longest stitch.
     pub max_stitch: f64,
     /// Tatami settings for letters too wide for satin.
@@ -95,6 +97,7 @@ impl Default for LetteringParams {
             max_satin: MAX_SATIN_MM,
             underlay: Underlay::Auto,
             trims: LetterTrims::Word,
+            join: LetterJoin::Closest,
             max_stitch: 12.1,
             fill: FillParams::default(),
         }
@@ -595,6 +598,10 @@ impl Router<'_> {
             }
             let Some(s) = self.a.strokes.get(i) else { return Ok(()) };
             let (forward, v) = if s.a == u { (true, s.b) } else { (false, s.a) };
+            // Joined along the baseline, a last stroke that would end further from the next
+            // letter (the top of an l) is sewn out and back, so the letter is left at its foot.
+            let away = |n: usize| self.a.nodes.get(n).map_or(0.0, |q| dist(*q, self.target));
+            let last = last && !(self.p.join == LetterJoin::Bottom && self.open_at(v).is_empty() && away(v) > away(u));
             let under = self.underlay(i);
             // Held under the longest stitch, which rounding to plan units would otherwise pass.
             let walk = (if self.a.mode == LetterMode::Run { self.p.run_length } else { UNDERLAY_LENGTH_MM }).min(self.out.max);
@@ -664,10 +671,14 @@ fn sew_letter(l: &Prepared, p: &LetteringParams, from: Option<Pt>, target: P, bu
         }
     }
     let mut at = r.out.pos().map(|q| q.to_mm()).or(from.map(|q| q.to_mm()));
+    // Joined along the baseline: the letter starts near its bottom left.
+    let bottom_left = bounds(&l.rings).map(|b| (b.0, b.3)).filter(|_| p.join == LetterJoin::Bottom);
     while r.sewn.iter().any(|s| !s) {
-        // The next part starts at its node nearest the needle (closest join).
+        // The next part starts at its node nearest the needle (closest join), the letter's first
+        // at its bottom left when joined along the baseline.
         let open: Vec<usize> = (0..a.nodes.len()).filter(|&n| !r.open_at(n).is_empty()).collect();
-        let near = |n: &usize| a.nodes.get(*n).map_or(f64::INFINITY, |q| at.map_or(q.0, |m| dist(*q, m)));
+        let towards = if r.out.runs.is_empty() { bottom_left.or(at) } else { at };
+        let near = |n: &usize| a.nodes.get(*n).map_or(f64::INFINITY, |q| towards.map_or(q.0, |m| dist(*q, m)));
         let Some(&start) = open.iter().min_by(|x, y| near(x).total_cmp(&near(y))) else { break };
         if let Some(f) = r.seen.get_mut(start) {
             *f = true;
@@ -778,10 +789,12 @@ fn sew_prepared(letters: &[Prepared], p: &LetteringParams, budget: usize) -> Res
     let mut word: Option<usize> = None;
     let mut used = 0usize;
     for (i, l) in letters.iter().enumerate() {
-        // Towards the left middle of the next letter, or this one's right.
+        // Towards the left middle of the next letter, or this one's right; joined along the
+        // baseline, towards their bottom (page y grows down).
+        let height = |b: (f64, f64, f64, f64)| if p.join == LetterJoin::Bottom { b.3 } else { (b.1 + b.3) / 2.0 };
         let target = match letters.get(i + 1).and_then(|n| bounds(&n.rings)) {
-            Some(b) => (b.0, (b.1 + b.3) / 2.0),
-            None => bounds(&l.rings).map_or((0.0, 0.0), |b| (b.2, (b.1 + b.3) / 2.0)),
+            Some(b) => (b.0, height(b)),
+            None => bounds(&l.rings).map_or((0.0, 0.0), |b| (b.2, height(b))),
         };
         // Joined to the letter before it by a walk of stitches, never by a bare jump, which a
         // machine sews as a loose thread across the fabric: within a word by default.

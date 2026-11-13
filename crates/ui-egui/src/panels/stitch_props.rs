@@ -6,7 +6,7 @@
 
 use egui::Ui;
 use serde_json::{Map, Value, json};
-use vectorcraft_doc::{LetterTrims, StitchParam, StitchType, Underlay};
+use vectorcraft_doc::{LetterJoin, LetterTrims, StitchParam, StitchType, Underlay};
 
 use super::selection_len;
 use crate::VectorcraftApp;
@@ -216,6 +216,16 @@ fn letter_trims(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
             app.run("stitch.setParams", json!({ "params": { "letterTrims": t.id() } })).ok();
         }
     });
+    let current = match shared(objects, |o| &o["params"]["letterJoin"]) {
+        Some(v) => v.as_str().and_then(LetterJoin::parse).unwrap_or_default().label(),
+        None => tl!("Mixed"),
+    };
+    let labels: Vec<&str> = LetterJoin::ALL.iter().map(|j| j.label()).collect();
+    widgets::label_row(ui, tl!("Join:"), LABEL_W, |ui| {
+        if let Some(j) = widgets::dropdown(ui, "stitch-props-join", current, &labels, 120.0).and_then(|i| LetterJoin::ALL.get(i)) {
+            app.run("stitch.setParams", json!({ "params": { "letterJoin": j.id() } })).ok();
+        }
+    });
 }
 
 /// Embroidery › Remove Overlaps and Route Within Colors, when the selection has them: a line each
@@ -328,6 +338,18 @@ mod tests {
         app.run("stitch.setParams", json!({"params": {"underlay": "edge"}})).unwrap();
         let t = frame(&mut app);
         assert!(t.iter().any(|s| s == "Underlay:") && t.iter().any(|s| s == "Edge walk"), "{t:?}");
+    }
+
+    /// STI-38: type sewn as lettering shows where its letters join.
+    #[test]
+    fn lettering_shows_its_join() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+        let id = app.run("text.create", json!({"x": 20, "y": 100, "text": "Hi", "size": 42.5})).unwrap()["id"].as_u64().unwrap();
+        app.run("select.set", json!({"ids": [id]})).unwrap();
+        app.run("stitch.setParams", json!({"params": {"letterJoin": "bottom"}})).unwrap();
+        let t = frame(&mut app);
+        assert!(t.iter().any(|s| s == "Join:") && t.iter().any(|s| s == "Bottom"), "{t:?}");
     }
 
     #[test]
