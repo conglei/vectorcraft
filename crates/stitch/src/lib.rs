@@ -5,8 +5,10 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod autodigitize;
 mod calibration;
 mod check;
+mod columns;
 mod fill;
 mod fill_field;
 mod from_doc;
@@ -20,6 +22,7 @@ mod props;
 mod run;
 mod satin;
 pub mod sequence;
+mod skeleton;
 mod stats;
 mod thread;
 mod to_doc;
@@ -28,13 +31,15 @@ pub mod travel;
 #[cfg(test)]
 mod tests_props;
 
+pub use autodigitize::{AutoKind, AutoParams, AutoShape, COMPACT, FILL_OVERLAP_MM, STUB_FACTOR, StrokeKind, auto_shape, stroke_kind};
 pub use calibration::{CalibrationPart, calibration};
 pub use check::{CELL_RANGE, CheckLimits, DENSITY_RANGE, Finding, LONG_RANGE, Level, MAX_TRIMS_LIMIT, SHORT_RANGE, check_plan};
 pub use fill::{FillParams, MAX_ROWS, TOO_MANY_ROWS, tatami};
 pub use fill_field::{DirectionGrid, FeatherEdges, FieldFillParams, MAX_GRID_CELLS, TOO_LARGE_FIELD_FILL, field_fill};
 pub use from_doc::{
-    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FromDocOptions, Lettered, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced, StrokeOptions,
-    StrokeType, covered_fills, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_point, sequence, text_mode,
+    DEFAULT_SATIN_WIDTH_MM, FillOptions, FillType, FlatLine, FromDocOptions, Lettered, Mode, Planned, SATIN_WIDTH_MM, SequenceItem, Sequenced,
+    StrokeOptions, StrokeType, covered_fills, from_document, lettering_of, lettering_params, letters_of, outline_fraction, outline_mm, outline_point,
+    sequence, text_mode,
 };
 pub use hoop::{DEFAULT_MARGIN_MM, Hoop, HoopShape, MAX_MARGIN_MM, Placement};
 pub use lettering::{

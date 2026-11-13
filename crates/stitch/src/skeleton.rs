@@ -4,7 +4,7 @@
 //! patterns", 1984), turned into a graph of strokes: end points, junctions and the centre lines
 //! between them, with the stroke's half width at each skeleton pixel.
 
-use super::P;
+use crate::lettering::P;
 
 /// The longest side of the grid, in pixels: a letter of any size is at most this many pixels
 /// across, so the work per glyph is bounded.
@@ -14,21 +14,21 @@ const MIN_PIXEL_MM: f64 = 0.05;
 /// Empty pixels round the outline's box, so every row and column starts and ends outside.
 const PAD: usize = 2;
 /// The most outline segments a glyph may have (hostile input is cut off with an error).
-pub(super) const MAX_SEGMENTS: usize = 20_000;
+pub(crate) const MAX_SEGMENTS: usize = 20_000;
 /// Thinning passes before it gives up (each pass peels one layer; letters need far fewer).
 const MAX_PASSES: usize = MAX_SIDE;
 
 /// The rasterised glyph.
-pub(super) struct Grid {
-    pub(super) w: usize,
-    pub(super) h: usize,
-    pub(super) x0: f64,
-    pub(super) y0: f64,
+pub(crate) struct Grid {
+    pub(crate) w: usize,
+    pub(crate) h: usize,
+    pub(crate) x0: f64,
+    pub(crate) y0: f64,
     /// Pixel size, mm.
-    pub(super) px: f64,
-    pub(super) inside: Vec<bool>,
+    pub(crate) px: f64,
+    pub(crate) inside: Vec<bool>,
     /// Distance from each pixel centre to the nearest outside pixel centre, in pixels (0 outside).
-    pub(super) dist: Vec<f64>,
+    pub(crate) dist: Vec<f64>,
 }
 
 impl Grid {
@@ -37,13 +37,13 @@ impl Grid {
     }
 
     /// The centre of pixel (`x`, `y`) in mm.
-    pub(super) fn centre(&self, x: usize, y: usize) -> P {
+    pub(crate) fn centre(&self, x: usize, y: usize) -> P {
         (self.x0 + (x as f64 + 0.5) * self.px, self.y0 + (y as f64 + 0.5) * self.px)
     }
 
     /// The stroke's half width at `p` (mm): the distance transform of the pixel holding it, less
     /// half a pixel; 0 outside the grid or outside the glyph.
-    pub(super) fn half_width(&self, p: P) -> f64 {
+    pub(crate) fn half_width(&self, p: P) -> f64 {
         let fx = ((p.0 - self.x0) / self.px).floor();
         let fy = ((p.1 - self.y0) / self.px).floor();
         if !(fx.is_finite() && fy.is_finite()) || fx < 0.0 || fy < 0.0 || fx >= self.w as f64 || fy >= self.h as f64 {
@@ -56,7 +56,7 @@ impl Grid {
 }
 
 /// The outline's segments, closing each ring.
-pub(super) fn segments(rings: &[Vec<P>]) -> Vec<(P, P)> {
+pub(crate) fn segments(rings: &[Vec<P>]) -> Vec<(P, P)> {
     let mut out = vec![];
     for r in rings {
         for (i, &a) in r.iter().enumerate() {
@@ -71,7 +71,7 @@ pub(super) fn segments(rings: &[Vec<P>]) -> Vec<(P, P)> {
 
 /// The glyph rasterised by the nonzero rule, with its distance transform. `None` for an outline
 /// of no area.
-pub(super) fn rasterize(segs: &[(P, P)]) -> Option<Grid> {
+pub(crate) fn rasterize(segs: &[(P, P)]) -> Option<Grid> {
     let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
     for &(a, _) in segs {
         lo = (lo.0.min(a.0), lo.1.min(a.1));
@@ -184,7 +184,7 @@ fn dt1(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
 }
 
 /// Distance from each pixel centre to the nearest outside pixel centre, in pixels.
-fn distance(inside: &[bool], w: usize, h: usize) -> Vec<f64> {
+pub(crate) fn distance(inside: &[bool], w: usize, h: usize) -> Vec<f64> {
     let mut g: Vec<f64> = inside.iter().map(|&i| if i { FAR } else { 0.0 }).collect();
     let n = w.max(h);
     let (mut f, mut d, mut v, mut z) = (vec![0.0; n], vec![0.0; n], vec![0usize; n], vec![0.0; n + 1]);
@@ -217,7 +217,7 @@ fn distance(inside: &[bool], w: usize, h: usize) -> Vec<f64> {
 const RING: [(i64, i64); 8] = [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)];
 
 /// The one-pixel skeleton of `g`'s inside (Zhang–Suen).
-pub(super) fn thin(g: &Grid) -> Vec<bool> {
+pub(crate) fn thin(g: &Grid) -> Vec<bool> {
     let (w, h) = (g.w, g.h);
     let mut s = g.inside.clone();
     let get = |s: &[bool], x: usize, y: usize, d: (i64, i64)| -> bool {
@@ -286,46 +286,48 @@ pub(super) fn thin(g: &Grid) -> Vec<bool> {
 
 /// A skeleton node: an end, a junction, or the start of a loop.
 #[derive(Clone, Debug)]
-pub(super) struct Node {
-    pub(super) pos: P,
+pub(crate) struct Node {
+    pub(crate) pos: P,
     /// The stroke's half width there, mm.
-    pub(super) r: f64,
+    pub(crate) r: f64,
     /// The edges that meet here (a loop is listed once).
-    pub(super) edges: Vec<usize>,
+    pub(crate) edges: Vec<usize>,
+    /// An edge once met here (it may since have been pruned or merged away): not a dot.
+    pub(crate) joined: bool,
 }
 
 /// A stroke between two nodes: its centre line in mm, from `a` to `b`.
 #[derive(Clone, Debug)]
-pub(super) struct Edge {
-    pub(super) a: usize,
-    pub(super) b: usize,
-    pub(super) pts: Vec<P>,
-    pub(super) alive: bool,
+pub(crate) struct Edge {
+    pub(crate) a: usize,
+    pub(crate) b: usize,
+    pub(crate) pts: Vec<P>,
+    pub(crate) alive: bool,
 }
 
 impl Edge {
-    pub(super) fn length(&self) -> f64 {
+    pub(crate) fn length(&self) -> f64 {
         self.pts.windows(2).map(|w| if let [p, q] = w { (q.0 - p.0).hypot(q.1 - p.1) } else { 0.0 }).sum()
     }
 }
 
 /// The skeleton graph.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Graph {
-    pub(super) nodes: Vec<Node>,
-    pub(super) edges: Vec<Edge>,
+pub(crate) struct Graph {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) edges: Vec<Edge>,
 }
 
 impl Graph {
     /// How many edge ends meet at node `n` (a loop counts twice).
-    pub(super) fn degree(&self, n: usize) -> usize {
+    pub(crate) fn degree(&self, n: usize) -> usize {
         self.nodes
             .get(n)
             .map_or(0, |node| node.edges.iter().filter_map(|&e| self.edges.get(e)).filter(|e| e.alive).map(|e| if e.a == e.b { 2 } else { 1 }).sum())
     }
 
     /// The live edges.
-    pub(super) fn live(&self) -> impl Iterator<Item = (usize, &Edge)> {
+    pub(crate) fn live(&self) -> impl Iterator<Item = (usize, &Edge)> {
         self.edges.iter().enumerate().filter(|(_, e)| e.alive)
     }
 }
@@ -333,7 +335,7 @@ impl Graph {
 /// The graph of skeleton `s` of grid `g`: nodes at end pixels, at clusters of junction pixels
 /// and on each loop with no other node, joined by the pixel paths between them. More than
 /// `max_edges` edges is `None`.
-pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
+pub(crate) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
     let (w, h) = (g.w, g.h);
     let on =
         |x: i64, y: i64| x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && s.get(y as usize * w + x as usize).copied().unwrap_or(false);
@@ -377,7 +379,7 @@ pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
         let n = cluster.len() as f64;
         let (sx, sy) = cluster.iter().map(|&c| px_pos(c)).fold((0.0, 0.0), |a, p| (a.0 + p.0, a.1 + p.1));
         let r = cluster.iter().map(|&c| r_of(c)).fold(0.0, f64::max);
-        out.nodes.push(Node { pos: (sx / n, sy / n), r, edges: vec![] });
+        out.nodes.push(Node { pos: (sx / n, sy / n), r, edges: vec![], joined: false });
     }
     let mut used: Vec<bool> = vec![false; w * h];
     let mut pairs: Vec<(usize, usize)> = vec![];
@@ -387,9 +389,12 @@ pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
         }
         let e = out.edges.len();
         out.edges.push(Edge { a, b, pts, alive: true });
-        out.nodes.get_mut(a)?.edges.push(e);
-        if b != a {
-            out.nodes.get_mut(b)?.edges.push(e);
+        for n in [a, b] {
+            let node = out.nodes.get_mut(n)?;
+            if n == a || b != a {
+                node.edges.push(e);
+            }
+            node.joined = true;
         }
         Some(())
     };
@@ -434,7 +439,7 @@ pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
                 // Make the dead end a node of its own.
                 let id = out.nodes.len();
                 let pos = pts.last().copied().unwrap_or(start);
-                out.nodes.push(Node { pos, r: r_of(cur), edges: vec![] });
+                out.nodes.push(Node { pos, r: r_of(cur), edges: vec![], joined: false });
                 add(&mut out, a, id, pts)?;
                 continue;
             }
@@ -460,7 +465,7 @@ pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
             continue;
         }
         let id = out.nodes.len();
-        out.nodes.push(Node { pos: px_pos(i), r: r_of(i), edges: vec![] });
+        out.nodes.push(Node { pos: px_pos(i), r: r_of(i), edges: vec![], joined: false });
         if let Some(u) = used.get_mut(i) {
             *u = true;
         }
@@ -488,8 +493,39 @@ pub(super) fn graph(g: &Grid, s: &[bool], max_edges: usize) -> Option<Graph> {
 
 /// Remove spurs: an edge from an end to a junction shorter than `factor` times the junction's
 /// half width (plus a pixel), the forks thinning leaves at a stroke's square end. Then join the
-/// two edges left at a node that had three.
-pub(super) fn prune(gr: &mut Graph, factor: f64, px: f64) {
+/// two edges left at a node that had three, and at every node where just two meet and the stroke
+/// runs straight on (a digital curve's staircase leaves such nodes all round a ring; a corner
+/// stays a node, so a column doesn't turn it).
+pub(crate) fn prune(gr: &mut Graph, factor: f64, px: f64) {
+    prune_spurs(gr, factor, px);
+    for n in 0..gr.nodes.len() {
+        if runs_on(gr, n, px) {
+            merge(gr, n);
+        }
+    }
+}
+
+/// Whether exactly two edges meet at node `n` and leave it in nearly opposite directions (they
+/// bend by less than 45 degrees), measured a few pixels out.
+fn runs_on(gr: &Graph, n: usize, px: f64) -> bool {
+    let Some(node) = gr.nodes.get(n) else { return false };
+    let live: Vec<&Edge> = node.edges.iter().filter_map(|&e| gr.edges.get(e)).filter(|e| e.alive).collect();
+    let [e1, e2] = live.as_slice() else { return false };
+    let reach = (node.r.max(px) * 2.0).max(4.0 * px);
+    let away = |e: &Edge| -> Option<P> {
+        let pts: Vec<P> = if e.a == n { e.pts.clone() } else { e.pts.iter().rev().copied().collect() };
+        let o = *pts.first()?;
+        let q = pts.iter().find(|q| (q.0 - o.0).hypot(q.1 - o.1) >= reach).or(pts.last())?;
+        let l = (q.0 - o.0).hypot(q.1 - o.1);
+        (l > 1e-12).then(|| ((q.0 - o.0) / l, (q.1 - o.1) / l))
+    };
+    match (away(e1), away(e2)) {
+        (Some(a), Some(b)) => a.0 * b.0 + a.1 * b.1 < -std::f64::consts::FRAC_1_SQRT_2,
+        _ => false,
+    }
+}
+
+fn prune_spurs(gr: &mut Graph, factor: f64, px: f64) {
     for _ in 0..gr.edges.len() {
         let mut changed = false;
         for e in 0..gr.edges.len() {

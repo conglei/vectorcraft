@@ -799,6 +799,26 @@ fn flatten(sp: &SubPath, budget: usize) -> Result<Flat, String> {
     Ok((points, corners))
 }
 
+/// A subpath flattened to millimetres, and whether it is closed.
+pub type FlatLine = (Vec<(f64, f64)>, bool);
+
+/// The subpaths of path or compound path `n`, flattened to millimetres, each with whether it is
+/// closed (auto-digitizing reads shapes this way). More than `budget` points is an error.
+pub fn outline_mm(n: &Node, budget: usize) -> Result<Vec<FlatLine>, String> {
+    let mut sps = vec![];
+    collect_subpaths(n, &mut sps);
+    let mut out = Vec::with_capacity(sps.len());
+    let mut used = 0usize;
+    for sp in sps {
+        let (pts, _) = flatten(sp, budget.saturating_sub(used))?;
+        used = used.saturating_add(pts.len());
+        if pts.len() >= 2 {
+            out.push((pts, sp.closed && sp.segment_count() > 0));
+        }
+    }
+    Ok(out)
+}
+
 /// One needle point per anchor; a closed subpath returns to its first anchor. More than
 /// `budget` points is an error.
 fn manual_of(sp: &SubPath, budget: usize) -> Result<Vec<Pt>, String> {
