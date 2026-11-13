@@ -84,9 +84,10 @@ pub(super) fn draw(app: &VectorcraftApp, painter: &egui::Painter, xf: &Xf, rect:
         }
         painter.extend(Shape::dashed_line(&ring, Stroke::new(1.0, t.hoop_field), 6.0, 4.0));
     }
-    // The name over the frame's top-left, where it reads on the pasteboard.
-    if let Some(top_left) = outer.iter().copied().reduce(|a, b| if a.y + a.x < b.y + b.x { a } else { b }) {
-        painter.text(top_left + egui::vec2(0.0, -4.0), egui::Align2::LEFT_BOTTOM, &hoop.name, egui::FontId::proportional(11.0), t.text_dim);
+    // The name centred over the frame, where it reads on the pasteboard; kept on the canvas.
+    if let Some(top) = outer.iter().copied().reduce(|a, b| if a.y < b.y { a } else { b }) {
+        let at = egui::pos2(centre.x, (top.y - 4.0).max(rect.top() + 16.0));
+        painter.text(at, egui::Align2::CENTER_BOTTOM, &hoop.name, egui::FontId::proportional(11.0), t.text_dim);
     }
 }
 

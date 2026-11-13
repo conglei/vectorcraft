@@ -59,6 +59,7 @@ fn new_document_offers_a_hoop_in_an_embroidery_app_and_creates_the_design_in_it(
     let pt = 72.0 / 25.4;
     assert!((field(&app, "width").as_f64().unwrap() - 130.0 * pt).abs() < 1e-6);
     assert!((field(&app, "height").as_f64().unwrap() - 180.0 * pt).abs() < 1e-6);
+    assert_eq!(field(&app, "units"), "Millimeters");
     // A custom round hoop shows its size and shape fields and sets the size.
     let custom = json!({"id": null, "widthMm": 150.0, "heightMm": 150.0, "shape": "round"});
     app.ui.dialog.as_mut().unwrap().fields.insert("hoop".into(), custom.clone());

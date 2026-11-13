@@ -98,11 +98,13 @@ pub fn open(app: &mut VectorcraftApp) {
     app.ui.dialog = Some(d);
 }
 
-/// Choose `hoop` (as `file.new` takes it): the width and height become its size.
+/// Choose `hoop` (as `file.new` takes it): the width and height become its size, shown in
+/// millimetres as hoops are measured.
 fn set_hoop(d: &mut Dialog, hoop: Value) {
     if let Some((w, h)) = super::hoop_setup::size_pt(&hoop) {
         d.fields.insert("width".into(), json!(w));
         d.fields.insert("height".into(), json!(h));
+        d.fields.insert("units".into(), json!(Unit::Millimeters.label()));
     }
     d.fields.insert("hoop".into(), hoop);
 }
