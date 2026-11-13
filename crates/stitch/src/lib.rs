@@ -41,7 +41,7 @@ pub use lettering::{
     RUN_LENGTH_MM, RUN_UNDER_MM, SewnLetter, UNDERLAY_LENGTH_MM, letter_height, mode_for, sew_letters, shape_letter,
 };
 pub use plan::{Block, MAX_STEPS, PT_PER_MM, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread, UNITS_PER_MM};
-pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare};
+pub use prepare::{LOCK_LENGTH, PrepareOptions, Prepared, prepare, prepare_tagged};
 pub use preview::{
     DEFAULT_FABRIC, DEFAULT_SCALE, DEFAULT_THREAD_MM, DENSITY_CELL_MM, DensityGrid, MARGIN_MM, MAX_DENSITY_CELLS, MAX_SCALE, MAX_SIDE, MAX_THREAD_MM,
     MIN_REGION_SCALE, MIN_SCALE, MIN_THREAD_MM, Preview, PreviewMode, PreviewOptions, Region, TOO_DENSE, density, prefix_plan, preview,
@@ -51,7 +51,7 @@ pub use profile::{BAI_MIRROR, COMMERCIAL15, GENERIC, MachineProfile, profile};
 pub use props::{effective_number, inherited_props, sewn_as};
 pub use run::run_stitches;
 pub use satin::{RailsParams, SatinParams, rails_satin, satin};
-pub use stats::{Stats, ThreadStats, stats};
+pub use stats::{Stats, TagStats, ThreadStats, stats, stats_by_tag};
 pub use thread::{
     JSON_FORMAT, MAX_BRAND, MAX_CHART_BYTES, MAX_CHART_NAME, MAX_CHART_THREADS, MAX_CODE, MAX_NAME, MAX_WEIGHT, NeedleUse, Needles, STARTER_BRAND,
     STARTER_NAME, ThreadChart, ThreadMatch, ThreadSpec, assign_needles, delta_e, hex, lab, starter_chart,

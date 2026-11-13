@@ -249,6 +249,8 @@ impl Walk<'_> {
             let Some(u) = units.get(i) else { continue };
             let way = o.ways.get(k).copied().unwrap_or(0);
             let orient = o.orients.get(k).and_then(|os| os.get(way)).copied().unwrap_or(Orient::Forward);
+            // Every step from here to the next object is this one's ([`super::Planned::tags`]).
+            self.owners.push(u.id);
             for r in u.oriented(orient) {
                 self.emit_run(r.rgb, &r.pts, r.mode, r.join)?;
             }

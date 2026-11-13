@@ -7,7 +7,7 @@ use vectorcraft_doc::{Document, NodeId};
 use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dsb, dst, exp};
 use vectorcraft_stitch::{
     FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, Pt, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
-    from_document, prepare, profile, to_document,
+    from_document, prepare_tagged, profile, to_document,
 };
 
 use super::super::{Result, bad, number_or, switch_or, text_param};
@@ -308,11 +308,30 @@ pub fn check(p: &Value, format: &str) -> std::result::Result<(), String> {
     options(C, p, format).map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// A plan prepared for the machine, and which object sewed each of its steps.
+pub(crate) struct Made {
+    pub plan: StitchPlan,
+    pub warnings: Vec<String>,
+    /// Everything stitched came from an opened stitch file.
+    pub opened: bool,
+    /// The objects in sewing order, and for each step of `plan` (`tags[block][step]`) the index
+    /// into `owners` of the object it sews ([`vectorcraft_stitch::Planned::tags`]).
+    pub owners: Vec<NodeId>,
+    pub tags: Vec<Vec<u32>>,
+}
+
+/// The plan `stitch.info` counts (a DST export of `doc` with options `p`), with the object each
+/// step sews: the one accounting the Stitch Sequence panel, the player and the export share.
+pub(crate) fn accounted(cmd: &str, doc: &Document, p: &Value) -> Result<Made> {
+    let o = options(cmd, p, "dst")?;
+    planned(cmd, doc, &o, None)
+}
+
 /// The plan for `doc` with options `o`, named, prepared for the machine, and its warnings. When
 /// `locks` was not given, runs get lock stitches unless every run came from an opened stitch file
 /// (which has its own), with a warning when the plan mixes the two. `travelTrims` follows the same
 /// rule: art on an opened file's layer keeps the trims the file had and gets none added.
-fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>, bool)> {
+fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>>) -> Result<Made> {
     let from = FromDocOptions { only: selection, ..o.from.clone() };
     let mut made = from_document(doc, &from).map_err(|e| bad(cmd, e))?;
     let title = std::path::Path::new(&doc.title).file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.trim().is_empty());
@@ -322,11 +341,11 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
         made.warnings.push(MIXED_LOCKS.to_string());
     }
     let travel_trims = o.travel_trims.unwrap_or(made.unmarked_runs > 0);
-    let prepared = prepare(&made.plan, &o.profile, &PrepareOptions { locks, travel_trims }).map_err(|e| bad(cmd, e))?;
+    let (prepared, tags) = prepare_tagged(&made.plan, &made.tags, &o.profile, &PrepareOptions { locks, travel_trims }).map_err(|e| bad(cmd, e))?;
     let mut warnings = made.warnings;
     warnings.extend(prepared.warnings);
     // Everything stitched came from an opened stitch file.
-    Ok((prepared.plan, warnings, made.unmarked_runs == 0))
+    Ok(Made { plan: prepared.plan, warnings, opened: made.unmarked_runs == 0, owners: made.owners, tags })
 }
 
 /// What an export of `doc` as `format` (`dst`, `dsb` or `exp`) with options `p` writes: the stitch plan
@@ -334,7 +353,7 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
 /// machine), the file, and the warnings of both. Errors name `cmd`.
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
     let o = options(cmd, p, format)?;
-    let (plan, mut warnings, opened) = planned(cmd, doc, &o, selection)?;
+    let Made { plan, mut warnings, opened, .. } = planned(cmd, doc, &o, selection)?;
     if !o.profile.formats.is_empty() && !o.profile.formats.contains(&format) {
         let list = o.profile.formats.iter().map(|f| f.to_uppercase()).collect::<Vec<_>>().join(" and ");
         warnings.push(format!("this machine's panel reads {list}, not {}", format.to_uppercase()));
@@ -361,7 +380,7 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
 pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Vec<String>)> {
     let o = options(cmd, p, format)?;
     // Whether everything came from an opened file only decides the writer's return to the start.
-    let (plan, warnings, _opened) = planned(cmd, doc, &o, selection)?;
+    let Made { plan, warnings, .. } = planned(cmd, doc, &o, selection)?;
     Ok((plan, warnings))
 }
 

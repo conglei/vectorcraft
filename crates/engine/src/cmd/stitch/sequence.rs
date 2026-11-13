@@ -4,11 +4,15 @@
 //! is one undo step. Exports, `stitch.info` and the stitch preview sew by them
 //! ([`vectorcraft_stitch::from_document`]).
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value, json};
 use vectorcraft_doc::{Document, MAX_COORD, NodeId, NodeKind, StitchType};
 use vectorcraft_geom::Point;
 use vectorcraft_stitch::sequence::{Cost, Item, closest_join, colour_changes, colour_sort, cost};
-use vectorcraft_stitch::{FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, inherited_props, outline_fraction, sequence, sewn_as};
+use vectorcraft_stitch::{
+    FromDocOptions, PT_PER_MM, Pt, Sequenced, UNITS_PER_MM, inherited_props, outline_fraction, sequence, sewn_as, stats, stats_by_tag,
+};
 
 use super::super::fileio::stitchfile;
 use super::super::{CommandSpec, Result, Session, bad, cmd, has_doc, targets};
@@ -28,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Stitch Sequence",
             [],
             None,
-            "{options?: {…the stitch options of stitch.info (stitchLength, minStitch, mode, fill, stroke…); default: the export's}} the order the objects are sewn in (the order set with stitch.sequence.set, move or sortByColor, then every other sewn path and compound path in document order, bottom to top) → {objects: [{id, name, colors: [\"#rrggbb\"…] (the threads it sews in, in order), sews: [tatami|run|satin|manual…], stitches (needle points, before lock stitches), entry: {x, y}, exit: {x, y} (where it is entered and left, document units), own: {entry?, exit?, joinEntry?, joinExit?} (the points stored on it: fractions 0–1 along its outline, set by stitch.entryExit.set and stitch.join.closest), pinned (the user set its entry or exit), opened (on the layer an opened stitch file made: sewn as the file had it)}], colorBlocks: [{rgb: \"#rrggbb\", objects: [id…]}] (consecutive objects in one thread), colorChanges, trims, travelMm (of joining the objects in this order; stitch.info has the machine file's own), ordered (an order is set), start: {x, y}|null, end: {x, y}|null (the design's start and end)}",
+            "{options?: {…the stitch options of stitch.info (stitchLength, minStitch, mode, fill, stroke…); default: the export's}} the order the objects are sewn in (the order set with stitch.sequence.set, move or sortByColor, then every other sewn path and compound path in document order, bottom to top) → {objects: [{id, name, colors: [\"#rrggbb\"…] (the threads it sews in, in order), sews: [tatami|run|satin|manual…], stitches, trims, jumps, travelMm (what the plan the export writes sews for it, lock stitches and the machine's trims included; the jump and trim leading to an object count to it, so they add up to the totals), entry: {x, y}, exit: {x, y} (where it is entered and left, document units), own: {entry?, exit?, joinEntry?, joinExit?} (the points stored on it: fractions 0–1 along its outline, set by stitch.entryExit.set and stitch.join.closest), pinned (the user set its entry or exit), opened (on the layer an opened stitch file made: sewn as the file had it)}], colorBlocks: [{rgb: \"#rrggbb\", objects: [id…]}] (consecutive objects in one thread), colorChanges, stitches, trims, travelMm (the plan's, as stitch.info counts them with the same options), ordered (an order is set), start: {x, y}|null, end: {x, y}|null (the design's start and end)}",
             has_doc,
             list
         ),
@@ -91,12 +95,16 @@ pub fn specs() -> Vec<CommandSpec> {
 
 /// The stitch options in `p`'s `options` (the export's when not given).
 fn options(p: &Value, cmd: &str) -> Result<FromDocOptions> {
-    let options = match p.get("options") {
-        None | Some(Value::Null) => json!({}),
-        Some(o) if o.is_object() => o.clone(),
-        Some(o) => return Err(bad(cmd, format!("options must be an object of stitch options, not {o}"))),
-    };
-    stitchfile::from_doc_options(cmd, &options)
+    stitchfile::from_doc_options(cmd, &options_value(p, cmd)?)
+}
+
+/// The stitch options object in `p` (`{}` when not given).
+fn options_value(p: &Value, cmd: &str) -> Result<Value> {
+    match p.get("options") {
+        None | Some(Value::Null) => Ok(json!({})),
+        Some(o) if o.is_object() => Ok(o.clone()),
+        Some(o) => Err(bad(cmd, format!("options must be an object of stitch options, not {o}"))),
+    }
 }
 
 /// The document's sewing order with options `p`.
@@ -134,6 +142,13 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let o = options(p, LIST)?;
     let seq = sequenced(s, p, LIST)?;
     let d = &s.doc()?.doc;
+    // Each object's stitches, trims and travel come from the plan the export writes and
+    // stitch.info counts (lock stitches, travel joins and the machine's trims included), so the
+    // panel, the player and the file agree.
+    let made = if seq.items.is_empty() { None } else { Some(stitchfile::accounted(LIST, d, &options_value(p, LIST)?)?) };
+    let by_tag = made.as_ref().map(|m| stats_by_tag(&m.plan, &m.tags, m.owners.len())).unwrap_or_default();
+    let tag_of: HashMap<NodeId, usize> = made.as_ref().map(|m| m.owners.iter().enumerate().map(|(i, id)| (*id, i)).collect()).unwrap_or_default();
+    let totals = made.as_ref().map(|m| stats(&m.plan));
     let mut objects = vec![];
     let mut blocks: Vec<([u8; 3], Vec<u64>)> = vec![];
     for it in &seq.items {
@@ -150,12 +165,16 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         let (entry, exit) = it.ends().map_or((Value::Null, Value::Null), |(a, b)| (doc_xy(a), doc_xy(b)));
+        let counted = tag_of.get(&it.id).and_then(|&i| by_tag.get(i)).copied().unwrap_or_default();
         objects.push(json!({
             "id": it.id.0,
             "name": name_of(d, it.id),
             "colors": it.colours.iter().map(|c| hex(*c)).collect::<Vec<_>>(),
             "sews": sews,
-            "stitches": it.stitches,
+            "stitches": counted.stitches,
+            "trims": counted.trims,
+            "jumps": counted.jumps,
+            "travelMm": (counted.travel_mm * 10.0).round() / 10.0,
             "entry": entry,
             "exit": exit,
             "own": points,
@@ -173,16 +192,15 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let all = items(&seq);
-    let ways: Vec<usize> = seq.items.iter().map(|i| i.way).collect();
-    let c = cost(&all, &ways, &seq.ends);
     let pt = |p: Option<Point>| p.map_or(Value::Null, |p| json!({"x": p.x, "y": p.y}));
+    let (changes, trims, travel) = totals.as_ref().map_or((0, 0, 0.0), |t| (t.color_changes, t.trims, t.travel_mm));
     Ok(json!({
         "objects": objects,
         "colorBlocks": blocks.into_iter().map(|(rgb, ids)| json!({"rgb": hex(rgb), "objects": ids})).collect::<Vec<_>>(),
-        "colorChanges": c.changes,
-        "trims": c.trims,
-        "travelMm": (c.travel / UNITS_PER_MM * 10.0).round() / 10.0,
+        "colorChanges": changes,
+        "stitches": totals.as_ref().map_or(0, |t| t.stitches),
+        "trims": trims,
+        "travelMm": (travel * 10.0).round() / 10.0,
         "ordered": !d.stitch.order.is_empty(),
         "start": pt(d.stitch.start_point()),
         "end": pt(d.stitch.end_point()),
@@ -532,6 +550,53 @@ mod tests {
         assert_eq!(s.execute("stitch.sequence.list", &json!({})).unwrap()["objects"][0]["own"], json!({}));
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.execute("stitch.sequence.list", &json!({})).unwrap()["objects"][0]["pinned"], json!(true));
+    }
+
+    /// `stitch.sequence.list`'s totals, and its objects' sums, are `stitch.info`'s.
+    fn assert_one_accounting(s: &mut Session) -> Value {
+        let info = s.execute("stitch.info", &json!({})).unwrap();
+        let l = s.execute("stitch.sequence.list", &json!({})).unwrap();
+        for k in ["stitches", "trims", "colorChanges", "travelMm"] {
+            assert_eq!(l[k], info[k], "{k}: list {} vs info {}", l[k], info[k]);
+        }
+        let objects = l["objects"].as_array().unwrap();
+        let sum = |k: &str| objects.iter().map(|o| o[k].as_u64().unwrap()).sum::<u64>();
+        assert_eq!(sum("stitches"), info["stitches"].as_u64().unwrap());
+        assert_eq!(sum("trims"), info["trims"].as_u64().unwrap());
+        assert_eq!(sum("jumps"), info["jumps"].as_u64().unwrap());
+        let travel: f64 = objects.iter().map(|o| o["travelMm"].as_f64().unwrap()).sum();
+        assert!((travel - info["travelMm"].as_f64().unwrap()).abs() < 0.05 * objects.len() as f64 + 0.1, "{travel} vs {}", info["travelMm"]);
+        l
+    }
+
+    #[test]
+    fn a_photo_designs_list_counts_what_stitch_info_counts() {
+        // STI-32: the list estimated a trim between every two objects of a colour, while the plan
+        // joins a photo's runs of one colour by travel.
+        let dir = std::env::temp_dir().join(format!("vc-seq-photo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("fur.png");
+        let mut s = Session::new();
+        s.execute("photo.syntheticFur", &json!({"path": f, "width": 160, "height": 120})).unwrap();
+        s.execute("photo.toStitches", &json!({"file": f, "provider": "none", "widthMm": 60})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert!(l["objects"].as_array().unwrap().len() > 3, "{l}");
+    }
+
+    #[test]
+    fn letterings_list_counts_its_lock_stitches() {
+        // STI-32: the panel said 637 stitches for lettering that stitch.info, the player and the
+        // status bar count as 652, lock stitches included.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width": 600, "height": 400})).unwrap();
+        s.execute("text.create", &json!({"x": 40, "y": 120, "text": "Hello", "size": 42.5})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert_eq!(l["objects"].as_array().unwrap().len(), 1);
+        // A line beside it: two objects, each with its own share.
+        s.execute("select.none", &json!({})).unwrap();
+        s.execute("shape.line", &json!({"x1": 40, "y1": 300, "x2": 300, "y2": 300})).unwrap();
+        let l = assert_one_accounting(&mut s);
+        assert!(l["objects"].as_array().unwrap().iter().all(|o| o["stitches"].as_u64().unwrap() > 0), "{l}");
     }
 
     #[test]

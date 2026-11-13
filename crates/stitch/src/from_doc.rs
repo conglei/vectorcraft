@@ -150,6 +150,12 @@ pub struct Planned {
     pub marked_runs: usize,
     /// Runs sewn from all other art.
     pub unmarked_runs: usize,
+    /// The sewn objects in sewing order: what each tag of [`Planned::tags`] stands for.
+    pub owners: Vec<NodeId>,
+    /// For each step of the plan (`tags[block][step]`), the index into [`Planned::owners`] of the
+    /// object it sews (a jump and trim leading to an object are its own). [`crate::prepare_tagged`]
+    /// carries them through preparing the plan for a machine.
+    pub tags: Vec<Vec<u32>>,
 }
 
 /// The stitch plan for `doc`'s visible filled and stroked paths and compound paths, bottom to
@@ -190,7 +196,7 @@ pub fn from_document(doc: &Document, o: &FromDocOptions) -> Result<Planned, Stri
     }
     let plan = StitchPlan { name: String::new(), blocks: w.blocks };
     plan.check()?;
-    Ok(Planned { plan, warnings, marked_runs: w.marked_runs, unmarked_runs: w.unmarked_runs })
+    Ok(Planned { plan, warnings, marked_runs: w.marked_runs, unmarked_runs: w.unmarked_runs, owners: w.owners, tags: w.tags })
 }
 
 /// The error for a document with nothing to sew.
@@ -201,6 +207,10 @@ struct Walk<'o> {
     /// [`FromDocOptions::only`] as a set.
     only: Option<HashSet<NodeId>>,
     blocks: Vec<Block>,
+    /// For each step of `blocks`, the object it sews: an index into `owners`.
+    tags: Vec<Vec<u32>>,
+    /// The objects sewn, in sewing order ([`Planned::owners`]).
+    owners: Vec<NodeId>,
     /// Where the needle is: the last stitch made.
     pos: Option<Pt>,
     steps: usize,
@@ -275,6 +285,8 @@ impl<'o> Walk<'o> {
             o,
             only,
             blocks: vec![],
+            tags: vec![],
+            owners: vec![],
             pos: None,
             steps: 0,
             filled: 0,
@@ -640,6 +652,7 @@ impl<'o> Walk<'o> {
                     lead.push(Step::Jump(start));
                 }
                 self.blocks.push(Block { thread: Thread { rgb, name: None, code: None, brand: None }, steps: vec![] });
+                self.tags.push(vec![]);
             }
         }
         let added = lead.len() + run.len();
@@ -650,6 +663,11 @@ impl<'o> Walk<'o> {
         let Some(block) = self.blocks.last_mut() else { return Ok(()) };
         block.steps.extend(lead);
         block.steps.extend(run.iter().skip(usize::from(skip_first)).map(|p| Step::Stitch(*p)));
+        // The object being sewn is the last owner.
+        let owner = u32::try_from(self.owners.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        if let Some(tags) = self.tags.last_mut() {
+            tags.resize(block.steps.len(), owner);
+        }
         self.pos = run.last().copied();
         Ok(())
     }
