@@ -190,3 +190,20 @@ proptest! {
         }
     }
 }
+
+/// A walk inside a letter's ink is hidden by the satin sewn over it; one that leaves the ink, or
+/// crosses a hole, is not.
+#[test]
+fn a_walk_is_hidden_only_inside_the_ink() {
+    // A 10 mm square with a 4 mm hole, as glyph outlines wind: outer counter-clockwise, hole
+    // clockwise.
+    let outer = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+    let hole = vec![(3.0, 3.0), (3.0, 7.0), (7.0, 7.0), (7.0, 3.0)];
+    let rings = vec![outer, hole];
+    assert!(hidden((1.0, 1.0), (9.0, 1.0), &rings), "along the bottom bar");
+    assert!(hidden((1.0, 1.0), (1.0, 9.0), &rings), "up the left bar");
+    assert!(!hidden((1.0, 5.0), (9.0, 5.0), &rings), "across the hole");
+    assert!(!hidden((1.0, 1.0), (15.0, 1.0), &rings), "out of the letter");
+    assert!(!hidden((1.0, 1.0), (f64::NAN, 1.0), &rings), "not finite");
+    assert!(hidden((2.0, 2.0), (2.0, 2.0), &rings), "no distance at all");
+}

@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use vectorcraft_color::Paint;
-use vectorcraft_doc::{Document, LetterTrims, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
+use vectorcraft_doc::{Document, Node, NodeId, NodeKind, StitchParam, StitchProps, StitchType};
 use vectorcraft_geom::{AnchorKind, BezPath, FillRule, PathData, PathEl, SubPath};
 
 use crate::fill::{FillParams, tatami};
@@ -241,8 +241,10 @@ enum Join {
     /// file had one.
     Opened { trim: bool },
     /// The next letter (or part of a letter) of lettering: a trim and a jump where `trim` says
-    /// (between words, by default), else a stitch to it when it is closer than
-    /// [`crate::NO_TRIM_GAP_MM`] and a jump when further.
+    /// (between words by default, and to a part of a letter the needle cannot walk to), else a
+    /// stitch to it: lettering has already walked there, so it is within
+    /// [`crate::NO_TRIM_GAP_MM`]; further than that is still trimmed, never a bare jump, which a
+    /// machine sews as a loose thread.
     Letter { trim: bool },
 }
 
@@ -582,23 +584,16 @@ impl<'o> Walk<'o> {
         let budget = MAX_STEPS.saturating_sub(self.steps);
         let Some(done) = text::lettering_of(n, &props, self.o, budget)? else { return Ok(()) };
         self.part += 1;
-        let mut word: Option<usize> = None;
+        let mut first = true;
         for letter in done.letters {
             for (k, run) in letter.runs.iter().enumerate() {
-                let join = match word {
-                    None => Join::Drawn,
-                    Some(_) if k > 0 => Join::Letter { trim: false },
-                    Some(w) => Join::Letter {
-                        trim: match done.params.trims {
-                            LetterTrims::Letter => true,
-                            LetterTrims::Word => w != letter.word,
-                            LetterTrims::None => false,
-                        },
-                    },
-                };
+                // Lettering decided the joins (`LetterTrims`, see `sew_letters`): a joined first
+                // run already holds the stitches from the letter before; any other run is a
+                // part a trim and a jump reach.
+                let join = if first { Join::Drawn } else { Join::Letter { trim: k > 0 || !letter.joined } };
+                first = false;
                 self.count_run(run, up);
                 self.add_run(letter.rgb, run, Mode::Run, join)?;
-                word = Some(letter.word);
             }
         }
         Ok(())
@@ -657,10 +652,11 @@ impl<'o> Walk<'o> {
                         // In run mode a first stitch where the needle already is would sew nothing.
                         skip_first = mode == Mode::Run && self.pos == Some(start);
                     }
-                    // Letters of a word: a stitch across a small gap, else a jump; no trim.
+                    // Letters of a word: a stitch across the small gap left; a bigger one (a
+                    // walk that was cut short) is trimmed rather than jumped and sewn as a float.
                     Join::Letter { trim: false } => {
                         if self.pos.is_none_or(|p| p.dist(start) > NO_TRIM_GAP) {
-                            lead.push(Step::Jump(start));
+                            lead = vec![Step::Trim, Step::Jump(start)];
                         }
                     }
                     _ => lead = vec![Step::Trim, Step::Jump(start)],
