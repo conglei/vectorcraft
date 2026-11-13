@@ -226,6 +226,11 @@ fn letter_trims(app: &mut VectorcraftApp, ui: &mut Ui, objects: &[Value]) {
             app.run("stitch.setParams", json!({ "params": { "letterJoin": j.id() } })).ok();
         }
     });
+    // Small letters (running stitch) as a bean run, each stitch three times.
+    let mut bean = shared(objects, |o| &o["params"]["bean"]).and_then(Value::as_bool).unwrap_or(false);
+    if ui.checkbox(&mut bean, tl!("Bean run for small letters")).changed() {
+        app.run("stitch.setParams", json!({ "params": { "bean": bean } })).ok();
+    }
 }
 
 /// Embroidery › Remove Overlaps and Route Within Colors, when the selection has them: a line each
@@ -350,6 +355,7 @@ mod tests {
         app.run("stitch.setParams", json!({"params": {"letterJoin": "bottom"}})).unwrap();
         let t = frame(&mut app);
         assert!(t.iter().any(|s| s == "Join:") && t.iter().any(|s| s == "Bottom"), "{t:?}");
+        assert!(t.iter().any(|s| s == "Bean run for small letters"), "{t:?}");
     }
 
     #[test]

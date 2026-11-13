@@ -51,6 +51,13 @@ pub const COMPENSATION_MM: f64 = 0.2;
 pub const RUN_LENGTH_MM: f64 = 1.5;
 /// Stitch length of the centre-run underlay and of travel under satin, mm.
 pub const UNDERLAY_LENGTH_MM: f64 = 2.0;
+/// How far a running-stitch letter's stitch may stray from its centre line, mm: stitches are
+/// shortened on curves to keep within it (estimated).
+pub const RUN_CHORD_MM: f64 = 0.1;
+/// The shortest running stitch a curve is cut into, mm (estimated).
+pub const RUN_MIN_MM: f64 = 0.6;
+/// Smoothing passes over a running-stitch letter's centre lines, beyond the columns' own.
+const RUN_SMOOTHING: usize = 3;
 /// Letters closer than this, mm, are joined by a stitch rather than a jump.
 pub const NO_TRIM_GAP_MM: f64 = 1.2;
 /// How far apart the points are that check whether a walk stays inside a letter, mm.
@@ -80,6 +87,8 @@ pub struct LetteringParams {
     pub trims: LetterTrims,
     /// Where one letter is joined to the next: closest, or along the baseline.
     pub join: LetterJoin,
+    /// Running-stitch letters sewn as a bean run (each stitch three times).
+    pub bean: bool,
     /// The longest stitch.
     pub max_stitch: f64,
     /// Tatami settings for letters too wide for satin.
@@ -98,6 +107,7 @@ impl Default for LetteringParams {
             underlay: Underlay::Auto,
             trims: LetterTrims::Word,
             join: LetterJoin::Closest,
+            bean: false,
             max_stitch: 12.1,
             fill: FillParams::default(),
         }
@@ -275,6 +285,12 @@ fn analyse(rings: &[Vec<P>], mode: LetterMode, p: &LetteringParams) -> Result<An
                 }
                 Split::Narrow | Split::Whole => empty(LetterMode::Fill),
             });
+        }
+    }
+    let mut strokes = strokes;
+    if mode == LetterMode::Run {
+        for s in &mut strokes {
+            smooth_run(s);
         }
     }
     let style = vec![None; strokes.len()];
@@ -529,7 +545,14 @@ impl Router<'_> {
                     c.reverse();
                     bend.reverse();
                 }
-                run_stitches(&c, &bend, false, units(self.p.run_length.min(self.out.max)))
+                let length = self.p.run_length.min(self.out.max);
+                if self.a.mode == LetterMode::Run {
+                    // Small letters: shorter stitches round curves, a bean run when asked.
+                    let run = curve_run(&c, &bend, length);
+                    if self.p.bean { bean(&run) } else { run }
+                } else {
+                    run_stitches(&c, &bend, false, units(length))
+                }
             };
             self.out.add(&pts)?;
         }
@@ -706,6 +729,83 @@ fn sew_letter(l: &Prepared, p: &LetteringParams, from: Option<Pt>, target: P, bu
     sewn.columns = r.columns;
     sewn.run_lines = r.run_lines;
     Ok(sewn)
+}
+
+/// A running-stitch letter's centre line smoothed further: its skeleton is only a few pixels
+/// wide and steps show at a short stitch. Its ends and corners stay where they are.
+fn smooth_run(s: &mut Stroke) {
+    for _ in 0..RUN_SMOOTHING {
+        let prev = s.centre.clone();
+        for i in 1..prev.len().saturating_sub(1) {
+            if s.bend.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            if let (Some(a), Some(b), Some(c), Some(o)) = (prev.get(i - 1), prev.get(i), prev.get(i + 1), s.centre.get_mut(i)) {
+                *o = ((a.0 + 2.0 * b.0 + c.0) / 4.0, (a.1 + 2.0 * b.1 + c.1) / 4.0);
+            }
+        }
+    }
+}
+
+/// Running stitch along `line` (mm) at most `length` mm a stitch, shorter where it bends so no
+/// stitch strays more than [`RUN_CHORD_MM`] from it (down to [`RUN_MIN_MM`]); corners (`bend`)
+/// and both ends are needle points.
+fn curve_run(line: &[P], bend: &[bool], length: f64) -> Vec<Pt> {
+    let mut out: Vec<Pt> = vec![];
+    let mut push = |q: P| {
+        if let Some(p) = Pt::from_mm(q.0, q.1)
+            && out.last() != Some(&p)
+        {
+            out.push(p);
+        }
+    };
+    let Some(&first) = line.first() else { return out };
+    push(first);
+    let (mut i, n) = (0usize, line.len());
+    while i + 1 < n {
+        let Some(&a) = line.get(i) else { break };
+        // The furthest point within the length whose chord keeps to the line, stopping at a corner.
+        let mut j = i + 1;
+        while j + 1 < n && !bend.get(j).copied().unwrap_or(false) {
+            let Some(&b) = line.get(j + 1) else { break };
+            let d = dist(a, b);
+            if d > length {
+                break;
+            }
+            let strays = line.get(i + 1..=j).is_some_and(|mid| mid.iter().any(|m| crate::fill::seg_dist(*m, a, b) > RUN_CHORD_MM));
+            if strays && dist(a, line.get(j).copied().unwrap_or(a)) >= RUN_MIN_MM {
+                break;
+            }
+            j += 1;
+        }
+        let Some(&b) = line.get(j) else { break };
+        // A straight stretch longer than the length is cut evenly.
+        let d = dist(a, b);
+        let k = (d / length).ceil().clamp(1.0, 1000.0) as usize;
+        for m in 1..=k {
+            let t = m as f64 / k as f64;
+            push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+        }
+        i = j;
+    }
+    out
+}
+
+/// `pts` as a bean run: each stitch sewn forward, back and forward again.
+fn bean(pts: &[Pt]) -> Vec<Pt> {
+    let mut out = Vec::with_capacity(pts.len() * 3);
+    for w in pts.windows(2) {
+        if let [a, b] = w {
+            if out.is_empty() {
+                out.push(*a);
+            }
+            out.extend([*b, *a, *b]);
+        }
+    }
+    if out.is_empty() {
+        out.extend(pts.first());
+    }
+    out
 }
 
 /// Running stitch along the straight line from `a` to `b` (mm), both ends included, at `step` mm.

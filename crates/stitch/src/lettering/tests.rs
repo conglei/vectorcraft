@@ -374,3 +374,30 @@ fn underlay_is_chosen_by_the_column_width() {
     let none = xs(4.0, Underlay::None);
     assert_eq!(at(&none, 0.5) + at(&none, 2.0), 0);
 }
+
+/// STI-38: a small running-stitch letter follows its curves (a 3 mm O sewn in 1.5 mm stitches cut
+/// 0.2 mm inside its centre line), and can be sewn as a bean run.
+#[test]
+fn small_letters_follow_their_curves_and_can_be_beaned() {
+    let o = vec![circle(5.0, 5.0, 1.7, false), circle(5.0, 5.0, 1.3, true)];
+    let sewn = sew(o.clone(), LetterMode::Run);
+    let pts: Vec<P> = sewn.runs.iter().flatten().map(|q| q.to_mm()).collect();
+    assert!(pts.len() > 8, "{}", pts.len());
+    for w in pts.windows(2) {
+        let m = ((w[0].0 + w[1].0) / 2.0, (w[0].1 + w[1].1) / 2.0);
+        let r = dist(m, (5.0, 5.0));
+        assert!(
+            (r - 1.5).abs() < 0.2,
+            "a stitch's middle {r} mm from the centre: {:?}",
+            pts.iter().map(|q| (dist(*q, (5.0, 5.0)) * 100.0).round() / 100.0).collect::<Vec<_>>()
+        );
+    }
+    let p = LetteringParams { bean: true, ..Default::default() };
+    let beaned = sew_letters(&[letter(o)], LetterMode::Run, &p, MAX_STEPS).unwrap().remove(0);
+    let count = |s: &SewnLetter| s.runs.iter().map(Vec::len).sum::<usize>() as f64;
+    let ratio = count(&beaned) / count(&sewn);
+    assert!((2.5..3.2).contains(&ratio), "{ratio}");
+    // Forward, back, forward: every other stitch of a bean run returns to where it came from.
+    let r = &beaned.runs[0];
+    assert!(r.windows(3).step_by(3).all(|w| w[0] == w[2]), "{:?}", &r[..r.len().min(9)]);
+}
