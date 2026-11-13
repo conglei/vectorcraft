@@ -1,6 +1,6 @@
 # Embroidery satin columns, second pass: corners, converted lettering, partial fills, underlay
 
-> **Status:** draft, implemented with STI-38 · **Date:** 2026-11-13 · **Covers:** gaps E9 and E10
+> **Status:** implemented with STI-38, measured by tests and in StitchCraft (dev build); not stitched on a machine · **Date:** 2026-11-13 · **Covers:** gaps E9 and E10
 > in [embroidery-parity.md](../../embroidery-parity.md) (Linear STI-38) · **Builds on:**
 > [lettering](2026-11-12-embroidery-lettering.md), [auto-digitize](2026-11-13-embroidery-auto-digitize.md),
 > [sequencing, second pass](2026-11-13-embroidery-sequencing-second-pass.md). Numbers marked
@@ -118,6 +118,37 @@ a few pixels wide, and a staircase shows at 1.5 mm stitches), and the run stitch
 shortened where the line bends, so a curve keeps within 0.1 mm of its centre line
 (*estimated*). `StitchProps.bean` (lettering): a bean run (each stitch sewn three times) for
 legibility, off by default.
+
+## Junctions
+
+Looked at in StitchCraft: a 25 mm H's legs bulged into its bar (4.2 mm on a 3.2 mm leg), where a
+normal at the junction reached across the bar. Near a junction with a through stroke, each
+stroke's rails are now held to its median half width plus 15 % (*estimated*); the stroke meeting
+it covers that side.
+
+## Measured (StitchCraft dev build, DST exports decoded)
+
+| Design | Stitches | Columns | Trims | Lone jumps after the first stitch |
+|---|---|---|---|---|
+| "TEXT", 15 mm type (cap 9.8 mm) | 502 | 13 | 0 | 0 |
+| "Hello", 15 mm, live | 607 | 10 | 0 | 0 |
+| "Hello", converted | 606 | 10 | 0 | 0 |
+| "Hello", bottom join | 590 | 10 | 0 | 0 |
+| "H", 25 mm cap height | 417 | 5 | 0 | 0 |
+| "Test", 5 mm type (cap 3.3 mm), running stitch | 43 | 0 | 0 | 0 |
+| Serif I, 25 mm, auto-digitized | 552 | 4 + 1 fill | 4 | 0 |
+
+Every DST starts with one jump from the origin to the first stitch, before any thread is sewn.
+Converting a stroke into a column piece and a run piece at a junction travels a little more:
+"TEXT" converted sews up to 10 % more than live (tested), "Hello" within 5 %.
+
+## Deferred
+
+- Small running-stitch letters are smoother but still angular on tight curves ("Test" at 5 mm,
+  the s): their skeleton is a few pixels wide; a font-aware centre line would do better.
+- The source fonts in the repository are regular weights, so no type at hand has strokes wider
+  than satin: partial fills are tested on synthetic letters and on auto-digitize in the app.
+- Lap corners, double zigzag as its own choice, underlay under fills and single-path satin.
 
 ## Compatibility
 
