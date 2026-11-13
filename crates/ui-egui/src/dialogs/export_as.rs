@@ -195,7 +195,7 @@ fn options_or_write(
                 eps_options::open(app, &params);
                 return Ok(Value::Null);
             }
-            if matches!(f.id, "dst" | "dsb" | "exp") {
+            if fileio::STITCH_FORMATS.contains(&f.id) {
                 stitch_options::open(app, &params);
                 return Ok(Value::Null);
             }

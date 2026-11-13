@@ -238,18 +238,10 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<ToolResult, Str
         "stitch_info" => j(exec(b, "stitch.info", Value::Object(a.clone()))?),
         "export_stitch" => {
             let mut params = a.clone();
-            // Without a format, the path's extension names it: dsb or exp, else dst.
+            // Without a format, the path's extension names it, else dst.
             if params.get("format").is_none_or(Value::is_null) {
-                let ext = a.get("path").and_then(Value::as_str).and_then(|p| std::path::Path::new(p).extension()).and_then(|e| e.to_str());
-                let named = |name: &str| ext.is_some_and(|e| e.eq_ignore_ascii_case(name));
-                let format = if named("exp") {
-                    "exp"
-                } else if named("dsb") {
-                    "dsb"
-                } else {
-                    "dst"
-                };
-                params.insert("format".into(), json!(format));
+                let path = a.get("path").and_then(Value::as_str).unwrap_or_default();
+                params.insert("format".into(), json!(stitch_format_of(path)));
             }
             if let Some(path) = a.get("path").and_then(Value::as_str) {
                 let path = absolute_path(b, path)?;
@@ -316,8 +308,15 @@ fn with_path(b: &mut dyn Backend, cmd: &str, key: &str, a: &Args) -> Result<Valu
     exec(b, cmd, Value::Object(params))
 }
 
+/// The stitch file format a path's extension names (any case), else `dst`.
+fn stitch_format_of(path: &str) -> &'static str {
+    const FORMATS: [&str; 7] = ["dst", "dsb", "exp", "u01", "tbf", "pes", "pec"];
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    FORMATS.into_iter().find(|f| ext.as_deref() == Some(*f)).unwrap_or("dst")
+}
+
 /// `photo_to_stitches`: `photo.toStitches`, then, with `path`, `document.export` of the stitch file
-/// (the format from `format`, else the path's extension: dsb or exp, else dst).
+/// (the format from `format`, else the path's extension, else dst).
 fn photo_to_stitches(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
     let mut params = a.clone();
     let out = params.remove("path");
@@ -330,14 +329,7 @@ fn photo_to_stitches(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
     let path = absolute_path(b, path)?;
     let format = match format.as_ref().and_then(Value::as_str) {
         Some(f) => f.to_string(),
-        None => {
-            let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-            match ext.as_deref() {
-                Some("exp") => "exp".into(),
-                Some("dsb") => "dsb".into(),
-                _ => "dst".into(),
-            }
-        }
+        None => stitch_format_of(&path).to_string(),
     };
     let written = exec(b, "document.export", json!({"path": path, "format": format}))?;
     r["path"] = json!(path);

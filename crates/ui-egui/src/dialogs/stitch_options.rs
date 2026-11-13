@@ -33,18 +33,14 @@ const LABEL: f32 = 150.0;
 /// The field width of the number fields.
 const NUMBER_W: f32 = 70.0;
 
-/// The longest stitch a DST file holds, in mm, and an EXP or DSB file (its own limit is also its
-/// default).
+/// The longest stitch a DST, PES or PEC file holds, in mm, and an EXP, DSB, U01 or TBF file (its
+/// own limit is also its default).
 pub(crate) const MAX_STITCH_DST: f64 = 12.1;
 pub(crate) const MAX_STITCH_EXP: f64 = 12.7;
 
-/// The stitch file format a dialog is for: `exp` or `dsb`, else `dst`.
+/// The stitch file format a dialog is for: one of the stitch formats, else `dst`.
 pub(crate) fn format_id(name: &str) -> &'static str {
-    match name {
-        "exp" => "exp",
-        "dsb" => "dsb",
-        _ => "dst",
-    }
+    fileio::STITCH_FORMATS.into_iter().find(|f| *f == name).unwrap_or("dst")
 }
 
 /// Fields that are not remembered between exports (they belong to one export).
@@ -70,7 +66,7 @@ const STARTS: [(&str, &str); 2] = [("center", "Center of the design"), ("firstSt
 
 /// The longest stitch `format` holds, in mm.
 pub(crate) fn max_stitch(format: &str) -> f64 {
-    if matches!(format, "exp" | "dsb") { MAX_STITCH_EXP } else { MAX_STITCH_DST }
+    if matches!(format, "exp" | "dsb" | "u01" | "tbf") { MAX_STITCH_EXP } else { MAX_STITCH_DST }
 }
 
 /// The options a first Stitch File Options dialog starts from (the export's defaults).
@@ -236,6 +232,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         match format {
             "exp" => tl!("Each path is sewn in its fill or stroke color, one thread per color. EXP holds moves of up to 12.7 mm."),
             "dsb" => tl!("Each path is sewn in its fill or stroke color, one thread per color. DSB holds moves of up to 12.7 mm."),
+            "u01" => tl!("Each path is sewn in its fill or stroke color, one needle per color. U01 holds moves of up to 12.7 mm."),
+            "tbf" => tl!("Each path is sewn in its fill or stroke color, one needle per color. TBF holds moves of up to 12.7 mm."),
+            "pes" | "pec" => {
+                tl!("Each path is sewn in its fill or stroke color, matched to the nearest Brother thread. PES holds moves of up to 12.1 mm.")
+            }
             _ => tl!("Each path is sewn in its fill or stroke color, one thread per color. DST holds moves of up to 12.1 mm."),
         },
     );

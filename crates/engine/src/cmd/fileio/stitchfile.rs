@@ -1,13 +1,13 @@
-//! Embroidery stitch files (DST, DSB and EXP): the export options `document.export` and `stitch.info`
+//! Embroidery stitch files (DST, DSB, EXP, U01, TBF, PES and PEC): the export options `document.export` and `stitch.info`
 //! read, the stitch plan an export writes, and a stitch file opened as a document (`document.open`
 //! with its `stitch` options).
 
 use serde_json::Value;
 use vectorcraft_doc::{Document, NodeId};
-use vectorcraft_embroidery::{Output, ReadOptions, Start, WriteOptions, dsb, dst, exp};
+use vectorcraft_embroidery::{MAX_NEEDLE, Output, ReadOptions, Start, WriteOptions, read_format, write_format};
 use vectorcraft_stitch::{
     FillOptions, FillParams, FillType, FromDocOptions, MachineProfile, Mode, PrepareOptions, Pt, StitchPlan, StrokeOptions, StrokeType, UNITS_PER_MM,
-    from_document, prepare_tagged, profile, to_document,
+    assign_needles, from_document, prepare_tagged, profile, to_document,
 };
 
 use super::super::{Result, bad, number_or, switch_or, text_param};
@@ -23,7 +23,7 @@ const MIXED_LOCKS: &str =
 /// The most colour changes an opened file may have: each becomes a group in the document.
 const MAX_BLOCKS: usize = 10_000;
 
-/// The stitch options `document.formats` lists for DST, DSB and EXP. Lengths are in mm.
+/// The stitch options `document.formats` lists for the stitch file formats. Lengths are in mm.
 pub(crate) const OPTIONS: &[FormatOption] = &[
     FormatOption {
         name: "machine",
@@ -48,7 +48,7 @@ pub(crate) const OPTIONS: &[FormatOption] = &[
         name: "maxStitch",
         ty: "number",
         default: "12.1",
-        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP and DSB, their default too); longer ones are split into equal pieces: jumps and a final stitch",
+        description: "the longest stitch in mm, 1–12.1 (12.7 for EXP, DSB, U01 and TBF, their default too); longer ones are split into equal pieces: jumps and a final stitch",
     },
     FormatOption {
         name: "locks",
@@ -187,13 +187,14 @@ struct Options {
     name: Option<String>,
 }
 
-/// The largest move per axis a format holds, in plan units: DST 121, EXP and DSB 127 (DSB records
-/// hold 255, but the machines read 12.7 mm as the longest stitch).
+/// The largest move per axis a format holds, in plan units: DST, PES and PEC 121, EXP, DSB, U01
+/// and TBF 127 (DSB and U01 records hold 255, PES records 2047, but the machines read 12.7 mm, and
+/// Brother's 12.1 mm, as the longest stitch).
 fn max_move(cmd: &str, format: &str) -> Result<i32> {
     match format {
-        "dst" => Ok(121),
-        "exp" | "dsb" => Ok(127),
-        other => Err(bad(cmd, format!("format `{other}`: a stitch file is dst, dsb or exp"))),
+        "dst" | "pes" | "pec" => Ok(121),
+        "exp" | "dsb" | "u01" | "tbf" => Ok(127),
+        other => Err(bad(cmd, format!("format `{other}`: a stitch file is dst, dsb, exp, u01, tbf, pes or pec"))),
     }
 }
 
@@ -232,7 +233,7 @@ fn jumps_per_trim(cmd: &str, p: &Value, key: &str) -> Result<u8> {
     }
 }
 
-/// The stitch options in `p` for `format` (`dst`, `dsb` or `exp`). `mode` and `locks` stay `None` when
+/// The stitch options in `p` for `format` (one of `vectorcraft_embroidery::FORMATS`). `mode` and `locks` stay `None` when
 /// not given: [`planned`] decides them per layer (see [`FromDocOptions::mode`]).
 fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let limit = max_move(cmd, format)?;
@@ -268,8 +269,8 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
     let name = text_param(p, "name", cmd)?.map(str::to_string);
     let mut profile = profile(machine).ok_or_else(|| bad(cmd, format!("machine `{machine}`: generic, commercial15 or bai_mirror")))?;
     profile.max_stitch = units(max_stitch).min(limit);
-    // EXP's and DSB's longer moves (127 units) serve their jumps too.
-    profile.max_jump = if matches!(format, "exp" | "dsb") { limit } else { profile.max_jump.min(limit) };
+    // The longer moves of EXP, DSB, U01 and TBF (127 units) serve their jumps too.
+    profile.max_jump = if limit > 121 { limit } else { profile.max_jump.min(limit) };
     profile.min_stitch = units(min_stitch);
     profile.jumps_per_trim = jumps_per_trim;
     Ok(Options {
@@ -291,6 +292,7 @@ fn options(cmd: &str, p: &Value, format: &str) -> Result<Options> {
             return_to_start: return_to_start.unwrap_or(true),
             jumps_per_trim,
             trim_before_color_change: switch_or(p, "trimBeforeColorChange", false, cmd)?,
+            needles: Vec::new(),
         },
         name,
     })
@@ -302,7 +304,7 @@ pub(crate) fn from_doc_options(cmd: &str, p: &Value) -> Result<FromDocOptions> {
     options(cmd, p, "dst").map(|o| o.from)
 }
 
-/// Check the stitch options in `p` for `format` (`dst`, `dsb` or `exp`) without planning a file (dialogs
+/// Check the stitch options in `p` for `format` (one of `vectorcraft_embroidery::FORMATS`) without planning a file (dialogs
 /// keep themselves open on an error).
 pub fn check(p: &Value, format: &str) -> std::result::Result<(), String> {
     options(C, p, format).map(|_| ()).map_err(|e| e.to_string())
@@ -348,7 +350,7 @@ fn planned(cmd: &str, doc: &Document, o: &Options, selection: Option<Vec<NodeId>
     Ok(Made { plan: prepared.plan, warnings, opened: made.unmarked_runs == 0, owners: made.owners, tags })
 }
 
-/// What an export of `doc` as `format` (`dst`, `dsb` or `exp`) with options `p` writes: the stitch plan
+/// What an export of `doc` as `format` (one of `vectorcraft_embroidery::FORMATS`) with options `p` writes: the stitch plan
 /// (the stroked paths of `doc`, only `selection` and what it holds when given, prepared for the
 /// machine), the file, and the warnings of both. Errors name `cmd`.
 pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<(StitchPlan, Output)> {
@@ -364,12 +366,14 @@ pub(crate) fn written(cmd: &str, doc: &Document, p: &Value, format: &str, select
     if let Some(p) = doc.stitch.start_point().and_then(|p| Pt::from_pt(p.x, p.y)) {
         write.start = Start::Point(p);
     }
-    let mut out = match format {
-        "exp" => exp::write(&plan, &write),
-        "dsb" => dsb::write(&plan, &write),
-        _ => dst::write(&plan, &write),
-    }
-    .map_err(|e| bad(cmd, e))?;
+    // U01 and TBF name a needle per block: the machine's assignment (`stitch.needles`), a colour
+    // sewn again on its own needle; colours past the machine's needles take the next in turn.
+    let max_needles = o.profile.needles.unwrap_or(MAX_NEEDLE).min(MAX_NEEDLE);
+    let uses = assign_needles(&plan, Some(max_needles)).uses;
+    write.needles = (0..plan.blocks.len())
+        .map(|i| uses.iter().find(|u| u.blocks.contains(&i)).and_then(|u| u.needle).and_then(|n| u8::try_from(n).ok()).unwrap_or(0))
+        .collect();
+    let mut out = write_format(format, &plan, &write).map_err(|e| bad(cmd, e))?;
     warnings.append(&mut out.warnings);
     out.warnings = warnings;
     Ok((plan, out))
@@ -384,7 +388,7 @@ pub(crate) fn plan(cmd: &str, doc: &Document, p: &Value, format: &str, selection
     Ok((plan, warnings))
 }
 
-/// `doc` as a DST, DSB or EXP file. `selection`: only those objects; an export's `selectedOnly` has
+/// `doc` as a stitch file. `selection`: only those objects; an export's `selectedOnly` has
 /// already left the rest out of `doc`, so it passes `None`.
 pub(super) fn encode(doc: &Document, p: &Value, format: &str, selection: Option<Vec<NodeId>>) -> Result<Encoded> {
     let (_, out) = written(C, doc, p, format, selection)?;
@@ -401,17 +405,11 @@ pub(super) fn read_options(cmd: &str, p: Option<&Value>) -> Result<ReadOptions> 
     Ok(ReadOptions { jumps_per_trim: jumps_per_trim(cmd, p, "jumpsPerTrim")? })
 }
 
-/// A DST, DSB or EXP file as a document: one layer of stroked paths, a group per thread colour, and the
+/// A stitch file as a document: one layer of stroked paths, a group per thread colour, and the
 /// reader's warnings. `p`: the `stitch` options.
 pub(super) fn import(bytes: &[u8], format: &str, p: Option<&Value>) -> Result<(Document, Vec<String>)> {
     let o = read_options("document.open", p)?;
-    let input = match format {
-        "dst" => dst::read(bytes, &o),
-        "exp" => exp::read(bytes, &o),
-        "dsb" => dsb::read(bytes, &o),
-        other => return Err(err(format!("{other} is not a stitch file format"))),
-    }
-    .map_err(err)?;
+    let input = read_format(format, bytes, &o).map_err(err)?;
     // A hostile file can hold more steps, or more colour changes, than a document should take.
     input.plan.check().map_err(err)?;
     if input.plan.blocks.len() > MAX_BLOCKS {

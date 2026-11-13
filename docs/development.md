@@ -455,10 +455,12 @@ panic, fix the code and add the input as a regular test.
 
 ## Checking stitch files against another reader
 
-DST, DSB and EXP have no official specification, so the embroidery readers and writers are also checked
-by hand against an independent implementation: the MIT-licensed `pyembroidery` package from PyPI,
-used as a black box (install it and call it; do not read or copy its source). This is not part of
-CI and needs Python and network access to PyPI.
+DST, DSB, EXP, U01, TBF and PES/PEC have no official specification, so the embroidery readers and
+writers are also checked by hand against an independent implementation: the MIT-licensed
+`pyembroidery` package from PyPI, used as a tool (install it and call it). Its source may be read for
+a record layout, with attribution in the format's spec; no code is copied, and data taken from it
+(the PEC thread palette) is attributed in NOTICE. Never open GPL embroidery code. This is not part
+of CI and needs Python and network access to PyPI.
 
 1. Install it into a folder of its own: `python3 -m pip install --target /tmp/pyemb pyembroidery`.
    Keep the scripts you write in a different folder, run them with `python3 -I`, and add the
@@ -483,6 +485,15 @@ CI and needs Python and network access to PyPI.
    negative, trim `0xE7`, needle change `0xE9..0xF7`, end `0xF8`); build one with a short script
    and open it with `vectorcraft-cli run --in`. Needle points and colour changes should match; DSB
    writes a trim as its own record, so trim counts match too.
+
+7. U01, TBF, PES and PEC, both ways and byte for byte: export the design in each format with
+   `vectorcraft-cli run --commands FILE.json` (`document.export {"path": …, "format": "u01"}` and so
+   on); read each file with `pyembroidery.read` and with our reader (a few lines of Rust over
+   `vectorcraft_embroidery::read_format` that print the steps); build the same plan as a pyembroidery
+   pattern (`needle_change` per block for U01 and TBF, `color_change` for PES) and `pyembroidery.write`
+   it; compare the two files' headers and records, and read pyembroidery's file with our reader. The
+   results and the expected byte differences are in each format's spec
+   (`docs/superpowers/specs/2026-11-13-embroidery-{u01,tbf,pes}-format.md`).
 
 Needle points and colour changes should match exactly. Jump and trim counts may differ: each
 implementation has its own rules for splitting long moves and for reading a run of jumps as a trim.

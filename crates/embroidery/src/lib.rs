@@ -18,6 +18,37 @@ pub use palette::default_thread;
 
 use vectorcraft_stitch::{Block, MAX_STEPS, Pt, Step, StitchPlan, TOO_MANY_STEPS, Thread};
 
+/// The ids of the machine file formats, as the engine's format table names them.
+pub const FORMATS: [&str; 7] = ["dst", "dsb", "exp", "u01", "tbf", "pes", "pec"];
+
+/// The file of format `format` (one of [`FORMATS`]) for `plan`.
+pub fn write_format(format: &str, plan: &StitchPlan, o: &WriteOptions) -> Result<Output, String> {
+    match format {
+        "dst" => dst::write(plan, o),
+        "dsb" => dsb::write(plan, o),
+        "exp" => exp::write(plan, o),
+        "u01" => u01::write(plan, o),
+        "tbf" => tbf::write(plan, o),
+        "pes" => pes::write(plan, o),
+        "pec" => pes::write_pec(plan, o),
+        other => Err(format!("{other} is not a stitch file format")),
+    }
+}
+
+/// The stitch plan in `bytes`, a file of format `format` (one of [`FORMATS`]). PES and PEC files
+/// are told apart by their content, so either id reads both.
+pub fn read_format(format: &str, bytes: &[u8], o: &ReadOptions) -> Result<Input, String> {
+    match format {
+        "dst" => dst::read(bytes, o),
+        "dsb" => dsb::read(bytes, o),
+        "exp" => exp::read(bytes, o),
+        "u01" => u01::read(bytes, o),
+        "tbf" => tbf::read(bytes, o),
+        "pes" | "pec" => pes::read(bytes, o),
+        other => Err(format!("{other} is not a stitch file format")),
+    }
+}
+
 /// The largest file a reader accepts.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 /// The most thread blocks (colour changes plus one) a reader builds.

@@ -2784,26 +2784,29 @@ proptest! {
     }
 }
 
-// ---------- Embroidery stitch files (DST, DSB, EXP) ----------
+// ---------- Embroidery stitch files (DST, DSB, EXP, U01, TBF, PES, PEC) ----------
 
-/// The calibration design written as DST, EXP and DSB with the default export options.
-fn stitch_samples() -> &'static [Vec<u8>; 3] {
-    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 3]> = std::sync::OnceLock::new();
+/// The stitch file formats, in the order of [`stitch_samples`].
+const STITCH_FORMATS: [&str; 7] = ["dst", "exp", "dsb", "u01", "tbf", "pes", "pec"];
+
+/// The calibration design written in each of [`STITCH_FORMATS`] with the default export options.
+fn stitch_samples() -> &'static [Vec<u8>; 7] {
+    static SAMPLES: std::sync::OnceLock<[Vec<u8>; 7]> = std::sync::OnceLock::new();
     SAMPLES.get_or_init(|| {
         let mut s = vectorcraft_engine::Session::new();
         s.execute("file.new", &json!({"width": 400, "height": 400})).unwrap();
         s.execute("stitch.calibration", &json!({})).unwrap();
-        let mut file = |format: &str| {
+        let file = |format: &str| {
             let r = s.execute("document.export", &json!({ "format": format })).unwrap();
             vectorcraft_format::base64_decode(r["dataBase64"].as_str().unwrap()).unwrap()
         };
-        [file("dst"), file("exp"), file("dsb")]
+        STITCH_FORMATS.map(file)
     })
 }
 
 #[test]
 fn the_stitch_samples_open() {
-    for (bytes, format) in stitch_samples().iter().zip(["dst", "exp", "dsb"]) {
+    for (bytes, format) in stitch_samples().iter().zip(STITCH_FORMATS) {
         let mut s = vectorcraft_engine::Session::new();
         let p = json!({"name": format!("x.{format}"), "dataBase64": vectorcraft_format::base64_encode(bytes)});
         s.execute("document.open", &p).unwrap();
@@ -2818,13 +2821,10 @@ fn the_stitch_samples_open() {
 fn survive_stitch(what: &str, bytes: &[u8], format: &str, jumps_per_trim: u8) -> Result<(), TestCaseError> {
     let r = catch_quiet(|| {
         let _ = vectorcraft_embroidery::dst::is_dst(bytes);
+        let _ = vectorcraft_embroidery::pes::is_pes(bytes);
         for jumps_per_trim in [2, 3, 8] {
             let o = vectorcraft_embroidery::ReadOptions { jumps_per_trim };
-            let _ = match format {
-                "dst" => vectorcraft_embroidery::dst::read(bytes, &o),
-                "dsb" => vectorcraft_embroidery::dsb::read(bytes, &o),
-                _ => vectorcraft_embroidery::exp::read(bytes, &o),
-            };
+            let _ = vectorcraft_embroidery::read_format(format, bytes, &o);
         }
     });
     r.map_err(|msg| TestCaseError::fail(format!("{what}: the {format} reader panicked: {msg}")))?;
@@ -2870,12 +2870,41 @@ proptest! {
     }
 
     #[test]
+    fn u01_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), header in any::<bool>(), jumps in 2u8..=8) {
+        let mut b = if header { stitch_samples()[3][..256].to_vec() } else { vec![] };
+        b.extend(bytes);
+        survive_stitch("u01 garbage", &b, "u01", jumps)?;
+    }
+
+    #[test]
+    fn tbf_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), header in any::<bool>(), jumps in 2u8..=8) {
+        let mut b = if header { stitch_samples()[4][..0x600].to_vec() } else { vec![] };
+        b.extend(bytes);
+        survive_stitch("tbf garbage", &b, "tbf", jumps)?;
+    }
+
+    #[test]
+    fn pes_garbage_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2000), header in 0usize..3, jumps in 2u8..=8) {
+        // No header, a PEC file's 528 bytes before its stitches, or a PES file's up to there.
+        let pec = &stitch_samples()[6];
+        let pes = &stitch_samples()[5];
+        let offset = u32::from_le_bytes([pes[8], pes[9], pes[10], pes[11]]) as usize;
+        let mut b = match header {
+            0 => vec![],
+            1 => pec[..8 + 528].to_vec(),
+            _ => pes[..offset + 528].to_vec(),
+        };
+        b.extend(bytes);
+        survive_stitch("pes garbage", &b, if header == 1 { "pec" } else { "pes" }, jumps)?;
+    }
+
+    #[test]
     fn mutated_stitch_files_never_panic(
-        which in 0usize..3,
+        which in 0usize..7,
         edits in prop::collection::vec((any::<usize>(), any::<u8>()), 1..=8),
         jumps in 2u8..=8,
     ) {
-        let format = ["dst", "exp", "dsb"][which];
+        let format = STITCH_FORMATS[which];
         let mut bytes = stitch_samples()[which].clone();
         let n = bytes.len();
         for &(at, b) in &edits {
