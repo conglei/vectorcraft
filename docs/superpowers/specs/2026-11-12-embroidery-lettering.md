@@ -2,7 +2,9 @@
 
 > **Status:** first pass implemented 2026-11-12, measured by tests and in the running app; not yet
 > sewn at a machine. Numbers marked *estimated* are starting points to check at the stitch-out.
-> **Change:** new spec.
+> **Change:** new spec. Since 2026-11-13 (STI-41) a letter is entered at its centre point nearest
+> the needle and left at its point nearest the next letter, travelling under its own satin:
+> see the [columns second pass](2026-11-13-embroidery-columns-second-pass.md#travel-under-the-stitching-sti-41).
 
 Type in StitchCraft used to be skipped ("objects of other kinds were not stitched"), and its
 outlines set to Satin sewed a 3 mm column *around* each glyph. This pass sews type as lettering:
@@ -74,6 +76,9 @@ letter ends towards the next one. No trims inside a letter; separate parts (the 
 joined by a jump.
 
 Between letters: the next letter starts at its skeleton node nearest the needle (closest join).
+(Replaced 2026-11-13, STI-41: entered at its nearest centre point and left at its point nearest
+the next letter, the strokes between sewn last; see the
+[columns second pass](2026-11-13-embroidery-columns-second-pass.md#travel-under-the-stitching-sti-41).)
 A gap under 1.2 mm is sewn as a stitch; otherwise a jump, with a trim where `letterTrims` says
 (`word`: between words and lines; `letter`: between all letters; `none`: never). The text object
 is one sewing-order item, sewn forwards only.

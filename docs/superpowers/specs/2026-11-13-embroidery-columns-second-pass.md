@@ -1,6 +1,6 @@
 # Embroidery satin columns, second pass: corners, converted lettering, partial fills, underlay
 
-> **Status:** implemented with STI-38, measured by tests and in StitchCraft (dev build); not stitched on a machine · **Date:** 2026-11-13 · **Covers:** gaps E9 and E10
+> **Status:** implemented with STI-38, measured by tests and in StitchCraft (dev build); not stitched on a machine; connectors between letters revised with STI-41 (measured by tests and a decoded DST export) · **Date:** 2026-11-13 · **Covers:** gaps E9 and E10
 > in [embroidery-parity.md](../../embroidery-parity.md) (Linear STI-38) · **Builds on:**
 > [lettering](2026-11-12-embroidery-lettering.md), [auto-digitize](2026-11-13-embroidery-auto-digitize.md),
 > [sequencing, second pass](2026-11-13-embroidery-sequencing-second-pass.md). Numbers marked
@@ -130,7 +130,51 @@ two letters of a word that would show more than 3 mm outside both letters' ink
 (`MAX_CONNECTOR_MM`, *estimated*: the reference suite's help describes closest join as keeping
 connectors short but gives no length) is a trim and a jump instead; letters never trimmed
 (`letterTrims: none`) still walk. "Hello you" now trims three times (between the words, and
-round the y's tail), where it trimmed once.
+round the y's tail), where it trimmed once (once again since STI-41, below).
+
+## Travel under the stitching (STI-41)
+
+Decoding the DST of "I’m Conglei" at 40 pt (10 mm letters, word trims) showed 8 trims for 10
+letters, from connectors of 4.4 to 8.9 mm: a letter ended wherever its last stroke ended, often
+on the side away from the next letter. A ring (the o, the bowl of the e) ended where its single
+node happened to sit on the outline; an open stroke (the C) at its far tip. The 3 mm rule was
+right; the exits were wrong. Digitizers instead travel under the stitching to the side facing
+the next letter (closest join keeps connectors short; Wilcom help, cited above). Now:
+
+- A letter is left at its centre point nearest the next letter's centre lines (closest join;
+  bottom join: nearest the next letter's bottom left). A letter with several parts (an i and its
+  dot) leaves each part nearest the next part, and its last part nearest the next letter. The
+  last letter of the text ends where its strokes do.
+- It is entered at its centre point nearest the needle; walked to from the letter before, of the
+  parts about as near (up to 8) the one the walk shows least of is entered (a j's stem, not its
+  dot). A trimmed letter is jumped to straight at its exit.
+- The stroke graph is cut at both points (a ring on its own is turned to start at the exit, so
+  it stays one column). The shortest way between them along the centre lines is sewn last at
+  each node; every other stroke is sewn out and back from the nodes on the way (centre run out
+  under the satin, then the satin back), and a ring once round. So the part ends at the exit
+  without a stitch across its counters.
+- The 3 mm connector cap (`MAX_CONNECTOR_MM`), `NO_TRIM_GAP_MM`, `letterTrims` and the trim
+  before each letter not walked to are unchanged; no bare jump is left (tested).
+
+Measured with the plan's counters (Source Sans 3, as the plan tests set it; lead is the longest
+walk between joined letters that shows outside their ink):
+
+| Text, size, trims | Stitches before → after | Trims before → after | Longest lead, mm, before → after |
+|---|---|---|---|
+| "I’m Conglei", 40 pt, word | 1117 → 1134 | 8 → 2 | 2.45 → 2.38 |
+| "Hello", 15 mm, word | 604 → 591 | 0 → 0 | 2.92 → 2.24 |
+| "TEXT", 15 mm, word | 498 → 497 | 0 → 0 | 1.90 → 1.90 |
+| "Hello you", 15 mm, word | 985 → 968 | 3 → 1 | 2.92 → 2.24 |
+| "Hello you", 15 mm, none | 996 → 977 | 0 → 0 | 6.97 → 4.47 |
+| "Hello you", 15 mm, letter | 975 → 948 | 7 → 7 | (none joined) |
+| "ij", 15 mm, word | 152 → 143 | 2 → 2 | 2.19 → 2.75 |
+| "Test", 5 mm, word | 41 → 44 | 0 → 0 | 1.16 → 0.89 |
+| "Test", 12 mm, word | 368 → 367 | 1 → 0 | 1.33 → 2.87 |
+| "on", "Co", "ol", 40 pt, word | 241, 243, 199 → 242, 235, 202 | 1 each → 0 | trimmed → 1.68, 2.24, 1.69 |
+
+The two trims left in "I’m Conglei" are between the words and to the i's dot (1.4 mm above its
+stem, past the 1.2 mm stitch gap). The exported DST (`vectorcraft-cli run`, dev build) decodes
+to 1149 stitches and three jump groups: the first from the origin, then the two trims.
 
 ## Junctions
 
