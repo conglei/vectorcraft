@@ -1,6 +1,6 @@
 # Development
 
-> **Last updated:** 2026-11-11 · **Change:** Running StitchCraft, the embroidery app (`apps/stitchcraft`), and bundling it.
+> **Last updated:** 2026-11-13 · **Change:** Bundling and packaging StitchCraft on macOS, Linux and Windows; the bundle is signed and verified.
 > **Last updated:** 2026-11-11 · **Change:** Fuzzing covers DST and EXP stitch files; checking stitch files against another reader by hand (positions compared in one orientation).
 > **Last updated:** 2026-11-06 · **Change:** Hindi catalog and zero/one plural rule; desktop Devanagari fallback and optional craft-fonts UI face; native review pending.
 > **Last updated:** 2026-11-01 · **Change:** Linux: Automatic Linux Display Server opens the window through XWayland when a pen is attached on a Wayland session, so the pen draws (#4967); `VECTORCRAFT_NATIVE_WAYLAND=1` keeps Wayland.
@@ -28,6 +28,28 @@ cargo run --release -p stitchcraft -- --control 7989 [file.dst|file.vectorcraft]
 cargo xtask bundle --app stitchcraft          # dist/StitchCraft.app (macOS)
 open dist/StitchCraft.app --args --control 7989
 ```
+
+`cargo xtask bundle [--app vectorcraft|stitchcraft] [--debug]` packages for the computer it runs on:
+
+- **macOS:** `dist/<App>.app`, signed ad hoc (or with `MACOS_SIGN_IDENTITY`, and `MACOS_KEYCHAIN`) as
+  `packaging/macos/package.sh` signs the release app: each program in `Contents/MacOS` first, then the
+  bundle, which seals `Info.plist` and the icon, then `codesign --verify --strict --deep`, which fails
+  the command if the bundle doesn't verify. A bundle that is not signed this way fails that check, so
+  nothing is signed by hand afterwards. `--debug` wraps the dev build (`target/debug`) instead of the
+  release one, for a quick check of the bundle.
+- **Linux:** `packaging/linux/package.sh --app <app>` (AppImage, `.deb`, `.rpm`, `.tar.gz`). StitchCraft
+  gets its own desktop entry, AppStream metadata, MIME types and icons (`ai.storyteller.stitchcraft`);
+  its CLI is installed as `stitchcraft-cli`, so the two apps' packages never share a file, and its
+  AppImage has no update information (it has no release feed).
+- **Windows:** `pwsh packaging/windows/package.ps1 -App <app>` (MSI and zip). StitchCraft's MSI is written
+  from VectorCraft's WiX sources with the names, ids and registry keys changed and an upgrade code of
+  its own (`ConvertTo-StitchCraft`), so the two cannot drift apart; its zip has no `portable.txt`, because
+  portable mode is VectorCraft's alone (`apps/vectorcraft/src/profile.rs`). The CLI there is
+  `stitchcraft-cli.exe`, and the exe carries `assets/app-icon/stitchcraft.ico` (`apps/stitchcraft/build.rs`).
+
+The Linux and Windows scripts for StitchCraft have been read and their files checked by tests
+(`xtask/src/bundle.rs`), not run: they need those platforms. The Flatpak, FreeBSD and web packages are
+VectorCraft's only.
 
 The `VECTORCRAFT_` environment variables below apply to both apps; give two runs different
 `VECTORCRAFT_CONFIG_DIR` folders to keep their settings apart.
@@ -561,6 +583,7 @@ Scores and hour estimates are unchanged.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | StitchCraft packaging: `cargo xtask bundle` signs and verifies the macOS bundle, takes `--debug`, and runs the Linux and Windows packaging scripts off macOS; both scripts take `--app stitchcraft` (`-App`). |
 | 2026-11-11 | minor | New section: StitchCraft, the embroidery app (running it, its control port 7989, `cargo xtask bundle --app stitchcraft`). |
 | 2026-11-11 | minor | Stitch file cross-check: compare positions after converting both to the same orientation. |
 | 2026-11-11 | minor | Fuzzing: DST and EXP stitch files. New section: checking stitch files against another reader (by hand, not in CI). |
